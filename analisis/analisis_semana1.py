@@ -204,37 +204,40 @@ def plot_espectrograma(capturas: list[dict], output_dir: Path):
 
 
 def plot_fft_comparativa(capturas: list[dict], output_dir: Path):
-    """FFT promediada de todas las capturas superpuestas en un grafico."""
+    """Espectro max-hold: maximo de cada bin de frecuencia sobre toda la captura.
+
+    Equivalente al display de pico del GUI web de Red Pitaya. Un evento breve
+    de arena (200 ms en 2.5 s) queda completamente visible porque se toma el
+    maximo en lugar del promedio.
+    """
+    nperseg  = 2048
+    noverlap = int(nperseg * 0.75)
+
     fig, ax = plt.subplots(figsize=(14, 6))
 
     for cap in capturas:
-        fs  = cap['fs']
-        raw = cap['raw'].astype(np.float64)
-        N   = len(raw)
-        cond = cap['condicion']
+        fs   = cap['fs']
+        sig  = cap['raw'].astype(np.float64)
+        f, _, Sxx = spectrogram(sig, fs=fs, nperseg=nperseg, noverlap=noverlap,
+                                 scaling='density')
 
-        # FFT de todo el segmento
-        fft_mag = np.abs(np.fft.rfft(raw))
-        freqs   = np.fft.rfftfreq(N, d=1.0 / fs)
-        fft_db  = 20 * np.log10(fft_mag / N + 1e-20)
+        Sxx_db_max = 10 * np.log10(Sxx.max(axis=1) + 1e-20)
 
-        # Suavizar con promedio en bloques para reducir ruido visual
-        bin_size = max(1, len(freqs) // 4096)
-        freqs_s = freqs[:len(freqs) // bin_size * bin_size].reshape(-1, bin_size).mean(axis=1)
-        fft_s   = fft_db[:len(fft_db) // bin_size * bin_size].reshape(-1, bin_size).mean(axis=1)
-
-        mask  = freqs_s <= 600_000
+        mask  = f <= 600_000
+        cond  = cap['condicion']
         color = CONDICION_COLOR.get(cond, 'gray')
-        ax.plot(freqs_s[mask] / 1000, fft_s[mask],
-                color=color, label=f'{cond} ({cap["archivo"][:30]})',
-                linewidth=0.8, alpha=0.85)
+        ax.plot(f[mask] / 1000, Sxx_db_max[mask],
+                color=color, label=cond, linewidth=1.0, alpha=0.9)
 
-    ax.axvspan(F_LOW / 1000, F_HIGH / 1000, alpha=0.1, color='yellow',
+    ax.axvspan(F_LOW / 1000, F_HIGH / 1000, alpha=0.08, color='yellow',
                label='Banda sensor 100-450 kHz')
+    ax.axvline(F_LOW  / 1000, color='cyan', linewidth=0.8, linestyle='--', alpha=0.7)
+    ax.axvline(F_HIGH / 1000, color='cyan', linewidth=0.8, linestyle='--', alpha=0.7)
     ax.set_xlabel('Frecuencia [kHz]')
-    ax.set_ylabel('Magnitud [dB]')
-    ax.set_title('FFT comparativa de todas las capturas', fontweight='bold')
-    ax.legend(fontsize=7, loc='upper right')
+    ax.set_ylabel('PSD pico [dB/Hz]')
+    ax.set_title('Espectro pico (max-hold) — maximo por bin sobre toda la captura',
+                 fontweight='bold')
+    ax.legend(fontsize=9)
     ax.grid(True, alpha=0.3)
     plt.tight_layout()
     out = output_dir / 'fft_comparativa.png'
