@@ -264,6 +264,87 @@ def plot_boxplots_metricas(capturas: list[dict], output_dir: Path):
     print(f'  Guardado: {out.name}')
 
 
+def plot_espectrograma_peak(capturas: list[dict], output_dir: Path):
+    """Espectrograma centrado en el instante de maxima energia por captura.
+
+    Muestra una ventana de +/-250 ms alrededor del momento de mayor actividad
+    en la banda 100-450 kHz — equivalente a la vista instantanea del GUI web.
+    """
+    nperseg  = 512
+    noverlap = int(nperseg * 0.75)
+    VENTANA_S = 0.5   # ventana total: pico -/+ 250 ms
+
+    espectros_peak = []
+    for cap in capturas:
+        fs  = cap['fs']
+        b, a = _filtro_bp(fs)
+        sf = filtfilt(b, a, cap['raw'].astype(np.float64))
+        f, t, Sxx = spectrogram(sf, fs=fs, nperseg=nperseg, noverlap=noverlap,
+                                 scaling='density')
+
+        # Energia en la banda del sensor por trama de tiempo
+        banda = (f >= F_LOW) & (f <= F_HIGH)
+        energia_t = Sxx[banda, :].sum(axis=0)
+        idx_pico  = int(np.argmax(energia_t))
+        t_pico    = t[idx_pico]
+
+        t_ini  = max(0, t_pico - VENTANA_S / 2)
+        t_fin  = min(t[-1], t_pico + VENTANA_S / 2)
+        t_mask = (t >= t_ini) & (t <= t_fin)
+
+        f_mask = f <= 600_000
+        Sxx_db = 10 * np.log10(Sxx[f_mask, :] + 1e-20)
+        espectros_peak.append({
+            'f':      f[f_mask],
+            't':      t[t_mask],
+            'Sxx_db': Sxx_db[:, t_mask],
+            't_pico': t_pico,
+        })
+
+    reposo_idx = next((i for i, c in enumerate(capturas) if c['condicion'] == 'reposo'), 0)
+    vmin = float(np.median(espectros_peak[reposo_idx]['Sxx_db'])) - 3
+    vmax = float(max(ep['Sxx_db'].max() for ep in espectros_peak))
+
+    n_cols = min(len(capturas), 3)
+    n_rows = (len(capturas) + n_cols - 1) // n_cols
+    fig, axes = plt.subplots(n_rows, n_cols,
+                              figsize=(7 * n_cols, 4 * n_rows), squeeze=False)
+
+    for idx, (cap, ep) in enumerate(zip(capturas, espectros_peak)):
+        ax   = axes[idx // n_cols][idx % n_cols]
+        cond = cap['condicion']
+        t_rel = (ep['t'] - ep['t_pico']) * 1000   # ms relativo al pico
+
+        im = ax.pcolormesh(t_rel, ep['f'] / 1000, ep['Sxx_db'],
+                           shading='gouraud', cmap='inferno',
+                           vmin=vmin, vmax=vmax)
+        ax.axhline(F_LOW  / 1000, color='cyan', linewidth=0.9,
+                   linestyle='--', alpha=0.8, label='100 kHz')
+        ax.axhline(F_HIGH / 1000, color='cyan', linewidth=0.9,
+                   linestyle='--', alpha=0.8, label='450 kHz')
+        ax.axvline(0, color='white', linewidth=0.8, linestyle=':', alpha=0.7)
+        ax.set_ylabel('Frecuencia [kHz]')
+        ax.set_xlabel('Tiempo relativo al pico [ms]')
+        ax.set_title(
+            f'{cond}  t_pico={ep["t_pico"]*1000:.0f} ms  '
+            f'kurtosis={cap["metricas"]["kurtosis"]:.1f}\n{cap["archivo"]}',
+            fontsize=8)
+        plt.colorbar(im, ax=ax, label='dB/Hz')
+
+    for idx in range(len(capturas), n_rows * n_cols):
+        axes[idx // n_cols][idx % n_cols].set_visible(False)
+
+    fig.suptitle(
+        f'Espectrograma PICO  (±250 ms alrededor del maximo de energia en banda)'
+        f'  |  escala [{vmin:.0f}, {vmax:.0f}] dB/Hz',
+        fontsize=11, fontweight='bold')
+    plt.tight_layout()
+    out = output_dir / 'espectrograma_peak.png'
+    plt.savefig(out, dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f'  Guardado: {out.name}')
+
+
 def imprimir_tabla_metricas(capturas: list[dict]):
     """Imprime tabla resumen de metricas en consola."""
     METRICAS = ['rms', 'energia', 'kurtosis', 'crest_factor', 'conteo_eventos']
@@ -306,6 +387,7 @@ def main():
     plot_senal_raw(capturas, OUTPUT_DIR)
     plot_fft_comparativa(capturas, OUTPUT_DIR)
     plot_espectrograma(capturas, OUTPUT_DIR)
+    plot_espectrograma_peak(capturas, OUTPUT_DIR)
 
     if len(capturas) > 1:
         plot_boxplots_metricas(capturas, OUTPUT_DIR)
