@@ -368,6 +368,53 @@ def plot_espectrograma_peak(capturas: list[dict], output_dir: Path):
     print(f'  Guardado: {out.name}')
 
 
+def plot_scatter_masa(capturas: list[dict], output_dir: Path):
+    """Scatter de kurtosis y crest_factor vs masa de arena [g].
+
+    Valida si las metricas son monotonicas con la cantidad de arena.
+    Solo incluye capturas con masa registrada (masa_arena_g > 0).
+    """
+    con_masa = [c for c in capturas if float(c['attrs'].get('masa_arena_g', -1)) >= 0]
+    if len(con_masa) < 2:
+        print('  Scatter masa omitido (necesita al menos 2 capturas con --masa_g)')
+        return
+
+    METRICAS = [
+        ('kurtosis',    'Kurtosis'),
+        ('crest_factor','Crest Factor'),
+        ('rms_diferencial', 'RMS diferencial [adim]'),
+    ]
+
+    fig, axes = plt.subplots(1, len(METRICAS), figsize=(5 * len(METRICAS), 5))
+    if len(METRICAS) == 1:
+        axes = [axes]
+
+    for ax, (met, label) in zip(axes, METRICAS):
+        masas  = [float(c['attrs']['masa_arena_g']) for c in con_masa]
+        vals   = [c['metricas'][met] for c in con_masa]
+        colors = [CONDICION_COLOR.get(c['condicion'], 'gray') for c in con_masa]
+
+        ax.scatter(masas, vals, c=colors, s=60, zorder=3)
+
+        # etiqueta de condicion en cada punto
+        for m, v, cap in zip(masas, vals, con_masa):
+            ax.annotate(cap['condicion'], (m, v),
+                        textcoords='offset points', xytext=(5, 3), fontsize=7)
+
+        ax.set_xlabel('Masa de arena [g]')
+        ax.set_ylabel(label)
+        ax.set_title(label, fontsize=10)
+        ax.grid(True, alpha=0.3)
+
+    fig.suptitle('Metricas vs masa de arena — validacion de monotonicidad',
+                 fontsize=11, fontweight='bold')
+    plt.tight_layout()
+    out = output_dir / 'scatter_masa.png'
+    plt.savefig(out, dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f'  Guardado: {out.name}')
+
+
 def imprimir_tabla_metricas(capturas: list[dict]):
     """Imprime tabla resumen de metricas en consola."""
     METRICAS = ['rms', 'rms_diferencial', 'energia', 'kurtosis', 'crest_factor', 'conteo_eventos']
@@ -412,6 +459,7 @@ def main():
     plot_fft_comparativa(capturas, OUTPUT_DIR)
     plot_espectrograma(capturas, OUTPUT_DIR)
     plot_espectrograma_peak(capturas, OUTPUT_DIR)
+    plot_scatter_masa(capturas, OUTPUT_DIR)
 
     if len(capturas) > 1:
         plot_boxplots_metricas(capturas, OUTPUT_DIR)

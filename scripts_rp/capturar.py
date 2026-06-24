@@ -179,17 +179,26 @@ if __name__ == '__main__':
     p.add_argument('--condicion', required=True,
                    choices=['reposo', 'flujo_limpio', 'baja', 'media', 'alta'],
                    help='Etiqueta de la condicion experimental')
-    p.add_argument('--masa_g',     type=float, default=-1.0,
+    p.add_argument('--masa_g',       type=float, default=-1.0,
                    help='Masa de arena inyectada [g]. -1 si no aplica.')
-    p.add_argument('--tamanio_mm', type=float, default=-1.0,
+    p.add_argument('--tamanio_mm',   type=float, default=-1.0,
                    help='Tamanio de particula [mm]. -1 si no aplica.')
-    p.add_argument('--caudal_Ls',  type=float, default=-1.0,
+    p.add_argument('--caudal_Ls',    type=float, default=-1.0,
                    help='Caudal de fluido [L/s]. -1 si no aplica.')
+    p.add_argument('--repeticiones', type=int,   default=1,
+                   help='Cantidad de capturas consecutivas (default: 1).')
     args = p.parse_args()
 
-    capturar(
-        condicion  = args.condicion,
-        masa_g     = args.masa_g,
-        tamanio_mm = args.tamanio_mm,
-        caudal_Ls  = args.caudal_Ls,
-    )
+    for i in range(args.repeticiones):
+        if args.repeticiones > 1:
+            print(f'\n========== Captura {i+1} / {args.repeticiones} ==========')
+        capturar(
+            condicion  = args.condicion,
+            masa_g     = args.masa_g,
+            tamanio_mm = args.tamanio_mm,
+            caudal_Ls  = args.caudal_Ls,
+        )
+        if i < args.repeticiones - 1:
+            print('\nPreparando siguiente captura — pesa la arena y presiona ENTER...',
+                  flush=True)
+            input()
