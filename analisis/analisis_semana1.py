@@ -63,7 +63,7 @@ def sincronizar_desde_rpi(dest_dir: Path):
 
 def cargar_capturas(capturas_dir: Path) -> list[dict]:
     """Carga todos los archivos .h5 del directorio y devuelve lista de dicts."""
-    archivos = sorted(capturas_dir.glob('captura_*.h5'))
+    archivos = sorted(capturas_dir.glob('*.h5'))
     if not archivos:
         print(f'No se encontraron archivos .h5 en {capturas_dir}')
         sys.exit(1)
