@@ -127,45 +127,53 @@ def plot_senal_raw(capturas: list[dict], output_dir: Path):
 
 
 def plot_espectrograma(capturas: list[dict], output_dir: Path):
-    """Espectrograma STFT para cada captura (hasta 1s, banda 0-600 kHz)."""
+    """Espectrograma STFT para cada captura con escala de color compartida."""
+    nperseg  = 512
+    noverlap = int(nperseg * 0.75)
+
+    # Primera pasada: calcular todos los espectrogramas y determinar rango global
+    espectros = []
+    for cap in capturas:
+        fs  = cap['fs']
+        b, a = _filtro_bp(fs)
+        sf = filtfilt(b, a, cap['raw'].astype(np.float64))
+        f, t, Sxx = spectrogram(sf, fs=fs, nperseg=nperseg, noverlap=noverlap,
+                                 scaling='density')
+        f_mask = f <= 600_000
+        Sxx_db = 10 * np.log10(Sxx[f_mask, :] + 1e-20)
+        espectros.append((f[f_mask], t, Sxx_db))
+
+    # Escala compartida anclada al ruido base:
+    # vmin = mediana del reposo (piso de ruido), vmax = max global (eventos de arena)
+    reposo_idx = next((i for i, c in enumerate(capturas) if c['condicion'] == 'reposo'), 0)
+    vmin = float(np.median(espectros[reposo_idx][2])) - 3
+    vmax = float(max(s[2].max() for s in espectros))
+
     n_cols = min(len(capturas), 3)
     n_rows = (len(capturas) + n_cols - 1) // n_cols
     fig, axes = plt.subplots(n_rows, n_cols,
-                              figsize=(6 * n_cols, 4 * n_rows), squeeze=False)
+                              figsize=(7 * n_cols, 4 * n_rows), squeeze=False)
 
-    for idx, cap in enumerate(capturas):
-        ax  = axes[idx // n_cols][idx % n_cols]
-        fs  = cap['fs']
-        raw = cap['raw']
-        b, a = _filtro_bp(fs)
-        sf = filtfilt(b, a, raw.astype(np.float64))
-
-        # STFT: ventana 512 muestras, overlap 75%
-        nperseg  = 512
-        noverlap = int(nperseg * 0.75)
-        f, t, Sxx = spectrogram(sf, fs=fs, nperseg=nperseg, noverlap=noverlap,
-                                 scaling='density')
-
-        # Mostrar solo hasta 600 kHz y primer segundo
-        f_mask = f <= 600_000
-        t_mask = t <= 1.0
-        Sxx_db = 10 * np.log10(Sxx[np.ix_(f_mask, t_mask)] + 1e-20)
-
-        im = ax.pcolormesh(t[t_mask] * 1000, f[f_mask] / 1000, Sxx_db,
-                           shading='gouraud', cmap='viridis')
-        ax.axhline(F_LOW / 1000, color='white', linewidth=0.8, linestyle='--', alpha=0.7)
-        ax.axhline(F_HIGH / 1000, color='white', linewidth=0.8, linestyle='--', alpha=0.7)
+    for idx, (cap, (f_v, t_v, Sxx_db)) in enumerate(zip(capturas, espectros)):
+        ax   = axes[idx // n_cols][idx % n_cols]
+        cond = cap['condicion']
+        im   = ax.pcolormesh(t_v * 1000, f_v / 1000, Sxx_db,  # t_v ya en segundos
+                             shading='gouraud', cmap='inferno',
+                             vmin=vmin, vmax=vmax)
+        ax.axhline(F_LOW  / 1000, color='cyan', linewidth=0.9,
+                   linestyle='--', alpha=0.8, label='100 kHz')
+        ax.axhline(F_HIGH / 1000, color='cyan', linewidth=0.9,
+                   linestyle='--', alpha=0.8, label='450 kHz')
         ax.set_ylabel('Frecuencia [kHz]')
         ax.set_xlabel('Tiempo [ms]')
-        cond = cap['condicion']
-        ax.set_title(f'{cond}\n{cap["archivo"]}', fontsize=8)
-        plt.colorbar(im, ax=ax, label='dB')
+        ax.set_title(f'{cond} — kurtosis={cap["metricas"]["kurtosis"]:.1f}\n'
+                     f'{cap["archivo"]}', fontsize=8)
+        plt.colorbar(im, ax=ax, label='dB/Hz')
 
-    # Ocultar ejes sobrantes
     for idx in range(len(capturas), n_rows * n_cols):
         axes[idx // n_cols][idx % n_cols].set_visible(False)
 
-    fig.suptitle('Espectrogramas STFT — banda filtrada 100-450 kHz (lineas blancas)',
+    fig.suptitle(f'Espectrogramas STFT  |  escala compartida [{vmin:.0f}, {vmax:.0f}] dB/Hz',
                  fontsize=11, fontweight='bold')
     plt.tight_layout()
     out = output_dir / 'espectrogramas.png'

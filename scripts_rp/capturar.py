@@ -28,7 +28,7 @@ DEC_ENUM  = rp.RP_DEC_64     # decimacion 64 -> fs_ef = 1 953 125 Hz
 DEC_VAL   = 64
 FS_EF     = FS_BASE / DEC_VAL
 BUF_SIZE  = 16_384           # muestras por buffer (hardware fijo)
-N_BUFFERS = 100              # buffers consecutivos -> ~838 ms de senal total
+N_BUFFERS = 300              # buffers consecutivos -> ~2.5 s de senal total
 CANAL     = rp.RP_CH_1
 DCPL      = rp.RP_DC
 GAIN      = rp.RP_GAIN_5X    # HV jumper -> +/- 20 V rango
@@ -119,6 +119,12 @@ def capturar(condicion, masa_g=-1.0, tamanio_mm=-1.0, caudal_Ls=-1.0):
     print(f'  fs_ef_hz   : {FS_EF:.0f} Hz')
     print(f'  n_muestras : {N_BUFFERS * BUF_SIZE}  ({duracion_ms:.1f} ms)')
     print(f'  archivo    : {fname}\n')
+
+    for i in range(5, 0, -1):
+        print(f'  Iniciando en {i}...', flush=True)
+        time.sleep(1)
+    print('\n  >>> TIRA LA ARENA AHORA <<<\n', flush=True)
+    time.sleep(1)   # margen para que la arena este en el aire al iniciar
 
     rp.rp_Init()
     try:
