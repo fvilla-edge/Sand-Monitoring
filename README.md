@@ -10,7 +10,7 @@ usando un sensor piezoacustico **Vallen VS150-RI** y una placa **Red Pitaya STEM
 | Sensor | Vallen VS150-RI — banda 100-450 kHz, preamp 40 dB integrado |
 | ADC | Red Pitaya STEMlab 125-14 — 125 MS/s, 14 bits |
 | Modo ADC | High Voltage (jumper HV) — rango ±20 V |
-| Red Pitaya | IP: 192.168.0.55 — usuario: `root` |
+| Red Pitaya | IP: x.x.x.x — usuario: `root` |
 
 ## Estructura del repositorio
 
