@@ -42,14 +42,14 @@ python3 -m venv .venv
 ### 1. Copiar script actualizado a la Red Pitaya
 
 ```bash
-scp scripts_rp/capturar.py root@192.168.0.55:/root/
+scp scripts_rp/capturar.py root@x.x.x.x:/root/
 ```
 
 ### 2. Conectarse a la placa
 
 ```bash
-ssh root@192.168.0.55
-# password: edge1234
+ssh root@x.x.x.x
+# password: x
 ```
 
 ### 3. Capturar en la Red Pitaya
@@ -77,12 +77,12 @@ El archivo HDF5 queda en `/root/captura_<condicion>_<timestamp>.h5`.
 
 ```bash
 # Copia manual
-scp root@192.168.0.55:/root/captura_*.h5 capturas/
+scp root@x.x.x.x:/root/captura_*.h5 capturas/
 
 # O renombrar con contexto antes de copiar (ejemplo)
 # En la RPi: mv captura_alta_20260624_150618.h5 arena_vacio_alta_20260624_150618.h5
 # En la PC:
-scp root@192.168.0.55:/root/arena_vacio_*.h5 capturas/
+scp root@x.x.x.x:/root/arena_vacio_*.h5 capturas/
 ```
 
 ### 5. Ver metadatos de un archivo HDF5
