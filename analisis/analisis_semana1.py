@@ -240,7 +240,7 @@ def plot_boxplots_metricas(capturas: list[dict], output_dir: Path):
         datos = [por_condicion[c][metrica] for c in condiciones]
         colors = [CONDICION_COLOR.get(c, 'gray') for c in condiciones]
 
-        bp = ax.boxplot(datos, patch_artist=True, labels=condiciones)
+        bp = ax.boxplot(datos, patch_artist=True, tick_labels=condiciones)
         for patch, color in zip(bp['boxes'], colors):
             patch.set_facecolor(color)
             patch.set_alpha(0.7)

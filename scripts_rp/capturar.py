@@ -28,10 +28,10 @@ DEC_ENUM  = rp.RP_DEC_64     # decimacion 64 -> fs_ef = 1 953 125 Hz
 DEC_VAL   = 64
 FS_EF     = FS_BASE / DEC_VAL
 BUF_SIZE  = 16_384           # muestras por buffer (hardware fijo)
-N_BUFFERS = 50               # buffers consecutivos -> ~419 ms de senal total
+N_BUFFERS = 100              # buffers consecutivos -> ~838 ms de senal total
 CANAL     = rp.RP_CH_1
 DCPL      = rp.RP_DC
-GAIN      = rp.RP_GAIN_1X    # +/- 1 V rango
+GAIN      = rp.RP_GAIN_5X    # HV jumper -> +/- 20 V rango
 SENSOR    = 'VS150-RI'
 
 # Banda del sensor VS150-RI
@@ -153,6 +153,7 @@ def capturar(condicion, masa_g=-1.0, tamanio_mm=-1.0, caudal_Ls=-1.0):
             'caudal_Ls':    caudal_Ls,
             'f_low_hz':     F_LOW,
             'f_high_hz':    F_HIGH,
+            'gain':         'HV_20V',
         })
 
     print(f'\n[OK] {fname}')
