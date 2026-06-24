@@ -1,0 +1,18 @@
+# Entorno virtual Python
+.venv/
+
+# Capturas HDF5 (archivos grandes, no van en git)
+capturas/
+
+# Outputs generados por el analizador
+analisis/outputs/
+
+# Cache de Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Archivos temporales
+*.tmp
+*.swp
+.DS_Store
