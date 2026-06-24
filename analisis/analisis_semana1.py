@@ -93,6 +93,28 @@ def _filtro_bp(fs):
     return butter(ORD, [F_LOW / nyq, F_HIGH / nyq], btype='band')
 
 
+def calcular_rms_diferencial(capturas: list[dict]):
+    """Agrega rms_diferencial a cada captura: sqrt(max(0, rms² − baseline²)) / baseline.
+
+    Baseline = mediana RMS de las capturas de reposo. Si no hay reposo, usa el
+    minimo RMS del set. Formula de Gao 2015, adimensional y robusta a cambios
+    de ganancia o caudal.
+    """
+    reposo = [c for c in capturas if c['condicion'] == 'reposo']
+    if reposo:
+        baseline = float(np.median([c['metricas']['rms'] for c in reposo]))
+    else:
+        baseline = float(min(c['metricas']['rms'] for c in capturas))
+
+    for cap in capturas:
+        rms = cap['metricas']['rms']
+        cap['metricas']['rms_diferencial'] = float(
+            np.sqrt(max(0.0, rms**2 - baseline**2)) / baseline
+        )
+
+    print(f'  Baseline RMS (reposo): {baseline * 1000:.3f} mV')
+
+
 # ---------------------------------------------------------------------------
 # Graficos
 # ---------------------------------------------------------------------------
@@ -135,9 +157,8 @@ def plot_espectrograma(capturas: list[dict], output_dir: Path):
     espectros = []
     for cap in capturas:
         fs  = cap['fs']
-        b, a = _filtro_bp(fs)
-        sf = filtfilt(b, a, cap['raw'].astype(np.float64))
-        f, t, Sxx = spectrogram(sf, fs=fs, nperseg=nperseg, noverlap=noverlap,
+        sig = cap['raw'].astype(np.float64)
+        f, t, Sxx = spectrogram(sig, fs=fs, nperseg=nperseg, noverlap=noverlap,
                                  scaling='density')
         f_mask = f <= 600_000
         Sxx_db = 10 * np.log10(Sxx[f_mask, :] + 1e-20)
@@ -224,8 +245,8 @@ def plot_fft_comparativa(capturas: list[dict], output_dir: Path):
 
 def plot_boxplots_metricas(capturas: list[dict], output_dir: Path):
     """Boxplot de cada metrica agrupada por condicion."""
-    METRICAS = ['rms', 'energia', 'kurtosis', 'crest_factor', 'conteo_eventos']
-    LABELS   = ['RMS [V]', 'Energia [V^2]', 'Kurtosis', 'Crest Factor', 'Eventos']
+    METRICAS = ['rms', 'rms_diferencial', 'energia', 'kurtosis', 'crest_factor', 'conteo_eventos']
+    LABELS   = ['RMS [V]', 'RMS dif. [adim]', 'Energia [V^2]', 'Kurtosis', 'Crest Factor', 'Eventos']
 
     # Agrupar por condicion
     por_condicion: dict[str, dict] = {}
@@ -277,9 +298,8 @@ def plot_espectrograma_peak(capturas: list[dict], output_dir: Path):
     espectros_peak = []
     for cap in capturas:
         fs  = cap['fs']
-        b, a = _filtro_bp(fs)
-        sf = filtfilt(b, a, cap['raw'].astype(np.float64))
-        f, t, Sxx = spectrogram(sf, fs=fs, nperseg=nperseg, noverlap=noverlap,
+        sig = cap['raw'].astype(np.float64)
+        f, t, Sxx = spectrogram(sig, fs=fs, nperseg=nperseg, noverlap=noverlap,
                                  scaling='density')
 
         # Energia en la banda del sensor por trama de tiempo
@@ -347,7 +367,7 @@ def plot_espectrograma_peak(capturas: list[dict], output_dir: Path):
 
 def imprimir_tabla_metricas(capturas: list[dict]):
     """Imprime tabla resumen de metricas en consola."""
-    METRICAS = ['rms', 'energia', 'kurtosis', 'crest_factor', 'conteo_eventos']
+    METRICAS = ['rms', 'rms_diferencial', 'energia', 'kurtosis', 'crest_factor', 'conteo_eventos']
     header = f'{"Archivo":<45} {"Condicion":<14} ' + ' '.join(f'{m[:7]:>10}' for m in METRICAS)
     print('\n' + '=' * len(header))
     print(header)
@@ -381,6 +401,7 @@ def main():
     capturas = cargar_capturas(capturas_dir)
     print(f'Total: {len(capturas)} captura(s)\n')
 
+    calcular_rms_diferencial(capturas)
     imprimir_tabla_metricas(capturas)
 
     print('\nGenerando graficos...')
