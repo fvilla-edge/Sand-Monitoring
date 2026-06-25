@@ -39,7 +39,9 @@ F_LOW  = 100_000   # Hz
 F_HIGH = 450_000   # Hz
 ORD    = 4         # orden del filtro Butterworth pasa-banda
 
-UMBRAL_SIGMA = 3.0   # multiplo de sigma para conteo de eventos
+UMBRAL_SIGMA     = 3.0   # multiplo de sigma para conteo de eventos
+VENTANA_FA_MS    = 50    # tamaño de ventana para fraccion_activa [ms]
+UMBRAL_KURTOSIS  = 20    # umbral de kurtosis para ventana "activa"
 
 
 # ---------------------------------------------------------------------------
@@ -64,12 +66,22 @@ def _calcular_metricas(senal, b, a):
     sobre_thr = (np.abs(sf) > thr).astype(np.uint8)
     eventos   = int(np.sum(np.diff(sobre_thr) > 0))
 
+    ventana_n    = int(VENTANA_FA_MS / 1000.0 * FS_EF)
+    n_ventanas   = len(sf) // ventana_n
+    activas      = 0
+    for vi in range(n_ventanas):
+        seg = sf[vi * ventana_n:(vi + 1) * ventana_n]
+        if float(sp_kurtosis(seg, fisher=False)) > UMBRAL_KURTOSIS:
+            activas += 1
+    frac_activa = float(activas) / n_ventanas if n_ventanas > 0 else 0.0
+
     return {
-        'rms':            np.float64(rms),
-        'energia':        np.float64(energy),
-        'kurtosis':       np.float64(kurt),
-        'crest_factor':   np.float64(crest),
-        'conteo_eventos': np.int64(eventos),
+        'rms':             np.float64(rms),
+        'energia':         np.float64(energy),
+        'kurtosis':        np.float64(kurt),
+        'crest_factor':    np.float64(crest),
+        'conteo_eventos':  np.int64(eventos),
+        'fraccion_activa': np.float64(frac_activa),
     }
 
 
@@ -157,16 +169,19 @@ def capturar(condicion, masa_g=-1.0, tamanio_mm=-1.0, caudal_Ls=-1.0):
             'masa_arena_g': masa_g,
             'tamanio_mm':   tamanio_mm,
             'caudal_Ls':    caudal_Ls,
-            'f_low_hz':     F_LOW,
-            'f_high_hz':    F_HIGH,
-            'gain':         'HV_20V',
+            'f_low_hz':          F_LOW,
+            'f_high_hz':         F_HIGH,
+            'gain':              'HV_20V',
+            'ventana_fa_ms':     VENTANA_FA_MS,
+            'umbral_kurtosis_fa': UMBRAL_KURTOSIS,
         })
 
     print(f'\n[OK] {fname}')
-    print(f'  RMS          = {mets["rms"]:.6f} V')
-    print(f'  kurtosis     = {mets["kurtosis"]:.2f}')
-    print(f'  crest_factor = {mets["crest_factor"]:.2f}')
-    print(f'  eventos      = {mets["conteo_eventos"]}')
+    print(f'  RMS            = {mets["rms"]:.6f} V')
+    print(f'  kurtosis       = {mets["kurtosis"]:.2f}')
+    print(f'  crest_factor   = {mets["crest_factor"]:.2f}')
+    print(f'  eventos        = {mets["conteo_eventos"]}')
+    print(f'  fraccion_activa= {mets["fraccion_activa"]:.2%}')
     return fname
 
 
