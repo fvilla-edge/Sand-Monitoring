@@ -4,15 +4,10 @@ analisis_semana1.py — Analisis de capturas HDF5 del sistema de deteccion de ar
 Genera espectrogramas, comparaciones de senal y boxplots de metricas.
 
 Uso:
-  python3 analisis_semana1.py                     # lee todos los .h5 de ../capturas/
-  python3 analisis_semana1.py --dir /ruta/custom  # directorio alternativo
-  python3 analisis_semana1.py --sync              # copia primero desde Red Pitaya
-
-Para sincronizar capturas desde la Red Pitaya:
-  scp root@192.168.0.55:/root/captura_*.h5 ../capturas/
+  python3 analisis_semana1.py --dir capturas/semana2
+  python3 analisis_semana1.py --sync
 """
 import argparse
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -20,36 +15,33 @@ from pathlib import Path
 import h5py
 import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib.gridspec as gridspec
 from scipy.signal import butter, filtfilt, spectrogram
 
 # ---------------------------------------------------------------------------
-# Constantes — deben coincidir con capturar.py
+# Constantes
 # ---------------------------------------------------------------------------
-F_LOW  = 100_000   # Hz
-F_HIGH = 450_000   # Hz
+F_LOW  = 100_000
+F_HIGH = 450_000
 ORD    = 4
 
-RPi_HOST    = 'root@192.168.0.55'
-RPi_SRC     = '/root/captura_*.h5'
-OUTPUT_DIR  = Path(__file__).parent / 'outputs'
+RPi_HOST   = 'root@192.168.0.55'
+RPi_SRC    = '/root/captura_*.h5'
+OUTPUT_DIR = Path(__file__).parent / 'outputs'
 
 CONDICION_COLOR = {
-    'reposo':      '#2196F3',   # azul
-    'flujo_limpio':'#4CAF50',   # verde
-    'baja':        '#FFC107',   # amarillo
-    'media':       '#FF9800',   # naranja
-    'alta':        '#F44336',   # rojo
+    'reposo':       '#2196F3',
+    'flujo_limpio': '#4CAF50',
+    'baja':         '#FFC107',
+    'media':        '#FF9800',
+    'alta':         '#F44336',
 }
-
 ORDEN_CONDICION = ['reposo', 'flujo_limpio', 'baja', 'media', 'alta']
 
 
 # ---------------------------------------------------------------------------
-# I/O
+# I/O — carga bajo demanda para no saturar RAM con datasets grandes
 # ---------------------------------------------------------------------------
 def sincronizar_desde_rpi(dest_dir: Path):
-    """Copia archivos .h5 desde la Red Pitaya via scp."""
     dest_dir.mkdir(parents=True, exist_ok=True)
     cmd = ['sshpass', '-p', 'edge1234', 'scp', '-o', 'StrictHostKeyChecking=no',
            f'{RPi_HOST}:{RPi_SRC}', str(dest_dir)]
@@ -62,7 +54,7 @@ def sincronizar_desde_rpi(dest_dir: Path):
 
 
 def cargar_capturas(capturas_dir: Path) -> list[dict]:
-    """Carga todos los archivos .h5 del directorio y devuelve lista de dicts."""
+    """Carga solo metadatos y metricas. La senal raw se lee bajo demanda."""
     archivos = sorted(capturas_dir.glob('*.h5'))
     if not archivos:
         print(f'No se encontraron archivos .h5 en {capturas_dir}')
@@ -71,13 +63,12 @@ def cargar_capturas(capturas_dir: Path) -> list[dict]:
     capturas = []
     for ruta in archivos:
         with h5py.File(ruta, 'r') as f:
-            raw = f['raw_signal'][:]
             mets = {k: float(f['metricas'][k][()]) for k in f['metricas']}
             mets['conteo_eventos'] = int(f['metricas']['conteo_eventos'][()])
             attrs = dict(f.attrs)
         capturas.append({
             'archivo':   ruta.name,
-            'raw':       raw,
+            'ruta':      ruta,
             'metricas':  mets,
             'attrs':     attrs,
             'condicion': str(attrs.get('condicion', 'desconocido')),
@@ -88,30 +79,28 @@ def cargar_capturas(capturas_dir: Path) -> list[dict]:
     return capturas
 
 
+def _raw(cap: dict, n: int | None = None) -> np.ndarray:
+    """Lee la senal raw de un HDF5. Si n es entero lee solo los primeros n samples."""
+    with h5py.File(cap['ruta'], 'r') as f:
+        return f['raw_signal'][:n] if n else f['raw_signal'][:]
+
+
 def _filtro_bp(fs):
     nyq = fs / 2.0
     return butter(ORD, [F_LOW / nyq, F_HIGH / nyq], btype='band')
 
 
 def calcular_rms_diferencial(capturas: list[dict]):
-    """Agrega rms_diferencial a cada captura: sqrt(max(0, rms² − baseline²)) / baseline.
-
-    Baseline = mediana RMS de las capturas de reposo. Si no hay reposo, usa el
-    minimo RMS del set. Formula de Gao 2015, adimensional y robusta a cambios
-    de ganancia o caudal.
-    """
+    """Agrega rms_diferencial: sqrt(max(0, rms²-baseline²)) / baseline (Gao 2015)."""
     reposo = [c for c in capturas if c['condicion'] == 'reposo']
-    if reposo:
-        baseline = float(np.median([c['metricas']['rms'] for c in reposo]))
-    else:
-        baseline = float(min(c['metricas']['rms'] for c in capturas))
+    baseline = float(np.median([c['metricas']['rms'] for c in reposo])) if reposo \
+               else float(min(c['metricas']['rms'] for c in capturas))
 
     for cap in capturas:
         rms = cap['metricas']['rms']
         cap['metricas']['rms_diferencial'] = float(
             np.sqrt(max(0.0, rms**2 - baseline**2)) / baseline
         )
-
     print(f'  Baseline RMS (reposo): {baseline * 1000:.3f} mV')
 
 
@@ -119,28 +108,35 @@ def calcular_rms_diferencial(capturas: list[dict]):
 # Graficos
 # ---------------------------------------------------------------------------
 def plot_senal_raw(capturas: list[dict], output_dir: Path):
-    """Primeros 2ms de senal raw para cada condicion."""
-    fig, axes = plt.subplots(len(capturas), 1,
-                              figsize=(14, 2.5 * len(capturas)),
-                              sharex=False)
-    if len(capturas) == 1:
+    """Primeros 2 ms — una captura representativa por condicion."""
+    por_cond: dict[str, dict] = {}
+    for cap in capturas:
+        if cap['condicion'] not in por_cond:
+            por_cond[cap['condicion']] = cap
+
+    representativas = [por_cond[c] for c in ORDEN_CONDICION if c in por_cond]
+    n = len(representativas)
+    fig, axes = plt.subplots(n, 1, figsize=(14, 2.5 * n), sharex=False)
+    if n == 1:
         axes = [axes]
 
-    for ax, cap in zip(axes, capturas):
-        fs  = cap['fs']
-        raw = cap['raw']
-        n_show = min(int(0.002 * fs), len(raw))   # 2 ms
-        t_ms = np.arange(n_show) / fs * 1000
-        cond = cap['condicion']
-        color = CONDICION_COLOR.get(cond, 'gray')
-        ax.plot(t_ms, raw[:n_show], color=color, linewidth=0.5, alpha=0.9)
+    for ax, cap in zip(axes, representativas):
+        fs     = cap['fs']
+        n_show = int(0.002 * fs)
+        raw    = _raw(cap, n_show)
+        t_ms   = np.arange(len(raw)) / fs * 1000
+        color  = CONDICION_COLOR.get(cap['condicion'], 'gray')
+        ax.plot(t_ms, raw, color=color, linewidth=0.5, alpha=0.9)
         ax.set_ylabel('V', fontsize=9)
-        ax.set_title(f'{cap["archivo"]}  |  RMS={cap["metricas"]["rms"]:.4f} V'
-                     f'  kurtosis={cap["metricas"]["kurtosis"]:.2f}', fontsize=9)
+        ax.set_title(
+            f'{cap["condicion"]}  |  RMS={cap["metricas"]["rms"]:.4f} V'
+            f'  kurtosis={cap["metricas"]["kurtosis"]:.2f}  ({cap["archivo"]})',
+            fontsize=8)
         ax.grid(True, alpha=0.3)
 
     axes[-1].set_xlabel('Tiempo [ms]')
-    fig.suptitle('Senal raw — primeros 2 ms', fontsize=12, fontweight='bold')
+    fig.suptitle('Senal raw — primeros 2 ms (una captura por condicion)',
+                 fontsize=11, fontweight='bold')
     plt.tight_layout()
     out = output_dir / 'senal_raw.png'
     plt.savefig(out, dpi=150, bbox_inches='tight')
@@ -148,86 +144,24 @@ def plot_senal_raw(capturas: list[dict], output_dir: Path):
     print(f'  Guardado: {out.name}')
 
 
-def plot_espectrograma(capturas: list[dict], output_dir: Path):
-    """Espectrograma STFT para cada captura con escala de color compartida."""
-    nperseg  = 512
-    noverlap = int(nperseg * 0.75)
-
-    # Primera pasada: calcular todos los espectrogramas y determinar rango global
-    espectros = []
-    for cap in capturas:
-        fs  = cap['fs']
-        sig = cap['raw'].astype(np.float64)
-        f, t, Sxx = spectrogram(sig, fs=fs, nperseg=nperseg, noverlap=noverlap,
-                                 scaling='density')
-        f_mask = f <= 600_000
-        Sxx_db = 10 * np.log10(Sxx[f_mask, :] + 1e-20)
-        espectros.append((f[f_mask], t, Sxx_db))
-
-    # Escala compartida anclada al ruido base:
-    # vmin = mediana del reposo (piso de ruido), vmax = max global (eventos de arena)
-    reposo_idx = next((i for i, c in enumerate(capturas) if c['condicion'] == 'reposo'), 0)
-    vmin = float(np.median(espectros[reposo_idx][2])) - 3
-    vmax = float(max(s[2].max() for s in espectros))
-
-    n_cols = min(len(capturas), 3)
-    n_rows = (len(capturas) + n_cols - 1) // n_cols
-    fig, axes = plt.subplots(n_rows, n_cols,
-                              figsize=(7 * n_cols, 4 * n_rows), squeeze=False)
-
-    for idx, (cap, (f_v, t_v, Sxx_db)) in enumerate(zip(capturas, espectros)):
-        ax   = axes[idx // n_cols][idx % n_cols]
-        cond = cap['condicion']
-        im   = ax.pcolormesh(t_v * 1000, f_v / 1000, Sxx_db,  # t_v ya en segundos
-                             shading='gouraud', cmap='inferno',
-                             vmin=vmin, vmax=vmax)
-        ax.axhline(F_LOW  / 1000, color='cyan', linewidth=0.9,
-                   linestyle='--', alpha=0.8, label='100 kHz')
-        ax.axhline(F_HIGH / 1000, color='cyan', linewidth=0.9,
-                   linestyle='--', alpha=0.8, label='450 kHz')
-        ax.set_ylabel('Frecuencia [kHz]')
-        ax.set_xlabel('Tiempo [ms]')
-        ax.set_title(f'{cond} — kurtosis={cap["metricas"]["kurtosis"]:.1f}\n'
-                     f'{cap["archivo"]}', fontsize=8)
-        plt.colorbar(im, ax=ax, label='dB/Hz')
-
-    for idx in range(len(capturas), n_rows * n_cols):
-        axes[idx // n_cols][idx % n_cols].set_visible(False)
-
-    fig.suptitle(f'Espectrogramas STFT  |  escala compartida [{vmin:.0f}, {vmax:.0f}] dB/Hz',
-                 fontsize=11, fontweight='bold')
-    plt.tight_layout()
-    out = output_dir / 'espectrogramas.png'
-    plt.savefig(out, dpi=150, bbox_inches='tight')
-    plt.close()
-    print(f'  Guardado: {out.name}')
-
-
 def plot_fft_comparativa(capturas: list[dict], output_dir: Path):
-    """Espectro max-hold: maximo de cada bin de frecuencia sobre toda la captura.
-
-    Equivalente al display de pico del GUI web de Red Pitaya. Un evento breve
-    de arena (200 ms en 2.5 s) queda completamente visible porque se toma el
-    maximo en lugar del promedio.
-    """
+    """Max-hold spectrum: maximo de cada bin sobre toda la captura (equivalente GUI web)."""
     nperseg  = 2048
     noverlap = int(nperseg * 0.75)
 
     fig, ax = plt.subplots(figsize=(14, 6))
 
     for cap in capturas:
-        fs   = cap['fs']
-        sig  = cap['raw'].astype(np.float64)
-        f, _, Sxx = spectrogram(sig, fs=fs, nperseg=nperseg, noverlap=noverlap,
-                                 scaling='density')
-
+        sig  = _raw(cap).astype(np.float64)
+        f, _, Sxx = spectrogram(sig, fs=cap['fs'], nperseg=nperseg,
+                                 noverlap=noverlap, scaling='density')
+        del sig
         Sxx_db_max = 10 * np.log10(Sxx.max(axis=1) + 1e-20)
-
+        del Sxx
         mask  = f <= 600_000
-        cond  = cap['condicion']
-        color = CONDICION_COLOR.get(cond, 'gray')
+        color = CONDICION_COLOR.get(cap['condicion'], 'gray')
         ax.plot(f[mask] / 1000, Sxx_db_max[mask],
-                color=color, label=cond, linewidth=1.0, alpha=0.9)
+                color=color, label=cap['condicion'], linewidth=0.8, alpha=0.7)
 
     ax.axvspan(F_LOW / 1000, F_HIGH / 1000, alpha=0.08, color='yellow',
                label='Banda sensor 100-450 kHz')
@@ -237,7 +171,12 @@ def plot_fft_comparativa(capturas: list[dict], output_dir: Path):
     ax.set_ylabel('PSD pico [dB/Hz]')
     ax.set_title('Espectro pico (max-hold) — maximo por bin sobre toda la captura',
                  fontweight='bold')
-    ax.legend(fontsize=9)
+
+    # Leyenda sin duplicados
+    handles, labels = ax.get_legend_handles_labels()
+    seen = set()
+    ax.legend([h for h, l in zip(handles, labels) if not (l in seen or seen.add(l))],
+              [l for l in labels if l not in seen or not seen.add(l)], fontsize=8)
     ax.grid(True, alpha=0.3)
     plt.tight_layout()
     out = output_dir / 'fft_comparativa.png'
@@ -246,32 +185,167 @@ def plot_fft_comparativa(capturas: list[dict], output_dir: Path):
     print(f'  Guardado: {out.name}')
 
 
+def plot_espectrograma(capturas: list[dict], output_dir: Path):
+    """Espectrograma STFT con escala compartida. Dos pasadas para no saturar RAM."""
+    nperseg  = 512
+    noverlap = int(nperseg * 0.75)
+
+    # Pasada 1: solo stats para determinar escala
+    reposo_median = None
+    global_max    = -np.inf
+    for cap in capturas:
+        sig  = _raw(cap).astype(np.float64)
+        f, _, Sxx = spectrogram(sig, fs=cap['fs'], nperseg=nperseg,
+                                 noverlap=noverlap, scaling='density')
+        del sig
+        f_mask = f <= 600_000
+        Sxx_db = 10 * np.log10(Sxx[f_mask, :] + 1e-20)
+        del Sxx
+        if cap['condicion'] == 'reposo' and reposo_median is None:
+            reposo_median = float(np.median(Sxx_db))
+        global_max = max(global_max, float(Sxx_db.max()))
+        del Sxx_db
+
+    vmin = (reposo_median - 3) if reposo_median is not None else (global_max - 60)
+    vmax = global_max
+
+    # Pasada 2: plotear
+    n_cols = min(len(capturas), 4)
+    n_rows = (len(capturas) + n_cols - 1) // n_cols
+    fig, axes = plt.subplots(n_rows, n_cols,
+                              figsize=(6 * n_cols, 3.5 * n_rows), squeeze=False)
+
+    for idx, cap in enumerate(capturas):
+        sig  = _raw(cap).astype(np.float64)
+        f, t, Sxx = spectrogram(sig, fs=cap['fs'], nperseg=nperseg,
+                                 noverlap=noverlap, scaling='density')
+        del sig
+        f_mask = f <= 600_000
+        Sxx_db = 10 * np.log10(Sxx[f_mask, :] + 1e-20)
+        del Sxx
+
+        ax = axes[idx // n_cols][idx % n_cols]
+        im = ax.pcolormesh(t * 1000, f[f_mask] / 1000, Sxx_db,
+                           shading='gouraud', cmap='inferno', vmin=vmin, vmax=vmax)
+        del Sxx_db
+        ax.axhline(F_LOW  / 1000, color='cyan', linewidth=0.8, linestyle='--', alpha=0.7)
+        ax.axhline(F_HIGH / 1000, color='cyan', linewidth=0.8, linestyle='--', alpha=0.7)
+        ax.set_ylabel('Frec. [kHz]', fontsize=7)
+        ax.set_xlabel('Tiempo [ms]', fontsize=7)
+        ax.set_title(f'{cap["condicion"]}  kurt={cap["metricas"]["kurtosis"]:.1f}\n'
+                     f'{cap["archivo"]}', fontsize=6)
+        plt.colorbar(im, ax=ax, label='dB/Hz')
+
+    for idx in range(len(capturas), n_rows * n_cols):
+        axes[idx // n_cols][idx % n_cols].set_visible(False)
+
+    fig.suptitle(f'Espectrogramas STFT  |  escala [{vmin:.0f}, {vmax:.0f}] dB/Hz',
+                 fontsize=10, fontweight='bold')
+    plt.tight_layout()
+    out = output_dir / 'espectrogramas.png'
+    plt.savefig(out, dpi=120, bbox_inches='tight')
+    plt.close()
+    print(f'  Guardado: {out.name}')
+
+
+def plot_espectrograma_peak(capturas: list[dict], output_dir: Path):
+    """Espectrograma centrado en el instante de maxima energia. Dos pasadas."""
+    nperseg   = 512
+    noverlap  = int(nperseg * 0.75)
+    VENTANA_S = 0.5
+
+    # Pasada 1: encontrar t_pico y stats de escala
+    picos      = []
+    vmin_stats = []
+    global_max = -np.inf
+
+    for cap in capturas:
+        sig  = _raw(cap).astype(np.float64)
+        f, t, Sxx = spectrogram(sig, fs=cap['fs'], nperseg=nperseg,
+                                 noverlap=noverlap, scaling='density')
+        del sig
+        banda    = (f >= F_LOW) & (f <= F_HIGH)
+        idx_pico = int(np.argmax(Sxx[banda, :].sum(axis=0)))
+        t_pico   = float(t[idx_pico])
+        picos.append(t_pico)
+
+        f_mask = f <= 600_000
+        Sxx_db = 10 * np.log10(Sxx[f_mask, :] + 1e-20)
+        del Sxx
+        if cap['condicion'] == 'reposo':
+            vmin_stats.append(float(np.median(Sxx_db)))
+        global_max = max(global_max, float(Sxx_db.max()))
+        del Sxx_db
+
+    vmin = (np.median(vmin_stats) - 3) if vmin_stats else (global_max - 60)
+    vmax = global_max
+
+    # Pasada 2: plotear ventana alrededor del pico
+    n_cols = min(len(capturas), 4)
+    n_rows = (len(capturas) + n_cols - 1) // n_cols
+    fig, axes = plt.subplots(n_rows, n_cols,
+                              figsize=(6 * n_cols, 3.5 * n_rows), squeeze=False)
+
+    for idx, (cap, t_pico) in enumerate(zip(capturas, picos)):
+        sig  = _raw(cap).astype(np.float64)
+        f, t, Sxx = spectrogram(sig, fs=cap['fs'], nperseg=nperseg,
+                                 noverlap=noverlap, scaling='density')
+        del sig
+
+        t_ini  = max(0, t_pico - VENTANA_S / 2)
+        t_fin  = min(float(t[-1]), t_pico + VENTANA_S / 2)
+        t_mask = (t >= t_ini) & (t <= t_fin)
+        f_mask = f <= 600_000
+
+        Sxx_db = 10 * np.log10(Sxx[f_mask, :] + 1e-20)
+        del Sxx
+        t_rel  = (t[t_mask] - t_pico) * 1000
+
+        ax = axes[idx // n_cols][idx % n_cols]
+        im = ax.pcolormesh(t_rel, f[f_mask] / 1000, Sxx_db[:, t_mask],
+                           shading='gouraud', cmap='inferno', vmin=vmin, vmax=vmax)
+        del Sxx_db
+        ax.axhline(F_LOW  / 1000, color='cyan', linewidth=0.8, linestyle='--', alpha=0.7)
+        ax.axhline(F_HIGH / 1000, color='cyan', linewidth=0.8, linestyle='--', alpha=0.7)
+        ax.axvline(0, color='white', linewidth=0.8, linestyle=':', alpha=0.7)
+        ax.set_ylabel('Frec. [kHz]', fontsize=7)
+        ax.set_xlabel('t relativo [ms]', fontsize=7)
+        ax.set_title(f'{cap["condicion"]}  t={t_pico*1000:.0f}ms  '
+                     f'kurt={cap["metricas"]["kurtosis"]:.1f}\n{cap["archivo"]}',
+                     fontsize=6)
+        plt.colorbar(im, ax=ax, label='dB/Hz')
+
+    for idx in range(len(capturas), n_rows * n_cols):
+        axes[idx // n_cols][idx % n_cols].set_visible(False)
+
+    fig.suptitle(f'Espectrograma PICO (±250 ms)  |  escala [{vmin:.0f}, {vmax:.0f}] dB/Hz',
+                 fontsize=10, fontweight='bold')
+    plt.tight_layout()
+    out = output_dir / 'espectrograma_peak.png'
+    plt.savefig(out, dpi=120, bbox_inches='tight')
+    plt.close()
+    print(f'  Guardado: {out.name}')
+
+
 def plot_boxplots_metricas(capturas: list[dict], output_dir: Path):
     """Boxplot de cada metrica agrupada por condicion."""
-    METRICAS = ['rms', 'rms_diferencial', 'energia', 'kurtosis', 'crest_factor', 'conteo_eventos']
-    LABELS   = ['RMS [V]', 'RMS dif. [adim]', 'Energia [V^2]', 'Kurtosis', 'Crest Factor', 'Eventos']
+    METRICAS = ['rms', 'rms_diferencial', 'energia', 'kurtosis', 'crest_factor']
+    LABELS   = ['RMS [V]', 'RMS dif.', 'Energia [V²]', 'Kurtosis', 'Crest Factor']
 
-    # Agrupar por condicion
-    por_condicion: dict[str, dict] = {}
+    por_cond: dict[str, dict] = {}
     for cap in capturas:
         cond = cap['condicion']
-        if cond not in por_condicion:
-            por_condicion[cond] = {m: [] for m in METRICAS}
+        if cond not in por_cond:
+            por_cond[cond] = {m: [] for m in METRICAS}
         for m in METRICAS:
-            por_condicion[cond][m].append(cap['metricas'][m])
+            por_cond[cond][m].append(cap['metricas'][m])
 
-    condiciones = [c for c in ORDEN_CONDICION if c in por_condicion]
-    if not condiciones:
-        condiciones = list(por_condicion.keys())
+    condiciones = [c for c in ORDEN_CONDICION if c in por_cond] or list(por_cond)
 
     fig, axes = plt.subplots(1, len(METRICAS), figsize=(4 * len(METRICAS), 5))
-    if len(METRICAS) == 1:
-        axes = [axes]
-
-    for ax, metrica, label in zip(axes, METRICAS, LABELS):
-        datos = [por_condicion[c][metrica] for c in condiciones]
+    for ax, met, label in zip(axes, METRICAS, LABELS):
+        datos  = [por_cond[c][met] for c in condiciones]
         colors = [CONDICION_COLOR.get(c, 'gray') for c in condiciones]
-
         bp = ax.boxplot(datos, patch_artist=True, tick_labels=condiciones)
         for patch, color in zip(bp['boxes'], colors):
             patch.set_facecolor(color)
@@ -288,119 +362,23 @@ def plot_boxplots_metricas(capturas: list[dict], output_dir: Path):
     print(f'  Guardado: {out.name}')
 
 
-def plot_espectrograma_peak(capturas: list[dict], output_dir: Path):
-    """Espectrograma centrado en el instante de maxima energia por captura.
-
-    Muestra una ventana de +/-250 ms alrededor del momento de mayor actividad
-    en la banda 100-450 kHz — equivalente a la vista instantanea del GUI web.
-    """
-    nperseg  = 512
-    noverlap = int(nperseg * 0.75)
-    VENTANA_S = 0.5   # ventana total: pico -/+ 250 ms
-
-    espectros_peak = []
-    for cap in capturas:
-        fs  = cap['fs']
-        sig = cap['raw'].astype(np.float64)
-        f, t, Sxx = spectrogram(sig, fs=fs, nperseg=nperseg, noverlap=noverlap,
-                                 scaling='density')
-
-        # Energia en la banda del sensor por trama de tiempo
-        banda = (f >= F_LOW) & (f <= F_HIGH)
-        energia_t = Sxx[banda, :].sum(axis=0)
-        idx_pico  = int(np.argmax(energia_t))
-        t_pico    = t[idx_pico]
-
-        t_ini  = max(0, t_pico - VENTANA_S / 2)
-        t_fin  = min(t[-1], t_pico + VENTANA_S / 2)
-        t_mask = (t >= t_ini) & (t <= t_fin)
-
-        f_mask = f <= 600_000
-        Sxx_db = 10 * np.log10(Sxx[f_mask, :] + 1e-20)
-        espectros_peak.append({
-            'f':      f[f_mask],
-            't':      t[t_mask],
-            'Sxx_db': Sxx_db[:, t_mask],
-            't_pico': t_pico,
-        })
-
-    reposo_idx = next((i for i, c in enumerate(capturas) if c['condicion'] == 'reposo'), 0)
-    vmin = float(np.median(espectros_peak[reposo_idx]['Sxx_db'])) - 3
-    vmax = float(max(ep['Sxx_db'].max() for ep in espectros_peak))
-
-    n_cols = min(len(capturas), 3)
-    n_rows = (len(capturas) + n_cols - 1) // n_cols
-    fig, axes = plt.subplots(n_rows, n_cols,
-                              figsize=(7 * n_cols, 4 * n_rows), squeeze=False)
-
-    for idx, (cap, ep) in enumerate(zip(capturas, espectros_peak)):
-        ax   = axes[idx // n_cols][idx % n_cols]
-        cond = cap['condicion']
-        t_rel = (ep['t'] - ep['t_pico']) * 1000   # ms relativo al pico
-
-        im = ax.pcolormesh(t_rel, ep['f'] / 1000, ep['Sxx_db'],
-                           shading='gouraud', cmap='inferno',
-                           vmin=vmin, vmax=vmax)
-        ax.axhline(F_LOW  / 1000, color='cyan', linewidth=0.9,
-                   linestyle='--', alpha=0.8, label='100 kHz')
-        ax.axhline(F_HIGH / 1000, color='cyan', linewidth=0.9,
-                   linestyle='--', alpha=0.8, label='450 kHz')
-        ax.axvline(0, color='white', linewidth=0.8, linestyle=':', alpha=0.7)
-        ax.set_ylabel('Frecuencia [kHz]')
-        ax.set_xlabel('Tiempo relativo al pico [ms]')
-        ax.set_title(
-            f'{cond}  t_pico={ep["t_pico"]*1000:.0f} ms  '
-            f'kurtosis={cap["metricas"]["kurtosis"]:.1f}\n{cap["archivo"]}',
-            fontsize=8)
-        plt.colorbar(im, ax=ax, label='dB/Hz')
-
-    for idx in range(len(capturas), n_rows * n_cols):
-        axes[idx // n_cols][idx % n_cols].set_visible(False)
-
-    fig.suptitle(
-        f'Espectrograma PICO  (±250 ms alrededor del maximo de energia en banda)'
-        f'  |  escala [{vmin:.0f}, {vmax:.0f}] dB/Hz',
-        fontsize=11, fontweight='bold')
-    plt.tight_layout()
-    out = output_dir / 'espectrograma_peak.png'
-    plt.savefig(out, dpi=150, bbox_inches='tight')
-    plt.close()
-    print(f'  Guardado: {out.name}')
-
-
 def plot_scatter_masa(capturas: list[dict], output_dir: Path):
-    """Scatter de kurtosis y crest_factor vs masa de arena [g].
-
-    Valida si las metricas son monotonicas con la cantidad de arena.
-    Solo incluye capturas con masa registrada (masa_arena_g > 0).
-    """
+    """Kurtosis, crest factor y RMS diferencial vs masa de arena [g]."""
     con_masa = [c for c in capturas if float(c['attrs'].get('masa_arena_g', -1)) >= 0]
     if len(con_masa) < 2:
         print('  Scatter masa omitido (necesita al menos 2 capturas con --masa_g)')
         return
 
-    METRICAS = [
-        ('kurtosis',    'Kurtosis'),
-        ('crest_factor','Crest Factor'),
-        ('rms_diferencial', 'RMS diferencial [adim]'),
-    ]
+    METRICAS = [('kurtosis', 'Kurtosis'),
+                ('crest_factor', 'Crest Factor'),
+                ('rms_diferencial', 'RMS diferencial [adim]')]
 
-    fig, axes = plt.subplots(1, len(METRICAS), figsize=(5 * len(METRICAS), 5))
-    if len(METRICAS) == 1:
-        axes = [axes]
-
+    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
     for ax, (met, label) in zip(axes, METRICAS):
         masas  = [float(c['attrs']['masa_arena_g']) for c in con_masa]
         vals   = [c['metricas'][met] for c in con_masa]
         colors = [CONDICION_COLOR.get(c['condicion'], 'gray') for c in con_masa]
-
-        ax.scatter(masas, vals, c=colors, s=60, zorder=3)
-
-        # etiqueta de condicion en cada punto
-        for m, v, cap in zip(masas, vals, con_masa):
-            ax.annotate(cap['condicion'], (m, v),
-                        textcoords='offset points', xytext=(5, 3), fontsize=7)
-
+        ax.scatter(masas, vals, c=colors, s=50, zorder=3, alpha=0.8)
         ax.set_xlabel('Masa de arena [g]')
         ax.set_ylabel(label)
         ax.set_title(label, fontsize=10)
@@ -416,9 +394,9 @@ def plot_scatter_masa(capturas: list[dict], output_dir: Path):
 
 
 def imprimir_tabla_metricas(capturas: list[dict]):
-    """Imprime tabla resumen de metricas en consola."""
     METRICAS = ['rms', 'rms_diferencial', 'energia', 'kurtosis', 'crest_factor', 'conteo_eventos']
-    header = f'{"Archivo":<45} {"Condicion":<14} ' + ' '.join(f'{m[:7]:>10}' for m in METRICAS)
+    header   = f'{"Archivo":<45} {"Condicion":<14} ' + \
+               ' '.join(f'{m[:7]:>10}' for m in METRICAS)
     print('\n' + '=' * len(header))
     print(header)
     print('=' * len(header))
@@ -435,10 +413,10 @@ def imprimir_tabla_metricas(capturas: list[dict]):
 # ---------------------------------------------------------------------------
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument('--dir',  default=str(Path(__file__).parent.parent / 'capturas'),
+    p.add_argument('--dir',  default=str(Path(__file__).parent.parent / 'capturas' / 'semana1'),
                    help='Directorio con archivos .h5')
     p.add_argument('--sync', action='store_true',
-                   help='Sincronizar capturas desde Red Pitaya antes de analizar')
+                   help='Sincronizar desde Red Pitaya antes de analizar')
     args = p.parse_args()
 
     capturas_dir = Path(args.dir)
@@ -463,8 +441,6 @@ def main():
 
     if len(capturas) > 1:
         plot_boxplots_metricas(capturas, OUTPUT_DIR)
-    else:
-        print('  Boxplot omitido (necesita mas de 1 captura)')
 
     print(f'\nOutputs en: {OUTPUT_DIR}')
 

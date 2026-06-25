@@ -6,6 +6,7 @@ capturas/
 
 # Outputs generados por el analizador
 analisis/outputs/
+analisis/outputs_semana2/
 
 # Cache de Python
 __pycache__/
