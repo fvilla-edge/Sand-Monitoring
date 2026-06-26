@@ -178,5 +178,28 @@ Verificación de que la placa captura y guarda en el USB correctamente.
 ### Paso 2 — loop continuo ✅ LISTO
 Loop con streaming, Ctrl+C limpio, chequeo de espacio, chunks numerados, duración en minutos.
 
-### Paso 3 — por definir
-Probablemente: script de lectura rápida en PC para revisar los archivos del USB.
+### Paso 3 — revision rapida en PC ✅ LISTO
+
+Script `analisis/revisar_campo.py` — calcula kurtosis, crest factor y fraccion_activa sobre la senal filtrada (100–450 kHz) y muestra una tabla compacta con deteccion automatica.
+
+```bash
+# Revisar todo el USB de una
+.venv/bin/python3 analisis/revisar_campo.py /mnt/usb/
+
+# Despues de copiar a la PC
+.venv/bin/python3 analisis/revisar_campo.py capturas/semana_campo/*.h5
+```
+
+Ejemplo de salida:
+
+```
+archivo                                     cond        chunk   dur     kurt   crest   fa%     MB   deteccion
+campo_reposo_20260626_143000_0001.h5        reposo          1  1.0m      4.1     5.3   0.0%  216.0  reposo
+campo_con_arena_20260626_150000_0001.h5     con_arena       1  1.0m    412.5   101.8  68.0%  216.0  *** ARENA ***
+
+  2 archivos | 2.0 min total | 1 con arena | 1 en reposo
+
+  Referencia: kurtosis reposo ~3 | arena >20  |  fa% reposo 0% | arena >25%
+```
+
+Tarda unos segundos por archivo (aplica filtro y computa metricas sobre toda la senal cruda).
