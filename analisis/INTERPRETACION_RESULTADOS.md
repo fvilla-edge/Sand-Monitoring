@@ -72,7 +72,7 @@ fraccion_activa = ventanas con kurtosis > 20 / total de ventanas
 
 El std de baja es ±6% (CV=14%) vs la kurtosis global que tenía CV=121%. **Esta es la métrica más estable para clasificar cantidad de arena.**
 
-> Parámetros actuales: ventana = 50 ms · umbral kurtosis = 20 · fs = 1.953 MHz. Estos valores pueden ajustarse en `analisis_semana2.py`.
+> Parámetros actuales: ventana = 50 ms · umbral kurtosis = 20 · fs = 1.953 MHz. Desde semana 3, estos parámetros se aplican en tiempo de captura dentro de `capturar.py` y el resultado se guarda nativamente en el HDF5 — ya no es necesario releer el `raw_signal` para obtenerla.
 
 ---
 
@@ -138,18 +138,29 @@ Cuenta cruces de umbral (3σ de la propia señal). Problema: cuando hay un impac
 
 ---
 
-## Tabla de referencia completa — semana 2
+## Tablas de referencia completas
 
-| Condición | Masa | Kurtosis | Crest Factor | Fracción activa | RMS dif. |
-|---|---|---|---|---|---|
-| Reposo | 0 g | 3.00 ±0.00 | 5.3 ±0.2 | 0% ±0% | 0.02 ±0.02 |
-| Baja | 3 g | 323 ±390 | 94 ±32 | 43% ±6% | 0.40 ±0.07 |
-| Media | 10 g | 641 ±222 | 108 ±25 | 55% ±14% | 0.86 ±0.69 |
-| Alta | 25 g | 910 ±197 | 107 ±18 | 68% ±13% | 1.32 ±1.04 |
+Hardware: Red Pitaya STEMlab 125-14 · Sensor VS150-RI · Modo HV ±20V · Filtro 100–450 kHz · fs = 1.953 MHz · Captura = 2.5 s · Arena tirada manualmente en condición estática (sin flujo).
 
-Hardware: Red Pitaya STEMlab 125-14 · Sensor VS150-RI · Modo HV ±20V · Filtro 100–450 kHz · fs = 1.953 MHz · Captura = 2.5 s · n=10 por condición
+### Semana 2 (n=10 por condición)
 
-**Nota sobre los datos de semana 2:** arena tirada manualmente en condición estática (sin flujo). La variabilidad en baja (std alto en kurtosis) se explica por diferencias en altura y velocidad de la tirada. La fracción activa compensa este efecto porque mide duración, no intensidad de pico.
+| Condición | Masa | Kurtosis | Crest Factor | Fracción activa |
+|---|---|---|---|---|
+| Reposo | 0 g | 3.00 ±0.00 | 5.3 ±0.2 | 0% ±0% |
+| Baja | 3 g | 323 ±390 | 94 ±32 | 43% ±6% |
+| Media | 10 g | 641 ±222 | 108 ±25 | 55% ±14% |
+| Alta | 25 g | 910 ±197 | 107 ±18 | 68% ±13% |
+
+### Semana 3 (n=10 baja/media/alta, n=1 reposo)
+
+| Condición | Masa | Kurtosis | Crest Factor | Fracción activa |
+|---|---|---|---|---|
+| Reposo | 0 g | 5.15 | 6.43 | 0% |
+| Baja | 3 g | 103 ±54 | 75 ±13 | 25% ±5% |
+| Media | 10 g | 199 ±77 | 82 ±14 | 42% ±9% |
+| Alta | 25 g | 600 ±192 | 102 ±19 | 69% ±7% |
+
+**Nota sobre variabilidad inter-sesión:** los valores absolutos de kurtosis y fracción activa varían entre sesiones según cómo se tira la arena (altura, velocidad, dirección). La condición **alta es la más estable** (fa: 68–69% en ambas semanas). Baja y media pueden variar ±15 pp entre sesiones. Los rangos del checklist son por eso aproximados. El reposo siempre da 0% — la detección binaria es robusta entre sesiones.
 
 ---
 
@@ -174,6 +185,10 @@ Hardware: Red Pitaya STEMlab 125-14 · Sensor VS150-RI · Modo HV ±20V · Filtr
 **`timeline_kurtosis.png`** — Kurtosis por ventana de 50 ms a lo largo del tiempo, un archivo representativo por condición. Este es el gráfico más informativo: muestra visualmente la diferencia entre un burst corto (baja) y actividad sostenida (media/alta). La línea punteada es el umbral = 20.
 
 **`scatter_masa_semana2.png`** — Kurtosis, Fracción activa y RMS diferencial vs gramos de arena. Muestra la monotonicidad de cada métrica: a mayor masa, mayor valor. La fracción activa es la más lineal de las tres.
+
+### Semana 3 (`analisis/outputs_semana3/`)
+
+Mismos tres gráficos, misma interpretación. Diferencia clave: `fraccion_activa` se lee directo del HDF5 sin recalcular — el análisis carga `raw_signal` solo para los 4 archivos representativos del timeline.
 
 ---
 
