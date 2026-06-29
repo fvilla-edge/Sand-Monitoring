@@ -47,12 +47,13 @@ DEC_MAP = {
 
 _stop = False
 
-def _handle_sigint(sig, frame):
+def _handle_stop(sig, frame):
     global _stop
     _stop = True
-    print('\n[!] Ctrl+C recibido — cerrando chunk actual y deteniendo...', flush=True)
+    print('\n[!] Señal recibida — cerrando chunk actual y deteniendo...', flush=True)
 
-signal.signal(signal.SIGINT, _handle_sigint)
+signal.signal(signal.SIGINT,  _handle_stop)
+signal.signal(signal.SIGTERM, _handle_stop)
 
 
 def _configurar_ambos(dec_enum):
@@ -104,53 +105,55 @@ def _capturar_chunk_streaming(condicion, dec_enum, decimacion, fs_ef,
             compression='gzip', compression_opts=1,
         )
 
-        for i in range(n_buffers):
-            if _stop:
-                break
+        try:
+            for i in range(n_buffers):
+                if _stop:
+                    break
 
-            _capturar_buffer(buf1, buf2)
-            blq1[buf_idx * BUF_SIZE:(buf_idx + 1) * BUF_SIZE] = buf1
-            blq2[buf_idx * BUF_SIZE:(buf_idx + 1) * BUF_SIZE] = buf2
-            buf_idx += 1
+                _capturar_buffer(buf1, buf2)
+                blq1[buf_idx * BUF_SIZE:(buf_idx + 1) * BUF_SIZE] = buf1
+                blq2[buf_idx * BUF_SIZE:(buf_idx + 1) * BUF_SIZE] = buf2
+                buf_idx += 1
 
-            if buf_idx == WRITE_BLOCK:
-                nuevo_len = total_muestras + h5_chunk_size
+                if buf_idx == WRITE_BLOCK:
+                    nuevo_len = total_muestras + h5_chunk_size
+                    ds1.resize((nuevo_len,))
+                    ds2.resize((nuevo_len,))
+                    ds1[total_muestras:nuevo_len] = blq1
+                    ds2[total_muestras:nuevo_len] = blq2
+                    f.flush()
+                    total_muestras = nuevo_len
+                    buf_idx = 0
+                    elapsed = total_muestras / fs_ef
+                    print(f'  chunk {chunk_num:04d} | {elapsed:.1f} s capturados', flush=True)
+        finally:
+            # Vuelca lo que quedo en el bloque parcial
+            if buf_idx > 0:
+                restantes = buf_idx * BUF_SIZE
+                nuevo_len = total_muestras + restantes
                 ds1.resize((nuevo_len,))
                 ds2.resize((nuevo_len,))
-                ds1[total_muestras:nuevo_len] = blq1
-                ds2[total_muestras:nuevo_len] = blq2
+                ds1[total_muestras:nuevo_len] = blq1[:restantes]
+                ds2[total_muestras:nuevo_len] = blq2[:restantes]
                 f.flush()
                 total_muestras = nuevo_len
-                buf_idx = 0
-                elapsed = total_muestras / fs_ef
-                print(f'  chunk {chunk_num:04d} | {elapsed:.1f} s capturados', flush=True)
 
-        # Vuelca lo que quedo en el bloque parcial
-        if buf_idx > 0:
-            restantes = buf_idx * BUF_SIZE
-            nuevo_len = total_muestras + restantes
-            ds1.resize((nuevo_len,))
-            ds2.resize((nuevo_len,))
-            ds1[total_muestras:nuevo_len] = blq1[:restantes]
-            ds2[total_muestras:nuevo_len] = blq2[:restantes]
-            f.flush()
-            total_muestras = nuevo_len
-
-        duracion_real = total_muestras / fs_ef
-        f.attrs.update({
-            'condicion':   condicion,
-            'sensor':      SENSOR,
-            'decimacion':  decimacion,
-            'fs_base_hz':  FS_BASE,
-            'fs_ef_hz':    fs_ef,
-            'n_muestras':  total_muestras,
-            'duracion_s':  duracion_real,
-            'chunk_num':   chunk_num,
-            'fecha':       ts.strftime('%Y-%m-%d %H:%M:%S'),
-            'gain':        'HV_20V',
-            'canal_ch1':   'IN1 — sensor codo (medicion)',
-            'canal_ch2':   'IN2 — sensor referencia (ruido de linea)',
-        })
+            # Attrs siempre se escriben, incluso si hubo interrupcion
+            duracion_real = total_muestras / fs_ef
+            f.attrs.update({
+                'condicion':   condicion,
+                'sensor':      SENSOR,
+                'decimacion':  decimacion,
+                'fs_base_hz':  FS_BASE,
+                'fs_ef_hz':    fs_ef,
+                'n_muestras':  total_muestras,
+                'duracion_s':  duracion_real,
+                'chunk_num':   chunk_num,
+                'fecha':       ts.strftime('%Y-%m-%d %H:%M:%S'),
+                'gain':        'HV_20V',
+                'canal_ch1':   'IN1 — sensor codo (medicion)',
+                'canal_ch2':   'IN2 — sensor referencia (ruido de linea)',
+            })
 
     size_mb = os.path.getsize(fname) / 1e6
     print(f'  [OK] {os.path.basename(fname)}  '
