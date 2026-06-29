@@ -49,12 +49,13 @@ DEC_MAP = {
 
 _stop = False
 
-def _handle_sigint(sig, frame):
+def _handle_stop(sig, frame):
     global _stop
     _stop = True
-    print('\n[!] Ctrl+C recibido — cerrando chunk actual y deteniendo...', flush=True)
+    print('\n[!] Señal recibida — cerrando chunk actual y deteniendo...', flush=True)
 
-signal.signal(signal.SIGINT, _handle_sigint)
+signal.signal(signal.SIGINT,  _handle_stop)
+signal.signal(signal.SIGTERM, _handle_stop)
 
 
 def _configurar_adc(dec_enum):
@@ -82,8 +83,9 @@ def _capturar_chunk_streaming(condicion, dec_enum, decimacion, fs_ef,
 
     buf_np = np.zeros(BUF_SIZE,       dtype=np.float32)
     bloque = np.zeros(h5_chunk_size,  dtype=np.float32)
-    buf_idx       = 0
+    buf_idx        = 0
     total_muestras = 0
+    t_inicio       = time.perf_counter()
 
     _configurar_adc(dec_enum)
 
@@ -96,50 +98,58 @@ def _capturar_chunk_streaming(condicion, dec_enum, decimacion, fs_ef,
             compression='gzip', compression_opts=1,
         )
 
-        for i in range(n_buffers):
-            if _stop:
-                break
+        try:
+            for i in range(n_buffers):
+                if _stop:
+                    break
 
-            _capturar_buffer(buf_np)
-            bloque[buf_idx * BUF_SIZE:(buf_idx + 1) * BUF_SIZE] = buf_np
-            buf_idx += 1
+                _capturar_buffer(buf_np)
+                bloque[buf_idx * BUF_SIZE:(buf_idx + 1) * BUF_SIZE] = buf_np
+                buf_idx += 1
 
-            if buf_idx == WRITE_BLOCK:
-                nuevo_len = total_muestras + h5_chunk_size
+                if buf_idx == WRITE_BLOCK:
+                    nuevo_len = total_muestras + h5_chunk_size
+                    ds.resize((nuevo_len,))
+                    ds[total_muestras:nuevo_len] = bloque
+                    f.flush()
+                    total_muestras = nuevo_len
+                    buf_idx = 0
+                    senal_s   = total_muestras / fs_ef
+                    reloj_s   = time.perf_counter() - t_inicio
+                    eficiencia = senal_s / reloj_s * 100
+                    print(f'  chunk {chunk_num:04d} | señal {senal_s:.1f}s '
+                          f'| reloj {reloj_s:.1f}s | eficiencia {eficiencia:.0f}%',
+                          flush=True)
+        finally:
+            if buf_idx > 0:
+                restantes = buf_idx * BUF_SIZE
+                nuevo_len = total_muestras + restantes
                 ds.resize((nuevo_len,))
-                ds[total_muestras:nuevo_len] = bloque
+                ds[total_muestras:nuevo_len] = bloque[:restantes]
                 f.flush()
                 total_muestras = nuevo_len
-                buf_idx = 0
-                elapsed = total_muestras / fs_ef
-                print(f'  chunk {chunk_num:04d} | {elapsed:.1f} s capturados', flush=True)
 
-        # Vuelca lo que quedo en el bloque parcial
-        if buf_idx > 0:
-            restantes = buf_idx * BUF_SIZE
-            nuevo_len = total_muestras + restantes
-            ds.resize((nuevo_len,))
-            ds[total_muestras:nuevo_len] = bloque[:restantes]
-            f.flush()
-            total_muestras = nuevo_len
+            duracion_real = total_muestras / fs_ef
+            f.attrs.update({
+                'condicion':   condicion,
+                'sensor':      SENSOR,
+                'decimacion':  decimacion,
+                'fs_base_hz':  FS_BASE,
+                'fs_ef_hz':    fs_ef,
+                'n_muestras':  total_muestras,
+                'duracion_s':  duracion_real,
+                'chunk_num':   chunk_num,
+                'fecha':       ts.strftime('%Y-%m-%d %H:%M:%S'),
+                'gain':        'HV_20V',
+            })
 
-        duracion_real = total_muestras / fs_ef
-        f.attrs.update({
-            'condicion':   condicion,
-            'sensor':      SENSOR,
-            'decimacion':  decimacion,
-            'fs_base_hz':  FS_BASE,
-            'fs_ef_hz':    fs_ef,
-            'n_muestras':  total_muestras,
-            'duracion_s':  duracion_real,
-            'chunk_num':   chunk_num,
-            'fecha':       ts.strftime('%Y-%m-%d %H:%M:%S'),
-            'gain':        'HV_20V',
-        })
-
+    reloj_total = time.perf_counter() - t_inicio
+    duracion_real = total_muestras / fs_ef
+    eficiencia = duracion_real / reloj_total * 100 if reloj_total > 0 else 0
     size_mb = os.path.getsize(fname) / 1e6
     print(f'  [OK] {os.path.basename(fname)}  '
-          f'({duracion_real:.2f} s | {total_muestras:,} muestras | {size_mb:.1f} MB)',
+          f'({duracion_real:.1f}s señal | {reloj_total:.1f}s reloj | '
+          f'{eficiencia:.0f}% eficiencia | {size_mb:.1f} MB)',
           flush=True)
     return total_muestras
 
