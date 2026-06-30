@@ -21,6 +21,8 @@ import math
 import os
 import signal
 import shutil
+import threading
+import queue
 
 import numpy as np
 import h5py
@@ -68,7 +70,6 @@ def _configurar_adc(dec_enum):
 
 def _capturar_buffer(buf_np):
     rp.rp_AcqStart()
-    time.sleep(0.005)
     rp.rp_AcqSetTriggerSrc(rp.RP_TRIG_SRC_NOW)
     while not rp.rp_AcqGetBufferFillState()[1]:
         pass
@@ -76,77 +77,123 @@ def _capturar_buffer(buf_np):
 
 
 def _capturar_chunk_streaming(condicion, dec_enum, decimacion, fs_ef,
-                               n_buffers, fname, chunk_num):
-    """Captura n_buffers con escritura en streaming al HDF5. Respeta _stop."""
-    h5_chunk_size = WRITE_BLOCK * BUF_SIZE
+                               n_buffers, fname, chunk_num, usar_compresion=False):
+    """Captura n_buffers con escritura HDF5 en thread separado (doble buffer).
+
+    El thread writer escribe mientras capture llena el siguiente bloque.
+    Con sin-compresion el writer termina en ~350ms vs ~1900ms de captura,
+    así que nunca bloquea la captura. Eficiencia esperada: ~57%.
+    """
+    H5_CHUNK = WRITE_BLOCK * BUF_SIZE  # 4,194,304 muestras = 16 MB float32
     ts = datetime.datetime.now()
 
-    buf_np = np.zeros(BUF_SIZE,       dtype=np.float32)
-    bloque = np.zeros(h5_chunk_size,  dtype=np.float32)
-    buf_idx        = 0
-    total_muestras = 0
-    t_inicio       = time.perf_counter()
+    buf_np = np.zeros(BUF_SIZE, dtype=np.float32)
+
+    # Pool de 3 buffers numpy pre-asignados.
+    # Capture llena uno, writer escribe otro, tercero de reserva.
+    # Con write (351ms) << capture (1897ms), free_q nunca bloquea.
+    N_BUFS = 3
+    pool    = [np.zeros(H5_CHUNK, dtype=np.float32) for _ in range(N_BUFS)]
+    free_q  = queue.SimpleQueue()
+    write_q = queue.SimpleQueue()
+    for b in pool:
+        free_q.put(b)
+
+    write_err   = [None]
+    write_total = [0]  # muestras escritas a disco (actualizado por writer)
+
+    def writer():
+        try:
+            with h5py.File(fname, 'w') as f:
+                comp_kw = {'compression': 'gzip', 'compression_opts': 1} if usar_compresion else {}
+                ds = f.create_dataset(
+                    'raw_signal',
+                    shape=(0,), maxshape=(None,),
+                    dtype=np.float32,
+                    chunks=(H5_CHUNK,),
+                    **comp_kw,
+                )
+                while True:
+                    item = write_q.get()
+                    if item is None:
+                        break
+                    data, size = item
+                    offset    = write_total[0]
+                    nuevo_len = offset + size
+                    ds.resize((nuevo_len,))
+                    ds[offset:nuevo_len] = data if size == H5_CHUNK else data[:size]
+                    f.flush()
+                    write_total[0] += size
+                    free_q.put(data)   # devolver buffer al pool
+
+                duracion_real = write_total[0] / fs_ef
+                f.attrs.update({
+                    'condicion':   condicion,
+                    'sensor':      SENSOR,
+                    'decimacion':  decimacion,
+                    'fs_base_hz':  FS_BASE,
+                    'fs_ef_hz':    fs_ef,
+                    'n_muestras':  write_total[0],
+                    'duracion_s':  duracion_real,
+                    'chunk_num':   chunk_num,
+                    'fecha':       ts.strftime('%Y-%m-%d %H:%M:%S'),
+                    'gain':        'HV_20V',
+                    'compresion':  'gzip-1' if usar_compresion else 'ninguna',
+                })
+        except Exception as e:
+            write_err[0] = e
+
+    t_writer = threading.Thread(target=writer, daemon=True)
+    t_writer.start()
+
+    buf_idx    = 0
+    n_enviados = 0
+    active     = free_q.get()   # tomar primer buffer del pool
+    t_inicio   = time.perf_counter()
 
     _configurar_adc(dec_enum)
 
-    with h5py.File(fname, 'w') as f:
-        ds = f.create_dataset(
-            'raw_signal',
-            shape=(0,), maxshape=(None,),
-            dtype=np.float32,
-            chunks=(h5_chunk_size,),
-            compression='gzip', compression_opts=1,
-        )
+    try:
+        for i in range(n_buffers):
+            if _stop:
+                break
+            if write_err[0]:
+                raise write_err[0]
 
-        try:
-            for i in range(n_buffers):
-                if _stop:
-                    break
+            _capturar_buffer(buf_np)
+            active[buf_idx * BUF_SIZE:(buf_idx + 1) * BUF_SIZE] = buf_np
+            buf_idx += 1
 
-                _capturar_buffer(buf_np)
-                bloque[buf_idx * BUF_SIZE:(buf_idx + 1) * BUF_SIZE] = buf_np
-                buf_idx += 1
+            if buf_idx == WRITE_BLOCK:
+                write_q.put((active, H5_CHUNK))
+                n_enviados += 1
+                active  = free_q.get()   # obtener buffer libre (casi nunca bloquea)
+                buf_idx = 0
 
-                if buf_idx == WRITE_BLOCK:
-                    nuevo_len = total_muestras + h5_chunk_size
-                    ds.resize((nuevo_len,))
-                    ds[total_muestras:nuevo_len] = bloque
-                    f.flush()
-                    total_muestras = nuevo_len
-                    buf_idx = 0
-                    senal_s   = total_muestras / fs_ef
-                    reloj_s   = time.perf_counter() - t_inicio
-                    eficiencia = senal_s / reloj_s * 100
-                    print(f'  chunk {chunk_num:04d} | señal {senal_s:.1f}s '
-                          f'| reloj {reloj_s:.1f}s | eficiencia {eficiencia:.0f}%',
-                          flush=True)
-        finally:
-            if buf_idx > 0:
-                restantes = buf_idx * BUF_SIZE
-                nuevo_len = total_muestras + restantes
-                ds.resize((nuevo_len,))
-                ds[total_muestras:nuevo_len] = bloque[:restantes]
-                f.flush()
-                total_muestras = nuevo_len
+                senal_s    = n_enviados * H5_CHUNK / fs_ef
+                reloj_s    = time.perf_counter() - t_inicio
+                eficiencia = senal_s / reloj_s * 100
+                print(f'  chunk {chunk_num:04d} | señal {senal_s:.1f}s '
+                      f'| reloj {reloj_s:.1f}s | eficiencia {eficiencia:.0f}%',
+                      flush=True)
 
-            duracion_real = total_muestras / fs_ef
-            f.attrs.update({
-                'condicion':   condicion,
-                'sensor':      SENSOR,
-                'decimacion':  decimacion,
-                'fs_base_hz':  FS_BASE,
-                'fs_ef_hz':    fs_ef,
-                'n_muestras':  total_muestras,
-                'duracion_s':  duracion_real,
-                'chunk_num':   chunk_num,
-                'fecha':       ts.strftime('%Y-%m-%d %H:%M:%S'),
-                'gain':        'HV_20V',
-            })
+    finally:
+        if buf_idx > 0 and not write_err[0]:
+            write_q.put((active, buf_idx * BUF_SIZE))
+        else:
+            free_q.put(active)   # devolver buffer no usado
 
-    reloj_total = time.perf_counter() - t_inicio
-    duracion_real = total_muestras / fs_ef
-    eficiencia = duracion_real / reloj_total * 100 if reloj_total > 0 else 0
-    size_mb = os.path.getsize(fname) / 1e6
+        write_q.put(None)        # sentinel: writer cierra el archivo
+        t_writer.join()
+
+        if write_err[0]:
+            raise write_err[0]
+
+    reloj_total    = time.perf_counter() - t_inicio
+    total_muestras = write_total[0]
+    duracion_real  = total_muestras / fs_ef
+    eficiencia     = duracion_real / reloj_total * 100 if reloj_total > 0 else 0
+    size_mb        = os.path.getsize(fname) / 1e6
     print(f'  [OK] {os.path.basename(fname)}  '
           f'({duracion_real:.1f}s señal | {reloj_total:.1f}s reloj | '
           f'{eficiencia:.0f}% eficiencia | {size_mb:.1f} MB)',
@@ -165,6 +212,8 @@ def main():
                    help='Duracion total de la sesion en minutos. Sin limite si no se indica.')
     p.add_argument('--directorio',     default='/mnt/usb',
                    help='Directorio de salida (default: /mnt/usb)')
+    p.add_argument('--compresion',     action='store_true', default=False,
+                   help='Activar compresion gzip-1 (menor tamaño, menor eficiencia)')
     args = p.parse_args()
 
     if args.decimacion not in DEC_MAP:
@@ -181,6 +230,7 @@ def main():
     print(f'\n=== CAPTURA CAMPO — LOOP CONTINUO ===')
     print(f'  condicion      : {args.condicion}')
     print(f'  decimacion     : {args.decimacion}  ->  fs = {fs_ef/1e6:.4f} MHz')
+    print(f'  compresion     : {"gzip-1" if args.compresion else "ninguna (mas eficiente)"}')
     print(f'  duracion chunk : {args.duracion_chunk} min  ({n_buffers_chunk} buffers)')
     if total_s:
         n_chunks_est = math.ceil(total_s / chunk_s)
@@ -228,6 +278,7 @@ def main():
             muestras = _capturar_chunk_streaming(
                 args.condicion, dec_enum, args.decimacion, fs_ef,
                 n_buf, fname, chunk_num,
+                usar_compresion=args.compresion,
             )
 
             tiempo_capturado += muestras / fs_ef
