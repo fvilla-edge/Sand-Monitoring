@@ -7,7 +7,7 @@ para 7.8 MB/s de captura a dec=32). Cada chunk terminado se mueve al USB en
 un thread de fondo mientras ya se captura el siguiente. Eficiencia: ~98%.
 
 Formato de salida: raw int16, little-endian, muestras secuenciales, sin header.
-Metadata en session_info.json en el directorio USB.
+Metadata en session_{condicion}_{ts}_info.json en el directorio destino.
 
 Uso:
   python3 capturar_campo_stream.py --condicion reposo --directorio /mnt/usb
@@ -96,7 +96,8 @@ def _preparar_dirs(directorio):
 
 
 def _guardar_metadata(dest_dir, condicion, decimacion, fs_ef):
-    """Escribe session_info.json en el directorio USB destino."""
+    """Escribe session_{condicion}_{ts}_info.json en el directorio destino."""
+    session_ts = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
     info = {
         'formato':       'raw_int16_le',
         'descripcion':   'Muestras ADC canal 1, int16 little-endian, sin header',
@@ -110,11 +111,13 @@ def _guardar_metadata(dest_dir, condicion, decimacion, fs_ef):
         'escala_voltios': '(valor_int16 / 32767.0) * 20.0  [aprox]',
         'fecha_inicio':  datetime.datetime.now().isoformat(),
     }
-    with open(os.path.join(dest_dir, 'session_info.json'), 'w') as f:
+    json_name = f'session_{condicion}_{session_ts}_info.json'
+    with open(os.path.join(dest_dir, json_name), 'w') as f:
         json.dump(info, f, indent=2, ensure_ascii=False)
+    return session_ts, json_name
 
 
-def _capturar_chunk(client, n_muestras, fs_ef, chunk_num, condicion):
+def _capturar_chunk(client, n_muestras, fs_ef, chunk_num, condicion, session_ts):
     """
     Dispara un chunk de n_muestras a SD y renombra el archivo resultante.
     Retorna (senal_s, ruta_archivo_en_sd).
@@ -140,7 +143,6 @@ def _capturar_chunk(client, n_muestras, fs_ef, chunk_num, condicion):
     cb = CB()
     client.setReciveDataFunction(cb.__disown__())
 
-    ts = datetime.datetime.now()
     client.sendConfig('samples_limit_sd', str(n_muestras))
 
     t0 = time.perf_counter()
@@ -174,10 +176,9 @@ def _capturar_chunk(client, n_muestras, fs_ef, chunk_num, condicion):
     nombre_orig   = os.path.join(STREAM_DIR, archivos[-1])
     bytes_totales = os.path.getsize(nombre_orig)
     senal_s       = (bytes_totales // 2) / fs_ef
-    ts_str        = ts.strftime('%Y%m%d_%H%M%S')
     nombre_final  = os.path.join(
         STREAM_DIR,
-        f'campo_{condicion}_{ts_str}_{chunk_num:04d}.bin'
+        f'campo_{condicion}_{session_ts}_{chunk_num:04d}.bin'
     )
     os.rename(nombre_orig, nombre_final)
 
@@ -190,7 +191,7 @@ def _capturar_chunk(client, n_muestras, fs_ef, chunk_num, condicion):
 
     eficiencia = senal_s / t_total * 100
     size_mb    = bytes_totales / 1e6
-    print(f'  [SD] campo_{condicion}_{ts_str}_{chunk_num:04d}.bin'
+    print(f'  [SD] campo_{condicion}_{session_ts}_{chunk_num:04d}.bin'
           f'  ({senal_s:.1f}s | {t_total:.1f}s reloj | '
           f'{eficiencia:.0f}% efic | {size_mb:.0f} MB)',
           flush=True)
@@ -280,12 +281,12 @@ def main():
     client.sendConfig('channel_state_1',      'ON')
     client.sendConfig('channel_state_2',      'OFF')
 
-    _guardar_metadata(dest_usb, args.condicion, args.decimacion, fs_ef)
+    session_ts, json_name = _guardar_metadata(dest_usb, args.condicion, args.decimacion, fs_ef)
 
     if args.destino == 'red':
         subprocess.run(
             ['scp', '-q',
-             os.path.join(dest_usb, 'session_info.json'),
+             os.path.join(dest_usb, json_name),
              f'{args.pc_host}:{args.pc_ruta}/'],
             check=True,
         )
@@ -333,7 +334,7 @@ def main():
                 libre_sd = shutil.disk_usage(STREAM_DIR).free
                 espacio_label = f'SD {libre_sd/1e9:.2f} GB libres'
             print(f'--- Chunk {chunk_num:04d} | {espacio_label} ---', flush=True)
-            secs, archivo_sd = _capturar_chunk(client, n, fs_ef, chunk_num, args.condicion)
+            secs, archivo_sd = _capturar_chunk(client, n, fs_ef, chunk_num, args.condicion, session_ts)
             tiempo_capturado += secs
 
             # Esperar que termine el move anterior si sigue corriendo

@@ -14,6 +14,7 @@ Uso:
   .venv/bin/python3 analisis/revisar_campo.py capturas/semana_campo/*.h5
   .venv/bin/python3 analisis/revisar_campo.py campo_reposo_*.bin
 """
+import re
 import sys
 import json
 from pathlib import Path
@@ -65,9 +66,15 @@ def _calcular_h5(ruta):
 
 def _calcular_bin(ruta):
     ruta = Path(ruta)
-    info_path = ruta.parent / 'session_info.json'
+    m = re.match(r'campo_(reposo|con_arena)_(\d{8}_\d{6})_\d{4}', ruta.stem)
+    if m:
+        info_path = ruta.parent / f'session_{m.group(1)}_{m.group(2)}_info.json'
+    else:
+        info_path = ruta.parent / 'session_info.json'
     if not info_path.exists():
-        raise FileNotFoundError(f"No se encontro session_info.json en {ruta.parent}")
+        info_path = ruta.parent / 'session_info.json'
+    if not info_path.exists():
+        raise FileNotFoundError(f"No se encontro JSON de sesion en {ruta.parent}")
 
     with open(info_path) as f:
         info = json.load(f)
