@@ -7,12 +7,13 @@ Captura a ~98% de eficiencia escribiendo primero a la SD interna de la placa (15
 suficiente para los 7.8 MB/s de datos) y luego mueve cada chunk al destino elegido en
 un thread de fondo mientras ya empieza el siguiente chunk.
 
-**Dos modos de destino:**
+**Tres modos de operación:**
 
-| Modo | Comando | Velocidad típica | Mejor para |
+| Modo | Topología de red | Velocidad típica | Límite de sesión |
 |---|---|---|---|
-| `usb` (default) | `--destino usb` | 4–5 MB/s | Campo sin PC cerca |
-| `red` | `--destino red` | 6–15+ MB/s | Campo con PC o laptop en red |
+| `usb` | Sin PC | 4–5 MB/s | Storage del USB |
+| `red` via gateway | Placa y PC en la misma red (router) | 6–15+ MB/s | Sin límite en SD |
+| `red` via link directo | RJ45 placa ↔ PC directamente | 5.6 MB/s concurrente | ~2.9 horas (ver abajo) |
 
 ---
 
@@ -79,27 +80,43 @@ Estos pasos se hacen una vez por placa. Después de un reset de firmware hay que
 
 ### 1. Copiar el script a la placa
 
-```bash
-scp scripts_campo/capturar_campo_stream.py root@192.168.0.55:/root/scripts_campo/
-```
-
-### 2. Instalar la librería de streaming en la placa
-
-La librería `rpsa_client` debe estar en `/root/rpsa_client/python_lib/` (directorio permanente).
-Si está en `/tmp/rpsa_client/` se pierde con cada reinicio.
+La IP de la placa depende de cómo esté conectada (ver sección de IPs más abajo):
 
 ```bash
-# Verificar si ya está instalada
-ssh root@192.168.0.55 "ls /root/rpsa_client/python_lib/streaming.py 2>/dev/null && echo OK || echo FALTA"
+scp scripts_campo/capturar_campo_stream.py root@<IP_PLACA>:/root/scripts_campo/
 ```
 
-Si dice FALTA, copiar desde la PC donde se descargó la librería:
+### 2. Librería de streaming — persistencia automática (RESUELTO)
 
+La placa tiene un servicio systemd (`rpsa-lib`) que extrae automáticamente la librería
+`rpsa_client` al arrancar si no está presente. No hay que hacer nada en cada reinicio.
+
+**Verificar que está activo:**
 ```bash
-scp -r ruta/a/rpsa_client/python_lib root@192.168.0.55:/root/rpsa_client/
+ssh root@<IP_PLACA> "systemctl is-enabled rpsa-lib && ls /root/rpsa_client/python_lib/_python_lib.so"
+# Debe responder: enabled + la ruta del archivo
 ```
 
-> La librería viene en el paquete `rpsa_client` del repositorio oficial de Red Pitaya.
+**Si la placa fue reflasheada** (firmware nuevo), reinstalar el servicio:
+```bash
+ssh root@<IP_PLACA> "
+unzip -o /opt/redpitaya/streaming/rpsa_client-*-rp.zip -d /root/rpsa_client/
+cat > /etc/systemd/system/rpsa-lib.service << 'EOF'
+[Unit]
+Description=Extract RPSA streaming library
+Before=network.target
+ConditionPathExists=!/root/rpsa_client/python_lib/_python_lib.so
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/unzip -o /opt/redpitaya/streaming/rpsa_client-2.07-51-ffe70f24f-rp.zip -d /root/rpsa_client/
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+systemctl daemon-reload && systemctl enable rpsa-lib.service"
+```
 
 ### 3. Setup para modo RED (solo si se usa `--destino red`)
 
@@ -112,21 +129,35 @@ sudo apt install openssh-server
 sudo systemctl start ssh
 
 # 2. Copiar la clave pública de la placa a la PC
-ssh-copy-id -i <(ssh root@192.168.0.55 "cat ~/.ssh/id_rsa.pub") facu-edge@192.168.0.147
+ssh-copy-id -i <(ssh root@<IP_PLACA> "cat ~/.ssh/id_rsa.pub") facu-edge@<IP_PC>
 ```
 
 Verificar que funciona:
 
 ```bash
-ssh root@192.168.0.55 "ssh facu-edge@192.168.0.147 'echo OK'"
+ssh root@<IP_PLACA> "ssh facu-edge@<IP_PC> 'echo OK'"
 # Debe imprimir OK sin pedir contraseña
 ```
 
-Crear el directorio destino en la PC:
+Crear el directorio destino en la PC **antes de correr el script** (SCP falla si no existe):
 
 ```bash
 mkdir -p ~/datos_campo
 ```
+
+---
+
+## IPs según topología de red
+
+La placa obtiene su IP del router o de la PC según cómo esté conectada:
+
+| Topología | IP placa | IP PC (en esa interfaz) | Notas |
+|---|---|---|---|
+| Placa → gateway/router → PC | 192.168.0.55 | 192.168.0.147 | Red compartida |
+| Placa → RJ45 directo → PC | 10.42.0.180 | 10.42.0.1 | Linux "connection sharing" |
+
+> Con link directo (RJ45), Linux asigna automáticamente `10.42.0.1` al lado PC y
+> da `10.42.0.180` a la placa por DHCP. No hay que configurar nada extra.
 
 ---
 
@@ -135,7 +166,7 @@ mkdir -p ~/datos_campo
 ### 1. Conectar por SSH
 
 ```bash
-ssh root@192.168.0.55
+ssh root@<IP_PLACA>
 # password: edge1234
 ```
 
@@ -164,7 +195,7 @@ python3 /root/scripts_campo/capturar_campo_stream.py \
   --directorio /mnt/usb
 ```
 
-**Modo RED** (datos van directo a la PC por red):
+**Modo RED via gateway** (placa y PC en la misma red con router):
 
 ```bash
 python3 /root/scripts_campo/capturar_campo_stream.py \
@@ -173,6 +204,18 @@ python3 /root/scripts_campo/capturar_campo_stream.py \
   --duracion_chunk 1 \
   --destino red \
   --pc_host facu-edge@192.168.0.147 \
+  --pc_ruta /home/facu-edge/datos_campo
+```
+
+**Modo RED via link directo** (RJ45 placa ↔ PC, sin router):
+
+```bash
+python3 /root/scripts_campo/capturar_campo_stream.py \
+  --condicion reposo \
+  --decimacion 32 \
+  --duracion_chunk 1 \
+  --destino red \
+  --pc_host facu-edge@10.42.0.1 \
   --pc_ruta /home/facu-edge/datos_campo
 ```
 
@@ -194,17 +237,22 @@ python3 /root/scripts_campo/capturar_campo_stream.py \
 ### Ejemplos de uso
 
 ```bash
-# Loop indefinido a USB, chunks de 1 minuto (uso típico campo)
+# Loop indefinido a USB, chunks de 1 minuto (uso típico campo sin PC)
 python3 /root/scripts_campo/capturar_campo_stream.py --condicion reposo
 
 # 2 horas a USB con chunks de 10 minutos
 python3 /root/scripts_campo/capturar_campo_stream.py \
   --condicion con_arena --duracion_total 120 --duracion_chunk 10
 
-# Directo a la PC por red, loop indefinido
+# Directo a la PC por gateway, loop indefinido
 python3 /root/scripts_campo/capturar_campo_stream.py \
   --condicion reposo \
   --destino red --pc_host facu-edge@192.168.0.147 --pc_ruta /home/facu-edge/datos_campo
+
+# Directo a la PC por link directo (RJ45), 3 chunks de prueba
+python3 /root/scripts_campo/capturar_campo_stream.py \
+  --condicion reposo --duracion_total 3 \
+  --destino red --pc_host facu-edge@10.42.0.1 --pc_ruta /home/facu-edge/datos_campo
 
 # Menor frecuencia de muestreo (archivos más chicos)
 python3 /root/scripts_campo/capturar_campo_stream.py \
@@ -299,14 +347,30 @@ python3 /root/scripts_campo/capturar_campo_stream.py \
 | HDD 500 GB | ~500 GB | ~1.065 chunks (~17.7 hs) |
 | HDD 1 TB | ~1 TB | ~2.130 chunks (~35.5 hs) |
 
-### Velocidades de transferencia medidas (esta placa)
+### Velocidades de transferencia medidas (esta placa, dec=32, chunk=1min)
 
-| Destino | Velocidad medida | Espera entre chunks (1 min, dec=32) |
-|---|---|---|
-| SD interna (captura) | 15 MB/s | — |
-| USB 2.0 pendrive | 4–5 MB/s | ~40s |
-| Red local (100 Mbit) | 6–15 MB/s | 0–10s |
-| Red local (GigE) | ~80 MB/s | 0s (sin espera) |
+| Destino | Velocidad medida | Tiempo transfer / chunk | Espera entre chunks |
+|---|---|---|---|
+| SD interna (captura) | 15 MB/s | — | — |
+| USB 2.0 pendrive | 4–5 MB/s | ~100s | ~40s |
+| RED link directo (concurrente) | 5.6 MB/s | ~83s | ~23s |
+| RED link directo (sin competencia) | 10.4 MB/s | ~45s | 0s |
+| RED via gateway (100 Mbit) | 6–15 MB/s | 30–80s | 0–20s |
+
+### Límite de sesión por acumulación en SD (modo RED link directo)
+
+Con link directo la transferencia (83s) es más lenta que la captura (60s), por lo que
+la SD acumula chunks no transferidos a un ritmo de ~130 MB por chunk capturado.
+
+| SD libre | Límite de sesión |
+|---|---|
+| 22 GB | ~173 chunks ≈ **2.9 horas** |
+| 16 GB | ~126 chunks ≈ **2.1 horas** |
+
+**Para sesiones más largas:** usar modo gateway (si la red da >7.8 MB/s sostenido, no acumula)
+o hacer pausas entre bloques para que la SD drene.
+
+**Fórmula:** `limite_min = SD_libre_MB / 130 * 1`  (chunks de 1 min, dec=32)
 
 ---
 
@@ -385,7 +449,7 @@ sleep 2
 La clave SSH de la placa no está en el `authorized_keys` de la PC. Repetir el setup de clave:
 
 ```bash
-ssh-copy-id -i <(ssh root@192.168.0.55 "cat ~/.ssh/id_rsa.pub") facu-edge@192.168.0.147
+ssh-copy-id -i <(ssh root@<IP_PLACA> "cat ~/.ssh/id_rsa.pub") facu-edge@<IP_PC>
 ```
 
 Verificar que el servidor SSH de la PC esté corriendo:
@@ -393,6 +457,16 @@ Verificar que el servidor SSH de la PC esté corriendo:
 ```bash
 sudo systemctl status ssh
 ```
+
+### "No module named 'streaming'"
+
+La librería no está extraída. Verificar el servicio systemd:
+
+```bash
+ssh root@<IP_PLACA> "systemctl status rpsa-lib"
+```
+
+Si el servicio no existe (placa reflasheada), reinstalar siguiendo la sección "Setup inicial → 2".
 
 ### Espacio insuficiente en USB
 
@@ -422,7 +496,7 @@ mount /dev/sda1 /mnt/usb
 | ADC | Red Pitaya STEMlab 125-14 (125 MHz, 14 bits) |
 | Jumper | HV → rango ±20 V |
 | Attenuator config | `A_1_20` |
-| Acceso SSH | `root@192.168.0.55` / pass: `edge1234` |
+| Acceso SSH | `root@<IP_PLACA>` / pass: `edge1234` (ver sección de IPs) |
 | Storage campo | USB/HDD externo en `/mnt/usb` |
 
 ---
@@ -449,10 +523,12 @@ PYTHONPATH=/opt/redpitaya/lib/python \
 
 ## Estado del proyecto (junio 2026)
 
-- [x] Captura via streaming FILE mode — 98% eficiencia, 0 muestras perdidas
+- [x] Captura via streaming FILE mode — 97–99% eficiencia, 0 muestras perdidas
 - [x] SD interna como buffer intermedio (evita cuello de botella del USB)
 - [x] Modo USB — move en background mientras captura el siguiente chunk
-- [x] Modo RED — scp directo a PC por red (6–15 MB/s, sin USB)
+- [x] Modo RED via gateway — scp directo a PC (6–15 MB/s)
+- [x] Modo RED via link directo RJ45 — sin router, 5.6 MB/s concurrente, límite ~2.9 h
+- [x] Librería `rpsa_client` con persistencia automática vía systemd (`rpsa-lib.service`)
 - [x] Loop continuo con Ctrl+C limpio, chequeo de espacio, chunks numerados
 - [x] Revisión rápida en PC (`revisar_campo.py`) para .bin y .h5
 - [ ] Análisis post-campo con métricas completas (kurtosis, espectro, clasificación)

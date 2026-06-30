@@ -27,7 +27,7 @@ import threading
 import subprocess
 import json
 
-sys.path.insert(0, '/tmp/rpsa_client/python_lib')
+sys.path.insert(0, '/root/rpsa_client/python_lib')
 import streaming
 
 FS_BASE     = 125_000_000
