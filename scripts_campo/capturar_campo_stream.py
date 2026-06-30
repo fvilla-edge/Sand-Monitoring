@@ -2,11 +2,12 @@
 """
 capturar_campo_stream.py — Captura continua via streaming FILE mode.
 
-El streaming-server (bitstream stream_app) escribe int16 raw directo al storage.
-Python solo controla inicio/fin de cada chunk. Eficiencia: ~98%.
+El streaming-server escribe int16 raw a la SD interna (15 MB/s, suficiente
+para 7.8 MB/s de captura a dec=32). Cada chunk terminado se mueve al USB en
+un thread de fondo mientras ya se captura el siguiente. Eficiencia: ~98%.
 
 Formato de salida: raw int16, little-endian, muestras secuenciales, sin header.
-Metadata en session_info.json junto a los archivos.
+Metadata en session_info.json en el directorio USB.
 
 Uso:
   python3 capturar_campo_stream.py --condicion reposo --directorio /mnt/usb
@@ -29,11 +30,10 @@ import json
 sys.path.insert(0, '/tmp/rpsa_client/python_lib')
 import streaming
 
-FS_BASE      = 125_000_000
-ESPACIO_MIN  = 500 * 1024 * 1024        # 500 MB — margen para int16 (más grande que HDF5)
-STREAM_DIR   = '/home/redpitaya/streaming_files/adc'
-RPSA_LIB     = '/tmp/rpsa_client/python_lib'
-SERVER_BIN   = '/opt/redpitaya/bin/streaming-server'
+FS_BASE     = 125_000_000
+ESPACIO_MIN = 500 * 1024 * 1024   # 500 MB minimo libre en USB
+STREAM_DIR  = '/home/redpitaya/streaming_files/adc'   # siempre en SD
+SERVER_BIN  = '/opt/redpitaya/bin/streaming-server'
 
 _stop = False
 
@@ -70,36 +70,43 @@ def _asegurar_servidor():
     time.sleep(2)
 
 
-def _redirigir_a_usb(directorio):
-    """Apunta STREAM_DIR al subdirectorio stream_adc/ del USB via symlink."""
-    dest = os.path.join(directorio, 'stream_adc')
-    os.makedirs(dest, exist_ok=True)
+def _preparar_dirs(directorio):
+    """
+    Asegura que STREAM_DIR sea un directorio real en SD (no symlink a USB)
+    y crea el subdirectorio de destino en el USB.
+    """
+    dest_usb = os.path.join(directorio, 'stream_adc')
+    os.makedirs(dest_usb, exist_ok=True)
 
+    # Si existe un symlink de una sesion anterior, eliminarlo
     if os.path.islink(STREAM_DIR):
-        if os.readlink(STREAM_DIR) == dest:
-            return
         os.unlink(STREAM_DIR)
-    elif os.path.isdir(STREAM_DIR):
-        os.rename(STREAM_DIR, STREAM_DIR + '_sd_backup')
 
-    os.symlink(dest, STREAM_DIR)
-    print(f'  Archivos → {dest}', flush=True)
-    return dest
+    # Restaurar desde backup si aplica, o crear directorio limpio
+    backup = STREAM_DIR + '_sd_backup'
+    if not os.path.isdir(STREAM_DIR):
+        if os.path.isdir(backup):
+            os.rename(backup, STREAM_DIR)
+        else:
+            os.makedirs(STREAM_DIR, exist_ok=True)
+
+    print(f'  Captura (SD) → {STREAM_DIR}', flush=True)
+    print(f'  Archivos (USB) → {dest_usb}', flush=True)
+    return dest_usb
 
 
 def _guardar_metadata(dest_dir, condicion, decimacion, fs_ef):
-    """Escribe session_info.json con los parametros de la sesion."""
+    """Escribe session_info.json en el directorio USB destino."""
     info = {
-        'formato':      'raw_int16_le',
-        'descripcion':  'Muestras ADC canal 1, int16 little-endian, sin header',
-        'condicion':    condicion,
-        'decimacion':   decimacion,
-        'fs_hz':        fs_ef,
-        'fs_base_hz':   FS_BASE,
-        'sensor':       'VS150-RI',
-        'gain':         'A_1_20 (HV jumper instalado, rango +-20V)',
-        'acoplamiento': 'DC',
-        'uso_calibracion': True,
+        'formato':       'raw_int16_le',
+        'descripcion':   'Muestras ADC canal 1, int16 little-endian, sin header',
+        'condicion':     condicion,
+        'decimacion':    decimacion,
+        'fs_hz':         fs_ef,
+        'fs_base_hz':    FS_BASE,
+        'sensor':        'VS150-RI',
+        'gain':          'A_1_20 (HV jumper instalado, rango +-20V)',
+        'acoplamiento':  'DC',
         'escala_voltios': '(valor_int16 / 32767.0) * 20.0  [aprox]',
         'fecha_inicio':  datetime.datetime.now().isoformat(),
     }
@@ -108,7 +115,10 @@ def _guardar_metadata(dest_dir, condicion, decimacion, fs_ef):
 
 
 def _capturar_chunk(client, n_muestras, fs_ef, chunk_num, condicion):
-    """Dispara un chunk de n_muestras y renombra el archivo resultante."""
+    """
+    Dispara un chunk de n_muestras a SD y renombra el archivo resultante.
+    Retorna (senal_s, ruta_archivo_en_sd).
+    """
     done  = threading.Event()
     error = [None]
 
@@ -137,32 +147,40 @@ def _capturar_chunk(client, n_muestras, fs_ef, chunk_num, condicion):
     if not client.startStreaming():
         raise RuntimeError("startStreaming fallo")
 
-    done.wait(timeout=n_muestras / fs_ef + 15)
+    # Timeout: tiempo de captura + flush a SD (15 MB/s) + margen
+    bytes_esperados = n_muestras * 2
+    flush_sd_s      = bytes_esperados / (12 * 1024 * 1024) + 20  # conservador 12 MB/s
+    timeout_total   = n_muestras / fs_ef + flush_sd_s
+    completado = done.wait(timeout=timeout_total)
     t_total = time.perf_counter() - t0
+
+    if not completado:
+        try:
+            client.stopStreaming()
+        except Exception:
+            pass
+        time.sleep(2)
 
     if error[0]:
         raise RuntimeError(f"Streaming error: {error[0]}")
 
-    # Encontrar el .bin recien generado (el mas nuevo que no renombramos aun)
     archivos = sorted([
         f for f in os.listdir(STREAM_DIR)
         if f.startswith('data_file_') and f.endswith('.bin')
     ])
     if not archivos:
-        raise RuntimeError("No se genero archivo de salida")
+        raise RuntimeError("No se genero archivo de salida en SD")
 
-    nombre_orig  = os.path.join(STREAM_DIR, archivos[-1])
+    nombre_orig   = os.path.join(STREAM_DIR, archivos[-1])
     bytes_totales = os.path.getsize(nombre_orig)
-    muestras_reales = bytes_totales // 2
-    senal_s      = muestras_reales / fs_ef
-    ts_str       = ts.strftime('%Y%m%d_%H%M%S')
-    nombre_final = os.path.join(
+    senal_s       = (bytes_totales // 2) / fs_ef
+    ts_str        = ts.strftime('%Y%m%d_%H%M%S')
+    nombre_final  = os.path.join(
         STREAM_DIR,
         f'campo_{condicion}_{ts_str}_{chunk_num:04d}.bin'
     )
     os.rename(nombre_orig, nombre_final)
 
-    # Limpiar logs auxiliares del servidor
     for f in os.listdir(STREAM_DIR):
         if f.endswith('.log.txt') or f.endswith('.log.lost.txt'):
             try:
@@ -172,16 +190,29 @@ def _capturar_chunk(client, n_muestras, fs_ef, chunk_num, condicion):
 
     eficiencia = senal_s / t_total * 100
     size_mb    = bytes_totales / 1e6
-    print(f'  [OK] {os.path.basename(nombre_final)}'
-          f'  ({senal_s:.1f}s señal | {t_total:.1f}s reloj | '
-          f'{eficiencia:.0f}% eficiencia | {size_mb:.0f} MB)',
+    print(f'  [SD] campo_{condicion}_{ts_str}_{chunk_num:04d}.bin'
+          f'  ({senal_s:.1f}s | {t_total:.1f}s reloj | '
+          f'{eficiencia:.0f}% efic | {size_mb:.0f} MB)',
           flush=True)
-    return senal_s
+    return senal_s, nombre_final
+
+
+def _mover_a_usb(archivo_sd, dest_usb, chunk_num):
+    """Copia archivo de SD a USB y elimina el original (corre en thread)."""
+    nombre  = os.path.basename(archivo_sd)
+    destino = os.path.join(dest_usb, nombre)
+    t0 = time.perf_counter()
+    shutil.move(archivo_sd, destino)
+    t = time.perf_counter() - t0
+    size_mb = os.path.getsize(destino) / 1e6
+    print(f'  [USB] chunk {chunk_num:04d} → {nombre}'
+          f'  ({size_mb:.0f} MB en {t:.0f}s | {size_mb/t:.1f} MB/s)',
+          flush=True)
 
 
 def main():
     p = argparse.ArgumentParser(
-        description='Captura campo via streaming FILE mode — ~98% eficiencia'
+        description='Captura campo via streaming FILE mode — SD intermedia, USB destino'
     )
     p.add_argument('--condicion',      required=True, choices=['reposo', 'con_arena'])
     p.add_argument('--decimacion',     type=int, default=32,
@@ -204,7 +235,7 @@ def main():
     n_muestras = int(fs_ef * chunk_s)
 
     _asegurar_servidor()
-    dest_dir = _redirigir_a_usb(args.directorio)
+    dest_usb = _preparar_dirs(args.directorio)
 
     client = streaming.ADCStreamClient()
     client.setVerbose(False)
@@ -217,13 +248,14 @@ def main():
     client.sendConfig('channel_state_1',      'ON')
     client.sendConfig('channel_state_2',      'OFF')
 
-    _guardar_metadata(dest_dir, args.condicion, args.decimacion, fs_ef)
+    _guardar_metadata(dest_usb, args.condicion, args.decimacion, fs_ef)
 
-    print(f'\n=== CAPTURA CAMPO — STREAMING FILE MODE ===')
+    bytes_chunk = n_muestras * 2
+    print(f'\n=== CAPTURA CAMPO — SD intermedia + USB destino ===')
     print(f'  condicion  : {args.condicion}')
     print(f'  decimacion : {args.decimacion}  →  fs = {fs_ef/1e6:.4f} MHz')
-    print(f'  chunk      : {args.duracion_chunk} min  ({n_muestras:,} muestras)')
-    print(f'  directorio : {dest_dir}')
+    print(f'  chunk      : {args.duracion_chunk} min  ({n_muestras:,} muestras | {bytes_chunk/1e6:.0f} MB)')
+    print(f'  USB destino: {dest_usb}')
     if total_s:
         n_est = max(1, int(total_s / chunk_s))
         print(f'  total      : {args.duracion_total} min  (~{n_est} chunks)')
@@ -233,6 +265,7 @@ def main():
 
     chunk_num        = 1
     tiempo_capturado = 0.0
+    move_thread      = None
 
     try:
         while not _stop:
@@ -240,27 +273,44 @@ def main():
                 print('[OK] Tiempo total de sesion alcanzado.')
                 break
 
-            libre = shutil.disk_usage(args.directorio).free
-            if libre < ESPACIO_MIN:
-                print(f'[!] Espacio insuficiente ({libre/1e6:.0f} MB libres). Deteniendo.')
+            libre_usb = shutil.disk_usage(args.directorio).free
+            if libre_usb < ESPACIO_MIN:
+                print(f'[!] USB sin espacio ({libre_usb/1e6:.0f} MB libres). Deteniendo.')
                 break
 
             if total_s:
-                restante   = total_s - tiempo_capturado
-                n          = min(n_muestras, int(fs_ef * restante))
+                restante = total_s - tiempo_capturado
+                n        = min(n_muestras, int(fs_ef * restante))
             else:
                 n = n_muestras
 
-            print(f'--- Chunk {chunk_num:04d} | {libre/1e9:.2f} GB libres ---', flush=True)
-            secs = _capturar_chunk(client, n, fs_ef, chunk_num, args.condicion)
+            print(f'--- Chunk {chunk_num:04d} | USB {libre_usb/1e9:.2f} GB libres ---', flush=True)
+            secs, archivo_sd = _capturar_chunk(client, n, fs_ef, chunk_num, args.condicion)
             tiempo_capturado += secs
+
+            # Esperar que termine el move anterior si sigue corriendo
+            if move_thread and move_thread.is_alive():
+                print('  [esperando move anterior...]', flush=True)
+                move_thread.join()
+
+            # Mover este chunk a USB en background (mientras captura el siguiente)
+            move_thread = threading.Thread(
+                target=_mover_a_usb,
+                args=(archivo_sd, dest_usb, chunk_num),
+                daemon=True,
+            )
+            move_thread.start()
             chunk_num += 1
 
     finally:
+        # Esperar que el ultimo move termine antes de salir
+        if move_thread and move_thread.is_alive():
+            print('\n  [esperando ultimo move a USB...]', flush=True)
+            move_thread.join()
         print(f'\n=== SESION TERMINADA ===')
         print(f'  Chunks guardados : {chunk_num - 1}')
         print(f'  Tiempo capturado : {tiempo_capturado/60:.2f} min  ({tiempo_capturado:.0f}s)')
-        print(f'  Directorio       : {dest_dir}')
+        print(f'  Archivos en USB  : {dest_usb}')
 
 
 if __name__ == '__main__':
