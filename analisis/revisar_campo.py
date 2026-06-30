@@ -1,15 +1,21 @@
 #!/usr/bin/env python3
 """
-revisar_campo.py — Revision rapida de archivos HDF5 de campo en PC.
+revisar_campo.py — Revision rapida de capturas de campo en PC.
+
+Acepta:
+  - Archivos .h5  (capturar_campo.py — float32, auto-descriptos)
+  - Archivos .bin (capturar_campo_stream.py — int16 raw, requiere session_info.json)
+  - Directorios   (busca campo_*.h5 y campo_*.bin recursivamente)
 
 Calcula kurtosis, crest factor y fraccion_activa sobre la senal filtrada (100-450 kHz).
 
 Uso:
-  .venv/bin/python3 analisis/revisar_campo.py capturas/semana_campo/*.h5
   .venv/bin/python3 analisis/revisar_campo.py /mnt/usb/
-  .venv/bin/python3 analisis/revisar_campo.py campo_reposo_*.h5 campo_con_arena_*.h5
+  .venv/bin/python3 analisis/revisar_campo.py capturas/semana_campo/*.h5
+  .venv/bin/python3 analisis/revisar_campo.py campo_reposo_*.bin
 """
 import sys
+import json
 from pathlib import Path
 
 import numpy as np
@@ -22,6 +28,8 @@ BANDA_HIGH  = 450_000   # Hz
 FILTRO_ORD  = 4
 FA_WINDOW_S = 0.050     # 50 ms por ventana
 FA_THRESH   = 20        # kurtosis Pearson > 20 → ventana activa
+
+V_REF = 20.0            # ±20V con jumper HV y gain A_1_20
 
 
 def _bandpass(signal, fs):
@@ -42,8 +50,7 @@ def _fraccion_activa(sig, fs):
     return float(np.mean(kurt_w > FA_THRESH) * 100)
 
 
-def _calcular(ruta):
-    ruta = Path(ruta)
+def _calcular_h5(ruta):
     with h5py.File(ruta, 'r') as f:
         attrs  = dict(f.attrs)
         signal = f['raw_signal'][:]
@@ -53,8 +60,46 @@ def _calcular(ruta):
     cond  = str(attrs.get('condicion', '?'))
     dur_s = float(attrs.get('duracion_s', len(signal) / fs))
     chunk = int(attrs.get('chunk_num', 0))
-    size  = ruta.stat().st_size / 1e6
+    return signal, fs, cond, dur_s, chunk
 
+
+def _calcular_bin(ruta):
+    ruta = Path(ruta)
+    info_path = ruta.parent / 'session_info.json'
+    if not info_path.exists():
+        raise FileNotFoundError(f"No se encontro session_info.json en {ruta.parent}")
+
+    with open(info_path) as f:
+        info = json.load(f)
+
+    fs    = float(info['fs_hz'])
+    cond  = str(info.get('condicion', '?'))
+    chunk = _chunk_num_from_nombre(ruta.stem)
+
+    raw    = np.fromfile(ruta, dtype='<i2')
+    signal = raw.astype(np.float32) * (V_REF / 32767.0)
+    dur_s  = len(signal) / fs
+    return signal, fs, cond, dur_s, chunk
+
+
+def _chunk_num_from_nombre(stem):
+    parts = stem.rsplit('_', 1)
+    try:
+        return int(parts[-1])
+    except ValueError:
+        return 0
+
+
+def _calcular(ruta):
+    ruta = Path(ruta)
+    if ruta.suffix == '.h5':
+        signal, fs, cond, dur_s, chunk = _calcular_h5(ruta)
+    elif ruta.suffix == '.bin':
+        signal, fs, cond, dur_s, chunk = _calcular_bin(ruta)
+    else:
+        raise ValueError(f"Formato no soportado: {ruta.suffix}")
+
+    size  = ruta.stat().st_size / 1e6
     sig_f = _bandpass(signal, fs)
     rms   = float(np.sqrt(np.mean(sig_f ** 2)))
     pico  = float(np.max(np.abs(sig_f)))
@@ -86,6 +131,7 @@ def _recopilar_rutas(args):
         p = Path(a)
         if p.is_dir():
             rutas.extend(sorted(p.glob('campo_*.h5')))
+            rutas.extend(sorted(p.glob('campo_*.bin')))
         elif p.exists():
             rutas.append(p)
         else:
@@ -100,7 +146,7 @@ def main():
 
     rutas = _recopilar_rutas(sys.argv[1:])
     if not rutas:
-        print('[!] No se encontraron archivos .h5')
+        print('[!] No se encontraron archivos .h5 ni .bin de campo')
         sys.exit(1)
 
     resultados = []
@@ -114,7 +160,6 @@ def main():
     if not resultados:
         return
 
-    # Tabla
     ancho = max(len(r['archivo']) for r in resultados)
     sep   = '-' * (ancho + 58)
 
@@ -140,7 +185,6 @@ def main():
 
     print(sep)
 
-    # Resumen
     n_arena  = sum(1 for r in resultados if _detectar(r) != 'reposo')
     n_reposo = len(resultados) - n_arena
     dur_tot  = sum(r['dur_min'] for r in resultados)
