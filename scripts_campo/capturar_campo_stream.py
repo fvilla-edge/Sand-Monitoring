@@ -210,6 +210,22 @@ def _mover_a_usb(archivo_sd, dest_usb, chunk_num):
           flush=True)
 
 
+def _mover_a_red(archivo_sd, pc_host, pc_ruta, chunk_num):
+    """Envia archivo de SD a la PC via scp SSH y elimina el original."""
+    nombre  = os.path.basename(archivo_sd)
+    size_mb = os.path.getsize(archivo_sd) / 1e6
+    t0 = time.perf_counter()
+    subprocess.run(
+        ['scp', '-q', archivo_sd, f'{pc_host}:{pc_ruta}/'],
+        check=True,
+    )
+    os.remove(archivo_sd)
+    t = time.perf_counter() - t0
+    print(f'  [RED] chunk {chunk_num:04d} → {pc_host}:{pc_ruta}/{nombre}'
+          f'  ({size_mb:.0f} MB en {t:.0f}s | {size_mb/t:.1f} MB/s)',
+          flush=True)
+
+
 def main():
     p = argparse.ArgumentParser(
         description='Captura campo via streaming FILE mode — SD intermedia, USB destino'
@@ -223,7 +239,16 @@ def main():
                    help='Minutos totales (sin limite si no se especifica)')
     p.add_argument('--directorio',     default='/mnt/usb',
                    help='Storage externo montado (default /mnt/usb)')
+    p.add_argument('--destino',        choices=['usb', 'red'], default='usb',
+                   help='Destino de los chunks: usb (default) o red (rsync SSH a PC)')
+    p.add_argument('--pc_host',        default=None,
+                   help='usuario@ip de la PC destino (ej: facu@192.168.0.10) — solo con --destino red')
+    p.add_argument('--pc_ruta',        default=None,
+                   help='Ruta en la PC donde guardar los archivos — solo con --destino red')
     args = p.parse_args()
+
+    if args.destino == 'red' and (not args.pc_host or not args.pc_ruta):
+        sys.exit('ERROR: --destino red requiere --pc_host y --pc_ruta')
 
     DEC_VALIDOS = {1, 2, 4, 8, 16, 32, 64}
     if args.decimacion not in DEC_VALIDOS:
@@ -236,6 +261,13 @@ def main():
 
     _asegurar_servidor()
     dest_usb = _preparar_dirs(args.directorio)
+
+    if args.destino == 'usb':
+        mover_fn      = lambda archivo, num: _mover_a_usb(archivo, dest_usb, num)
+        destino_label = dest_usb
+    else:
+        mover_fn      = lambda archivo, num: _mover_a_red(archivo, args.pc_host, args.pc_ruta, num)
+        destino_label = f'{args.pc_host}:{args.pc_ruta}'
 
     client = streaming.ADCStreamClient()
     client.setVerbose(False)
@@ -251,11 +283,11 @@ def main():
     _guardar_metadata(dest_usb, args.condicion, args.decimacion, fs_ef)
 
     bytes_chunk = n_muestras * 2
-    print(f'\n=== CAPTURA CAMPO — SD intermedia + USB destino ===')
+    print(f'\n=== CAPTURA CAMPO — SD intermedia + {args.destino.upper()} destino ===')
     print(f'  condicion  : {args.condicion}')
     print(f'  decimacion : {args.decimacion}  →  fs = {fs_ef/1e6:.4f} MHz')
     print(f'  chunk      : {args.duracion_chunk} min  ({n_muestras:,} muestras | {bytes_chunk/1e6:.0f} MB)')
-    print(f'  USB destino: {dest_usb}')
+    print(f'  destino    : {destino_label}')
     if total_s:
         n_est = max(1, int(total_s / chunk_s))
         print(f'  total      : {args.duracion_total} min  (~{n_est} chunks)')
@@ -293,10 +325,10 @@ def main():
                 print('  [esperando move anterior...]', flush=True)
                 move_thread.join()
 
-            # Mover este chunk a USB en background (mientras captura el siguiente)
+            # Mover este chunk en background (mientras captura el siguiente)
             move_thread = threading.Thread(
-                target=_mover_a_usb,
-                args=(archivo_sd, dest_usb, chunk_num),
+                target=mover_fn,
+                args=(archivo_sd, chunk_num),
                 daemon=True,
             )
             move_thread.start()
@@ -305,12 +337,12 @@ def main():
     finally:
         # Esperar que el ultimo move termine antes de salir
         if move_thread and move_thread.is_alive():
-            print('\n  [esperando ultimo move a USB...]', flush=True)
+            print(f'\n  [esperando ultimo move a {args.destino.upper()}...]', flush=True)
             move_thread.join()
         print(f'\n=== SESION TERMINADA ===')
         print(f'  Chunks guardados : {chunk_num - 1}')
         print(f'  Tiempo capturado : {tiempo_capturado/60:.2f} min  ({tiempo_capturado:.0f}s)')
-        print(f'  Archivos en USB  : {dest_usb}')
+        print(f'  Archivos en       : {destino_label}')
 
 
 if __name__ == '__main__':
