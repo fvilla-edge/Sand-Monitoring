@@ -320,11 +320,19 @@ def main():
 
             if total_s:
                 restante = total_s - tiempo_capturado
-                n        = min(n_muestras, int(fs_ef * restante))
+                if restante < 2.0:
+                    print('[OK] Tiempo total de sesion alcanzado.')
+                    break
+                n = min(n_muestras, int(fs_ef * restante))
             else:
                 n = n_muestras
 
-            print(f'--- Chunk {chunk_num:04d} | USB {libre_usb/1e9:.2f} GB libres ---', flush=True)
+            if args.destino == 'usb':
+                espacio_label = f'USB {libre_usb/1e9:.2f} GB libres'
+            else:
+                libre_sd = shutil.disk_usage(STREAM_DIR).free
+                espacio_label = f'SD {libre_sd/1e9:.2f} GB libres'
+            print(f'--- Chunk {chunk_num:04d} | {espacio_label} ---', flush=True)
             secs, archivo_sd = _capturar_chunk(client, n, fs_ef, chunk_num, args.condicion)
             tiempo_capturado += secs
 
