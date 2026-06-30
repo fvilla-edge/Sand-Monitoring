@@ -282,6 +282,14 @@ def main():
 
     _guardar_metadata(dest_usb, args.condicion, args.decimacion, fs_ef)
 
+    if args.destino == 'red':
+        subprocess.run(
+            ['scp', '-q',
+             os.path.join(dest_usb, 'session_info.json'),
+             f'{args.pc_host}:{args.pc_ruta}/'],
+            check=True,
+        )
+
     bytes_chunk = n_muestras * 2
     print(f'\n=== CAPTURA CAMPO — SD intermedia + {args.destino.upper()} destino ===')
     print(f'  condicion  : {args.condicion}')

@@ -16,6 +16,49 @@ un thread de fondo mientras ya empieza el siguiente chunk.
 
 ---
 
+## Cómo funciona el script
+
+### Por qué la SD como buffer intermedio
+
+El streaming-server de Red Pitaya genera datos a **7.8 MB/s** (decimación 32, 2 bytes por muestra).
+Un USB 2.0 típico escribe a 4–5 MB/s — más lento que la tasa de datos. Si el servidor escribiera
+directo al USB, el buffer interno se llenaría y los datos se perderían o el servidor pararía antes
+de tiempo. La SD interna de la placa escribe a **15 MB/s**, suficiente para no perder nada.
+
+### Flujo por chunk
+
+```
+     PLACA                                      DESTINO
+  ┌──────────────────────────────┐
+  │  1. startStreaming()         │
+  │     servidor escribe a SD   │  ← 15 MB/s, ~60s para 1 min de señal
+  │     Python espera callback  │
+  │  2. callback stoppedSDDone  │
+  │     renombra archivo en SD  │
+  └──────────────────────────────┘
+           │
+           ├─── thread de fondo ──────────────────► USB: shutil.move()  4–5 MB/s
+           │                                         RED: scp            6–15 MB/s
+           │
+  ┌──────────────────────────────┐
+  │  3. startStreaming() chunk 2 │  ← arranca inmediatamente, no espera el move
+  │     ...                     │
+  └──────────────────────────────┘
+```
+
+El move del chunk anterior y la captura del siguiente corren **en paralelo**. Si el move no
+terminó cuando la captura nueva termina, el script espera (`[esperando move anterior...]`)
+antes de iniciar el siguiente move — nunca hay más de un archivo en tránsito a la vez, y
+nunca se acumulan archivos en la SD.
+
+### Eficiencia real
+
+La **eficiencia** que imprime el script es `tiempo_de_señal / tiempo_de_reloj`. Con SD como
+destino de captura se obtiene consistentemente 97–99%. El tiempo de move al USB o red no
+cuenta en esa métrica — ocurre fuera del loop de captura.
+
+---
+
 ## Estructura de archivos
 
 ```
