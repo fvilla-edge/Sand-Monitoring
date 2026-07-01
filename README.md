@@ -7,11 +7,11 @@ sin cortar la produccion ni instalar nada invasivo.
 ## Idea general
 
 Un sensor acustico pegado a la tuberia capta las vibraciones que genera la arena al chocar contra las paredes.
-Una placa ADC digitaliza esa senal a alta frecuencia, y un script calcula metricas (kurtosis, RMS, crest factor)
-que permiten distinguir reposo de produccion de arena.
+Una placa ADC digitaliza esa senal a alta frecuencia, y un script calcula metricas (kurtosis, RMS, crest factor,
+rms diferencial) que permiten distinguir reposo de produccion de arena.
 
 ```
-tuberia  →  sensor VS150-RI  →  Red Pitaya (ADC)  →  HDF5  →  analisis en PC
+tuberia  →  sensor(es) VS150-RI  →  Red Pitaya (ADC)  →  captura (HDF5 en lab / .bin en campo)  →  analisis en PC
 ```
 
 ## Hardware
@@ -26,16 +26,22 @@ tuberia  →  sensor VS150-RI  →  Red Pitaya (ADC)  →  HDF5  →  analisis e
 
 ```
 Sand Monitoring/
-├── scripts_rp/          # Scripts de laboratorio (corren en la Red Pitaya)
-│   ├── capturar.py      # Captura + metricas, guarda HDF5
-│   └── leer_h5.py       # Lectura rapida de metadatos
-├── scripts_campo/       # Scripts de campo (corren en la Red Pitaya)
-│   ├── capturar_campo.py  # Loop continuo, raw, streaming a storage externo
-│   └── PLAN_CAMPO.md    # Parametros, procedimiento y ejemplos de uso en campo
-├── analisis/            # Scripts de analisis local (corren en la PC)
-│   └── analisis_semana*.py
-├── capturas/            # Archivos HDF5 (gitignoreado)
-└── docs/                # Informes y roadmap
+├── scripts_rp/            # Scripts de laboratorio (corren en la Red Pitaya)
+│   ├── capturar.py        # Captura + metricas, guarda HDF5
+│   └── leer_h5.py         # Lectura rapida de metadatos
+├── scripts_campo/         # Captura mono-canal en campo (corren en la Red Pitaya)
+│   ├── capturar_campo_stream.py  # Recomendado — streaming, raw .bin, ~98% eficiencia
+│   ├── capturar_campo.py         # Alternativa HDF5, ~54% eficiencia
+│   └── PLAN_CAMPO.md      # Parametros, procedimiento y ejemplos de uso en campo
+├── scripts_campo_dual/    # Captura dual-canal (codo + referencia), experimental
+│   ├── capturar_dual_stream.py
+│   └── PLAN_DUAL.md
+├── analisis/              # Scripts de analisis local (corren en la PC)
+│   ├── revisar_campo.py   # Revision rapida de capturas mono (.bin)
+│   ├── revisar_dual.py    # Revision rapida de capturas dual (.bin)
+│   └── analisis_semana*.py  # Analisis historico del dataset de laboratorio
+├── capturas/              # Archivos HDF5 de laboratorio (gitignoreado)
+└── docs/                  # Informes y roadmap
 ```
 
 ## Setup (PC local — una sola vez)
@@ -64,3 +70,11 @@ scp root@<IP>:/root/captura_*.h5 capturas/
 ```
 
 Para captura en campo (loop continuo, storage externo) ver `scripts_campo/PLAN_CAMPO.md`.
+Para dual-canal ver `scripts_campo_dual/PLAN_DUAL.md`.
+
+Revision rapida de una captura de campo:
+
+```bash
+.venv/bin/python3 analisis/revisar_campo.py /ruta/a/la/captura/
+.venv/bin/python3 analisis/revisar_dual.py /ruta/a/la/captura/
+```
