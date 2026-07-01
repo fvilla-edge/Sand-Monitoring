@@ -1,14 +1,25 @@
 #!/usr/bin/env python3
 """
-revisar_dual.py — Revision rapida de archivos HDF5 dual canal (CH1 + CH2).
+revisar_dual.py — Revision rapida de capturas dual canal (CH1 + CH2) en PC.
 
-Calcula kurtosis, crest factor y fraccion_activa sobre cada canal filtrado (100-450 kHz)
-y metricas diferenciales para separar arena de ruido de linea comun.
+Acepta archivos .bin de capturar_dual_stream.py: raw int16 LE, CH1 y CH2
+intercalados por muestra en un solo archivo (asi los escribe el
+streaming-server con los 2 canales activos — no hay opcion de archivos
+separados). Requiere el session_dual_*_info.json en el mismo directorio.
+
+Mapeo de canales (ver session_dual_*_info.json, campo "mapeo_canales"):
+  CH1 (codo)       = posiciones impares (datos[1::2])
+  CH2 (referencia) = posiciones pares   (datos[0::2])
+Confirmado con golpe fisico en el cable IN1 sin sensor conectado (2026-07-01).
+PENDIENTE re-confirmar con el sensor VS150-RI puesto.
+
+Calcula kurtosis, crest factor y fraccion_activa sobre cada canal filtrado
+(100-450 kHz) y metricas diferenciales para separar arena de ruido de linea
+comun.
 
 Uso:
-  .venv/bin/python3 analisis/revisar_dual.py capturas/dual/*.h5
-  .venv/bin/python3 analisis/revisar_dual.py /mnt/usb/
-  .venv/bin/python3 analisis/revisar_dual.py dual_reposo_*.h5 dual_con_arena_*.h5
+  .venv/bin/python3 analisis/revisar_dual.py /mnt/usb/stream_dual/
+  .venv/bin/python3 analisis/revisar_dual.py dual_reposo_*.bin dual_con_arena_*.bin
 
 Metricas:
   k1 / k2      : kurtosis CH1 (codo) y CH2 (referencia)
@@ -17,11 +28,12 @@ Metricas:
   rms_r        : RMS_CH1 / RMS_CH2  (>1 -> exceso de energia en codo)
   deteccion    : ARENA si k1>20 y k1 > 3*k2 | ruido si ambos altos | reposo
 """
+import re
 import sys
+import json
 from pathlib import Path
 
 import numpy as np
-import h5py
 from scipy.signal import butter, sosfilt
 from scipy.stats import kurtosis as scipy_kurtosis
 
@@ -30,6 +42,8 @@ BANDA_HIGH  = 450_000
 FILTRO_ORD  = 4
 FA_WINDOW_S = 0.050
 FA_THRESH   = 20
+
+V_REF = 20.0   # ±20V con jumper HV y gain A_1_20
 
 
 def _bandpass(signal, fs):
@@ -50,18 +64,44 @@ def _fraccion_activa(sig, fs):
     return float(np.mean(kurt_w > FA_THRESH) * 100)
 
 
+def _buscar_info(ruta):
+    m = re.match(r'dual_(reposo|con_arena)_(\d{8}_\d{6})_\d{4}', ruta.stem)
+    if m:
+        info_path = ruta.parent / f'session_dual_{m.group(1)}_{m.group(2)}_info.json'
+        if info_path.exists():
+            return info_path
+    raise FileNotFoundError(f"No se encontro JSON de sesion para {ruta.name}")
+
+
+def _chunk_num_from_nombre(stem):
+    try:
+        return int(stem.rsplit('_', 1)[-1])
+    except ValueError:
+        return 0
+
+
 def _calcular(ruta):
     ruta = Path(ruta)
-    with h5py.File(ruta, 'r') as f:
-        attrs = dict(f.attrs)
-        ch1   = f['raw_ch1'][:]
-        ch2   = f['raw_ch2'][:]
+    info_path = _buscar_info(ruta)
+    with open(info_path) as f:
+        info = json.load(f)
 
-    dec   = int(attrs.get('decimacion', 32))
-    fs    = float(attrs.get('fs_ef_hz', 125_000_000 / dec))
-    cond  = str(attrs.get('condicion', '?'))
-    dur_s = float(attrs.get('duracion_s', len(ch1) / fs))
-    chunk = int(attrs.get('chunk_num', 0))
+    dec  = int(info.get('decimacion', 64))
+    fs   = float(info.get('fs_hz_por_canal', 125_000_000 / dec))
+    cond = str(info.get('condicion', '?'))
+    mapeo = info.get('mapeo_canales', {})
+    ch1_pares = mapeo.get('ch1_posiciones', 'impares').startswith('par')
+
+    raw = np.fromfile(ruta, dtype='<i2')
+    if ch1_pares:
+        ch1_i16, ch2_i16 = raw[0::2], raw[1::2]
+    else:
+        ch1_i16, ch2_i16 = raw[1::2], raw[0::2]
+
+    ch1 = ch1_i16.astype(np.float32) * (V_REF / 32767.0)
+    ch2 = ch2_i16.astype(np.float32) * (V_REF / 32767.0)
+    dur_s = len(ch1) / fs
+    chunk = _chunk_num_from_nombre(ruta.stem)
     size  = ruta.stat().st_size / 1e6
 
     f1 = _bandpass(ch1, fs)
@@ -107,7 +147,7 @@ def _recopilar_rutas(args):
     for a in args:
         p = Path(a)
         if p.is_dir():
-            rutas.extend(sorted(p.glob('dual_*.h5')))
+            rutas.extend(sorted(p.glob('dual_*.bin')))
         elif p.exists():
             rutas.append(p)
         else:
@@ -122,7 +162,7 @@ def main():
 
     rutas = _recopilar_rutas(sys.argv[1:])
     if not rutas:
-        print('[!] No se encontraron archivos .h5')
+        print('[!] No se encontraron archivos dual_*.bin')
         sys.exit(1)
 
     resultados = []
@@ -174,6 +214,8 @@ def main():
     print()
     print('  Referencia reposo: k1~3, k2~3, dk~0, fa1%~0, fa2%~0, rms_r~1')
     print('  Referencia arena:  k1>20, k2~3, dk>>0, fa1%>25, rms_r>1')
+    print('  [!] Mapeo CH1/CH2 confirmado por golpe en cable sin sensor (2026-07-01) —')
+    print('      pendiente re-confirmar con el sensor VS150-RI puesto.')
 
 
 if __name__ == '__main__':

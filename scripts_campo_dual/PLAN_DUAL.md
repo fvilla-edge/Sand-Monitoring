@@ -117,10 +117,15 @@ ch2 = datos[0::2]   # referencia
 
 ---
 
-### Paso 3 — Análisis diferencial
-**Script:** `revisar_dual.py` (existe pero desactualizado — lee `.h5` del
-`capturar_dual.py` viejo; hay que adaptarlo para leer los `.bin` intercalados
-del nuevo `capturar_dual_stream.py`, con `datos[1::2]`=ch1 / `datos[0::2]`=ch2)
+### Paso 3 — Análisis diferencial ✅ COMPLETO (2026-07-01)
+**Script:** `revisar_dual.py` — adaptado para leer los `.bin` intercalados de
+`capturar_dual_stream.py` (ya no soporta `.h5`, no se va a usar más). Lee el
+mapeo de canales desde `session_dual_*_info.json` en vez de asumirlo fijo.
+Probado con una captura real de 10s (entradas al aire): separó los canales
+bien y el resultado fue coherente — k2 (CH2, flotante) dio kurtosis 9266 y
+fa2%=100% por el artefacto periódico ya documentado (falso positivo esperado,
+no arena); k1 se mantuvo en baseline (~3) porque no hubo golpe durante esa
+captura.
 
 Aplica filtro 100–450 kHz a ambos canales y calcula:
 
@@ -153,4 +158,4 @@ Aplica filtro 100–450 kHz a ambos canales y calcula:
 | 2 — `capturar_dual_stream.py` (streaming FILE mode) | ✅ Completo (2026-07-01) |
 | 2b — Prueba mecánica del script (3 chunks, dec=64, USB) | ✅ Completo (2026-07-01) — 94-97% efic, sin errores. **Con entradas al aire, no es dato válido** — solo valida que el script funciona. |
 | 2c — Prueba con sensores VS150-RI conectados | ⬜ **Pendiente — bloqueante antes de usar en campo real.** Repetir mapeo de canales (golpe con sensor puesto) y verificar el ruido de base real (sin las entradas flotantes debería desaparecer el artefacto periódico de ~30 Hz). |
-| 3 — `revisar_dual.py` (adaptar a `.bin` intercalado) | ⬜ Pendiente |
+| 3 — `revisar_dual.py` (adaptar a `.bin` intercalado) | ✅ Completo (2026-07-01) |
