@@ -69,7 +69,7 @@ Sand Monitoring/
     capturar_campo.py          ← alternativa HDF5 (54% eficiencia, float32 autodescrip.)
     PLAN_CAMPO.md              ← este documento
   analisis/
-    revisar_campo.py           ← revision rapida en PC (lee .bin y .h5)
+    revisar_campo.py           ← revision rapida en PC (lee .bin)
 ```
 
 ---
@@ -530,5 +530,5 @@ PYTHONPATH=/opt/redpitaya/lib/python \
 - [x] Modo RED via link directo RJ45 — sin router, 5.6 MB/s concurrente, límite ~2.9 h
 - [x] Librería `rpsa_client` con persistencia automática vía systemd (`rpsa-lib.service`)
 - [x] Loop continuo con Ctrl+C limpio, chequeo de espacio, chunks numerados
-- [x] Revisión rápida en PC (`revisar_campo.py`) para .bin y .h5
+- [x] Revisión rápida en PC (`revisar_campo.py`) para .bin
 - [ ] Análisis post-campo con métricas completas (kurtosis, espectro, clasificación)

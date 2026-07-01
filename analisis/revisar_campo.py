@@ -3,16 +3,18 @@
 revisar_campo.py — Revision rapida de capturas de campo en PC.
 
 Acepta:
-  - Archivos .h5  (capturar_campo.py — float32, auto-descriptos)
   - Archivos .bin (capturar_campo_stream.py — int16 raw, requiere session_info.json)
-  - Directorios   (busca campo_*.h5 y campo_*.bin recursivamente)
+  - Directorios   (busca campo_*.bin recursivamente)
 
-Calcula kurtosis, crest factor y fraccion_activa sobre la senal filtrada (100-450 kHz).
+Calcula kurtosis, crest factor, fraccion_activa y rms_diferencial sobre la
+senal filtrada (100-450 kHz). rms_diferencial usa como baseline la mediana
+del RMS de las capturas 'reposo' presentes en el mismo lote (formula Gao 2015,
+ver analisis/INTERPRETACION_RESULTADOS.md) — si el lote no tiene ninguna
+captura reposo, se muestra N/A.
 
 Uso:
   .venv/bin/python3 analisis/revisar_campo.py /mnt/usb/
-  .venv/bin/python3 analisis/revisar_campo.py capturas/semana_campo/*.h5
-  .venv/bin/python3 analisis/revisar_campo.py campo_reposo_*.bin
+  .venv/bin/python3 analisis/revisar_campo.py campo_reposo_*.bin campo_con_arena_*.bin
 """
 import re
 import sys
@@ -20,7 +22,6 @@ import json
 from pathlib import Path
 
 import numpy as np
-import h5py
 from scipy.signal import butter, sosfilt
 from scipy.stats import kurtosis as scipy_kurtosis
 
@@ -49,19 +50,6 @@ def _fraccion_activa(sig, fs):
     m4  = np.mean(mat ** 4, axis=1)
     kurt_w = m4 / np.where(m2 > 0, m2 ** 2, 1e-30)
     return float(np.mean(kurt_w > FA_THRESH) * 100)
-
-
-def _calcular_h5(ruta):
-    with h5py.File(ruta, 'r') as f:
-        attrs  = dict(f.attrs)
-        signal = f['raw_signal'][:]
-
-    dec   = int(attrs.get('decimacion', 64))
-    fs    = float(attrs.get('fs_ef_hz', 125_000_000 / dec))
-    cond  = str(attrs.get('condicion', '?'))
-    dur_s = float(attrs.get('duracion_s', len(signal) / fs))
-    chunk = int(attrs.get('chunk_num', 0))
-    return signal, fs, cond, dur_s, chunk
 
 
 def _calcular_bin(ruta):
@@ -99,12 +87,9 @@ def _chunk_num_from_nombre(stem):
 
 def _calcular(ruta):
     ruta = Path(ruta)
-    if ruta.suffix == '.h5':
-        signal, fs, cond, dur_s, chunk = _calcular_h5(ruta)
-    elif ruta.suffix == '.bin':
-        signal, fs, cond, dur_s, chunk = _calcular_bin(ruta)
-    else:
+    if ruta.suffix != '.bin':
         raise ValueError(f"Formato no soportado: {ruta.suffix}")
+    signal, fs, cond, dur_s, chunk = _calcular_bin(ruta)
 
     size  = ruta.stat().st_size / 1e6
     sig_f = _bandpass(signal, fs)
@@ -119,11 +104,25 @@ def _calcular(ruta):
         'cond':     cond,
         'chunk':    chunk,
         'dur_min':  dur_s / 60,
+        'rms':      rms,
         'kurt':     kurt,
         'crest':    cf,
         'fa_pct':   fa,
         'size_mb':  size,
     }
+
+
+def _agregar_rms_diferencial(resultados):
+    reposo_rms = [r['rms'] for r in resultados if r['cond'] == 'reposo']
+    if not reposo_rms:
+        for r in resultados:
+            r['rms_dif'] = None
+        return None
+
+    baseline = float(np.median(reposo_rms))
+    for r in resultados:
+        r['rms_dif'] = float(np.sqrt(max(0.0, r['rms'] ** 2 - baseline ** 2)) / baseline)
+    return baseline
 
 
 def _detectar(r):
@@ -137,7 +136,6 @@ def _recopilar_rutas(args):
     for a in args:
         p = Path(a)
         if p.is_dir():
-            rutas.extend(sorted(p.glob('campo_*.h5')))
             rutas.extend(sorted(p.glob('campo_*.bin')))
         elif p.exists():
             rutas.append(p)
@@ -153,7 +151,7 @@ def main():
 
     rutas = _recopilar_rutas(sys.argv[1:])
     if not rutas:
-        print('[!] No se encontraron archivos .h5 ni .bin de campo')
+        print('[!] No se encontraron archivos .bin de campo')
         sys.exit(1)
 
     resultados = []
@@ -167,17 +165,22 @@ def main():
     if not resultados:
         return
 
+    baseline = _agregar_rms_diferencial(resultados)
+    if baseline is None:
+        print('[!] Ningun archivo con condicion "reposo" en el lote — rms_diferencial se muestra como N/A')
+
     ancho = max(len(r['archivo']) for r in resultados)
-    sep   = '-' * (ancho + 58)
+    sep   = '-' * (ancho + 68)
 
     header = (f"{'archivo':<{ancho}}  {'cond':<10}  {'chunk':>5}  "
-              f"{'dur':>5}  {'kurt':>7}  {'crest':>6}  {'fa%':>5}  {'MB':>6}  deteccion")
+              f"{'dur':>5}  {'kurt':>7}  {'crest':>6}  {'fa%':>5}  {'rms_dif':>7}  {'MB':>6}  deteccion")
     print(f'\n{sep}')
     print(header)
     print(sep)
 
     for r in resultados:
         det = _detectar(r)
+        rd  = f"{r['rms_dif']:>7.2f}" if r['rms_dif'] is not None else f"{'N/A':>7}"
         print(
             f"{r['archivo']:<{ancho}}  "
             f"{r['cond']:<10}  "
@@ -186,6 +189,7 @@ def main():
             f"{r['kurt']:>7.1f}  "
             f"{r['crest']:>6.1f}  "
             f"{r['fa_pct']:>4.1f}%  "
+            f"{rd}  "
             f"{r['size_mb']:>6.1f}  "
             f"{det}"
         )
@@ -199,6 +203,8 @@ def main():
           f'{n_arena} con arena | {n_reposo} en reposo')
     print()
     print('  Referencia: kurtosis reposo ~3 | arena >20  |  fa% reposo 0% | arena >25%')
+    print('  rms_diferencial (informativo, no afecta deteccion): sqrt(max(0,rms²-baseline²))/baseline,')
+    print('  baseline = mediana RMS de "reposo" en el lote | <0.1 insignificante | 0.1-0.4 leve | >0.4 significativo')
 
 
 if __name__ == '__main__':

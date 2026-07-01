@@ -13,9 +13,11 @@ Mapeo de canales (ver session_dual_*_info.json, campo "mapeo_canales"):
 Confirmado con golpe fisico en el cable IN1 sin sensor conectado (2026-07-01).
 PENDIENTE re-confirmar con el sensor VS150-RI puesto.
 
-Calcula kurtosis, crest factor y fraccion_activa sobre cada canal filtrado
-(100-450 kHz) y metricas diferenciales para separar arena de ruido de linea
-comun.
+Calcula kurtosis, crest factor, fraccion_activa y rms_diferencial sobre cada
+canal filtrado (100-450 kHz), ademas de las metricas cruzadas CH1 vs CH2 para
+separar arena de ruido de linea comun. rms_diferencial usa como baseline la
+mediana del RMS de las capturas 'reposo' del mismo canal presentes en el lote
+(formula Gao 2015) — si el lote no tiene ninguna captura reposo, se muestra N/A.
 
 Uso:
   .venv/bin/python3 analisis/revisar_dual.py /mnt/usb/stream_dual/
@@ -121,6 +123,8 @@ def _calcular(ruta):
         'cond':     cond,
         'chunk':    chunk,
         'dur_min':  dur_s / 60,
+        'rms1':     rms1,
+        'rms2':     rms2,
         'k1':       k1,
         'k2':       k2,
         'dk':       k1 - k2,
@@ -131,6 +135,23 @@ def _calcular(ruta):
         'rms_r':    rms1 / rms2 if rms2 > 0 else 0.0,
         'size_mb':  size,
     }
+
+
+def _agregar_rms_diferencial(resultados):
+    reposo1 = [r['rms1'] for r in resultados if r['cond'] == 'reposo']
+    reposo2 = [r['rms2'] for r in resultados if r['cond'] == 'reposo']
+    if not reposo1 or not reposo2:
+        for r in resultados:
+            r['rd1'] = None
+            r['rd2'] = None
+        return None, None
+
+    base1 = float(np.median(reposo1))
+    base2 = float(np.median(reposo2))
+    for r in resultados:
+        r['rd1'] = float(np.sqrt(max(0.0, r['rms1'] ** 2 - base1 ** 2)) / base1)
+        r['rd2'] = float(np.sqrt(max(0.0, r['rms2'] ** 2 - base2 ** 2)) / base2)
+    return base1, base2
 
 
 def _detectar(r):
@@ -176,18 +197,24 @@ def main():
     if not resultados:
         return
 
+    base1, base2 = _agregar_rms_diferencial(resultados)
+    if base1 is None:
+        print('[!] Ningun archivo con condicion "reposo" en el lote — rd1/rd2 se muestran como N/A')
+
     ancho = max(len(r['archivo']) for r in resultados)
-    sep   = '-' * (ancho + 72)
+    sep   = '-' * (ancho + 88)
 
     header = (f"{'archivo':<{ancho}}  {'cond':<10}  {'ck':>5}  {'dur':>5}  "
               f"{'k1':>7}  {'k2':>7}  {'dk':>7}  "
-              f"{'fa1%':>5}  {'fa2%':>5}  {'rms_r':>6}  {'MB':>6}  deteccion")
+              f"{'fa1%':>5}  {'fa2%':>5}  {'rms_r':>6}  {'rd1':>6}  {'rd2':>6}  {'MB':>6}  deteccion")
     print(f'\n{sep}')
     print(header)
     print(sep)
 
     for r in resultados:
         det = _detectar(r)
+        rd1 = f"{r['rd1']:>6.2f}" if r['rd1'] is not None else f"{'N/A':>6}"
+        rd2 = f"{r['rd2']:>6.2f}" if r['rd2'] is not None else f"{'N/A':>6}"
         print(
             f"{r['archivo']:<{ancho}}  "
             f"{r['cond']:<10}  "
@@ -199,6 +226,8 @@ def main():
             f"{r['fa1']:>4.1f}%  "
             f"{r['fa2']:>4.1f}%  "
             f"{r['rms_r']:>6.2f}  "
+            f"{rd1}  "
+            f"{rd2}  "
             f"{r['size_mb']:>6.1f}  "
             f"{det}"
         )
@@ -214,6 +243,8 @@ def main():
     print()
     print('  Referencia reposo: k1~3, k2~3, dk~0, fa1%~0, fa2%~0, rms_r~1')
     print('  Referencia arena:  k1>20, k2~3, dk>>0, fa1%>25, rms_r>1')
+    print('  rd1/rd2 (informativo, no afecta deteccion): rms_diferencial por canal,')
+    print('  baseline = mediana RMS de "reposo" del mismo canal en el lote | <0.1 insignificante | 0.1-0.4 leve | >0.4 significativo')
     print('  [!] Mapeo CH1/CH2 confirmado por golpe en cable sin sensor (2026-07-01) —')
     print('      pendiente re-confirmar con el sensor VS150-RI puesto.')
 
