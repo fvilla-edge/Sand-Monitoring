@@ -9,8 +9,7 @@ mientras ya se captura el siguiente.
 Formato de salida: raw int16 little-endian, INTERCALADO por muestra
 (CH_par, CH_impar, CH_par, CH_impar, ...) en un solo archivo — asi es como el
 streaming-server escribe cuando los dos canales estan activos, no es algo
-configurable. Mapeo confirmado con prueba fisica (golpe en cable IN1, sin
-sensor conectado, 2026-07-01):
+configurable.:
     posiciones IMPARES (indices 1,3,5,...) = CH1 (IN1, sensor codo)
     posiciones PARES   (indices 0,2,4,...) = CH2 (IN2, sensor referencia)
 Este mapeo hay que re-confirmarlo con el sensor VS150-RI realmente puesto —
