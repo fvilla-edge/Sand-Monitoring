@@ -59,28 +59,55 @@ signal.signal(signal.SIGINT,  _handle_stop)
 signal.signal(signal.SIGTERM, _handle_stop)
 
 
-def _asegurar_servidor():
-    """Carga bitstream stream_app e inicia streaming-server si no corre."""
+def _asegurar_servidor(max_intentos=3):
+    """
+    Carga bitstream stream_app e inicia streaming-server si no corre.
+
+    Fix Bug 2 (portado de capturar_campo_stream.py, 2026-07-02): el
+    streaming-server puede abortar (SIGABRT) casi al instante de arrancar
+    si recibe comandos antes de que su "register controller" termine de
+    inicializarse — un sleep fijo no garantiza que ya este listo. Se
+    verifica que el proceso siga vivo unos segundos despues de lanzarlo y,
+    si murio, se reintenta el bitstream+arranque desde cero.
+    """
     r = subprocess.run(['pgrep', '-f', 'streaming-server'], capture_output=True)
     if r.returncode == 0:
         return
 
-    print('  Cargando bitstream stream_app...', flush=True)
-    subprocess.run(['/opt/redpitaya/sbin/overlay.sh', 'stream_app'],
-                   check=True, capture_output=True)
-    time.sleep(1)
+    for intento in range(1, max_intentos + 1):
+        print(f'  Cargando bitstream stream_app... (intento {intento}/{max_intentos})', flush=True)
+        subprocess.run(['/opt/redpitaya/sbin/overlay.sh', 'stream_app'],
+                       check=True, capture_output=True)
+        time.sleep(1)
 
-    print('  Iniciando streaming-server...', flush=True)
-    env = os.environ.copy()
-    env['LD_LIBRARY_PATH'] = '/opt/redpitaya/lib'
-    subprocess.Popen(
-        [SERVER_BIN, '-v'],
-        cwd='/opt/redpitaya/bin',
-        env=env,
-        stdout=open('/tmp/sstream_dual.log', 'w'),
-        stderr=subprocess.STDOUT,
-    )
-    time.sleep(2)
+        print('  Iniciando streaming-server...', flush=True)
+        env = os.environ.copy()
+        env['LD_LIBRARY_PATH'] = '/opt/redpitaya/lib'
+        proc = subprocess.Popen(
+            [SERVER_BIN, '-v'],
+            cwd='/opt/redpitaya/bin',
+            env=env,
+            stdout=open('/tmp/sstream_dual.log', 'w'),
+            stderr=subprocess.STDOUT,
+        )
+
+        # Chequeo de vida cada 0.5s en vez de un sleep ciego de 2s.
+        vivo = True
+        for _ in range(6):  # ~3s de margen
+            time.sleep(0.5)
+            if proc.poll() is not None:
+                vivo = False
+                break
+
+        if vivo:
+            return
+
+        print(f'  [!] streaming-server abortó al iniciar (intento {intento}/{max_intentos}). '
+              f'Reintentando...', flush=True)
+        time.sleep(1)
+
+    sys.exit('ERROR: streaming-server no pudo inicializar tras reintentos '
+              '(ver /tmp/sstream_dual.log en la placa).')
 
 
 def _preparar_dirs(directorio):
@@ -219,6 +246,41 @@ def _capturar_chunk(client, n_muestras, fs_ef, chunk_num, condicion, session_ts)
     return senal_s, nombre_final
 
 
+def _nuevo_cliente(args):
+    """
+    Crea, conecta y configura un cliente streaming nuevo.
+
+    Mitigacion Bug 1 (portada de capturar_campo_stream.py, 2026-07-02): la
+    causa raiz confirmada es una race condition del lado del
+    streaming-server (no una fuga en el cliente), asi que esto no esta
+    confirmado que evite el crash — es la misma mitigacion experimental
+    que en mono, mientras se espera respuesta de Red Pitaya sobre el issue.
+    """
+    client = streaming.ADCStreamClient()
+    client.setVerbose(False)
+    if not client.connect():
+        raise RuntimeError('no se pudo conectar al streaming-server')
+
+    client.sendConfig('adc_pass_mode',        'FILE')
+    client.sendConfig('adc_decimation',       str(args.decimacion))
+    client.sendConfig('channel_attenuator_1', 'A_1_20')
+    client.sendConfig('channel_attenuator_2', 'A_1_20')
+    client.sendConfig('channel_state_1',      'ON')
+    client.sendConfig('channel_state_2',      'ON')
+    return client
+
+
+def _cerrar_cliente(client):
+    """
+    Descarta un cliente streaming ya usado, de forma best-effort.
+
+    Ver misma nota en capturar_campo_stream.py: no llamar stopStreaming()
+    aca (el streaming del chunk ya termino), y no hay API de desconexion
+    conocida del binding SWIG — se suelta la referencia y listo.
+    """
+    pass
+
+
 def _mover_a_usb(archivo_sd, dest_usb, chunk_num):
     """Copia archivo de SD a USB y elimina el original (corre en thread)."""
     nombre  = os.path.basename(archivo_sd)
@@ -298,17 +360,10 @@ def main():
         mover_fn      = lambda archivo, num: _mover_a_red(archivo, args.pc_host, args.pc_ruta, num)
         destino_label = f'{args.pc_host}:{args.pc_ruta}'
 
-    client = streaming.ADCStreamClient()
-    client.setVerbose(False)
-    if not client.connect():
-        sys.exit('ERROR: no se pudo conectar al streaming-server')
-
-    client.sendConfig('adc_pass_mode',        'FILE')
-    client.sendConfig('adc_decimation',       str(args.decimacion))
-    client.sendConfig('channel_attenuator_1', 'A_1_20')
-    client.sendConfig('channel_attenuator_2', 'A_1_20')
-    client.sendConfig('channel_state_1',      'ON')
-    client.sendConfig('channel_state_2',      'ON')
+    try:
+        client = _nuevo_cliente(args)
+    except RuntimeError as e:
+        sys.exit(f'ERROR: {e}')
 
     session_ts, json_name = _guardar_metadata(dest_usb, args.condicion, args.decimacion, fs_ef)
 
@@ -366,6 +421,11 @@ def main():
             print(f'--- Chunk {chunk_num:04d} | {espacio_label} ---', flush=True)
             secs, archivo_sd = _capturar_chunk(client, n, fs_ef, chunk_num, args.condicion, session_ts)
             tiempo_capturado += secs
+
+            # Reiniciar el cliente para el proximo chunk (mitigacion Bug 1)
+            _cerrar_cliente(client)
+            client = _nuevo_cliente(args)
+            print('  [cliente reiniciado]', flush=True)
 
             if move_thread and move_thread.is_alive():
                 print('  [esperando move anterior...]', flush=True)
