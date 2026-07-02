@@ -52,9 +52,8 @@ DEC_SEGURAS = {64}   # unica probada sin perdida sostenida en dual; ver docstrin
 _stop = cc.instalar_manejador_stop()
 
 
-def _guardar_metadata(dest_dir, condicion, decimacion, fs_ef):
+def _guardar_metadata(dest_dir, condicion, decimacion, fs_ef, session_ts):
     """Escribe session_dual_{condicion}_{ts}_info.json en el directorio destino."""
-    session_ts = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
     info = {
         'formato':      'raw_int16_le_interleaved',
         'descripcion':  'Muestras CH1+CH2 intercaladas por muestra, int16 little-endian, sin header',
@@ -79,10 +78,10 @@ def _guardar_metadata(dest_dir, condicion, decimacion, fs_ef):
     json_name = f'session_dual_{condicion}_{session_ts}_info.json'
     with open(os.path.join(dest_dir, json_name), 'w') as f:
         json.dump(info, f, indent=2, ensure_ascii=False)
-    return session_ts, json_name
+    return json_name
 
 
-def _capturar_chunk(client, n_muestras, fs_ef, chunk_num, condicion, session_ts):
+def _capturar_chunk(client, n_muestras, fs_ef, chunk_num, condicion, session_ts, log_evento):
     """
     Dispara un chunk de n_muestras POR CANAL a SD y renombra el archivo resultante.
     El archivo real pesa 2x n_muestras*2 bytes (2 canales intercalados).
@@ -162,6 +161,9 @@ def _capturar_chunk(client, n_muestras, fs_ef, chunk_num, condicion, session_ts)
           f'  ({senal_s:.1f}s | {t_total:.1f}s reloj | '
           f'{eficiencia:.0f}% efic | {size_mb:.0f} MB)',
           flush=True)
+    if eficiencia < cc.UMBRAL_EFICIENCIA_BAJA:
+        log_evento(f'EFICIENCIA BAJA en chunk {chunk_num}: {eficiencia:.0f}% '
+                    f'(esperado ~90-98%)')
     return senal_s, nombre_final
 
 
@@ -239,6 +241,10 @@ def main():
     total_s    = args.duracion_total * 60.0 if args.duracion_total else None
     n_muestras = int(fs_ef * chunk_s)
 
+    session_ts = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+    log_path, log_evento = cc.activar_log_archivo('dual', args.condicion, session_ts)
+    print(f'  Log (solo errores/eventos) → {log_path}', flush=True)
+
     cc.asegurar_servidor('/tmp/sstream_dual.log')
     dest_usb = cc.preparar_dirs(args.directorio, 'stream_dual')
 
@@ -254,7 +260,7 @@ def main():
     except RuntimeError as e:
         sys.exit(f'ERROR: {e}')
 
-    session_ts, json_name = _guardar_metadata(dest_usb, args.condicion, args.decimacion, fs_ef)
+    json_name = _guardar_metadata(dest_usb, args.condicion, args.decimacion, fs_ef, session_ts)
 
     if args.destino == 'red':
         subprocess.run(
@@ -277,6 +283,9 @@ def main():
     else:
         print(f'  total      : indefinido  (Ctrl+C para detener)')
     print(f'  Presiona Ctrl+C para detener.\n')
+
+    log_evento(f'Sesion iniciada — condicion={args.condicion} decimacion={args.decimacion} '
+                f'chunk={args.duracion_chunk}min destino={args.destino}')
 
     chunk_num        = 1
     tiempo_capturado = 0.0
@@ -308,7 +317,7 @@ def main():
                 libre_sd = shutil.disk_usage(STREAM_DIR).free
                 espacio_label = f'SD {libre_sd/1e9:.2f} GB libres'
             print(f'--- Chunk {chunk_num:04d} | {espacio_label} ---', flush=True)
-            secs, archivo_sd = _capturar_chunk(client, n, fs_ef, chunk_num, args.condicion, session_ts)
+            secs, archivo_sd = _capturar_chunk(client, n, fs_ef, chunk_num, args.condicion, session_ts, log_evento)
             tiempo_capturado += secs
 
             # Reiniciar el cliente para el proximo chunk (mitigacion Bug 1)
@@ -328,6 +337,10 @@ def main():
             move_thread.start()
             chunk_num += 1
 
+    except Exception as e:
+        cc.guardar_contexto_crash('dual', args.condicion, session_ts, chunk_num, e)
+        raise
+
     finally:
         if move_thread and move_thread.is_alive():
             print(f'\n  [esperando ultimo move a {args.destino.upper()}...]', flush=True)
@@ -336,6 +349,8 @@ def main():
         print(f'  Chunks guardados : {chunk_num - 1}')
         print(f'  Tiempo capturado : {tiempo_capturado/60:.2f} min  ({tiempo_capturado:.0f}s)')
         print(f'  Archivos en       : {destino_label}')
+        log_evento(f'Sesion terminada — {chunk_num - 1} chunks, '
+                    f'{tiempo_capturado/60:.2f} min capturados')
 
 
 if __name__ == '__main__':

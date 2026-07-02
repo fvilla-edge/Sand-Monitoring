@@ -19,12 +19,29 @@ import sys
 import time
 import signal
 import shutil
+import datetime
+import traceback
 import subprocess
 
 FS_BASE     = 125_000_000
 STREAM_DIR  = '/home/redpitaya/streaming_files/adc'   # siempre en SD
 SERVER_BIN  = '/opt/redpitaya/bin/streaming-server'
 DEC_VALIDOS = {1, 2, 4, 8, 16, 32, 64}
+LOG_DIR     = '/root/logs_campo'   # SD interna, no el USB/SSD de campo (ver Why abajo)
+
+UMBRAL_EFICIENCIA_BAJA = 80   # %, por debajo de esto se loguea (operacion normal: 90-98%)
+
+# Lineas que valen la pena guardar en el log persistente: errores/warnings
+# propios (marcados con "[!]") y firmas conocidas de crashes de la
+# libreria nativa, que no pasan por nuestro codigo asi que no se pueden
+# marcar de antemano — hay que reconocerlas por texto. Regex ERE (para
+# `awk`), se matchea contra tolower($0) asi que va todo en minuscula.
+_PATRONES_AWK = (
+    r'error|traceback|crash|segmentation|abort|fallo|\[!\]|'
+    r"can.t start|end of file|broken pipe|resource deadlock|"
+    r'register controller|directormethodexception|terminate called|'
+    r'no se pudo'
+)
 
 
 def instalar_manejador_stop():
@@ -135,6 +152,108 @@ def mover_a_usb(archivo_sd, dest_usb, chunk_num):
     print(f'  [USB] chunk {chunk_num:04d} → {nombre}'
           f'  ({size_mb:.0f} MB en {t:.0f}s | {size_mb/t:.1f} MB/s)',
           flush=True)
+
+
+def activar_log_archivo(prefix, condicion, session_ts):
+    """
+    La consola sigue mostrando TODO igual que siempre. Al archivo en
+    LOG_DIR solo se escriben las lineas que matchean _PATRONES_AWK
+    (errores, warnings marcados "[!]", firmas de crash) — no el log
+    completo linea por linea, para no acumular ruido en sesiones largas
+    (decision del usuario, 2026-07-02: "prefiero guardar datos que
+    realmente nos digan cosas... pero no todo").
+
+    Se filtra a nivel de file descriptor (dup2 hacia un `awk` externo),
+    no reasignando sys.stdout, porque parte de lo interesante (ej.
+    "Error: ... End of file", "Can't start ADC on remote machines") lo
+    imprime directo la libreria C++ nativa sin pasar por Python —
+    sys.stdout no lo veria.
+
+    Se usa un proceso `awk` separado en vez de un thread Python interno
+    (que fue el primer intento): un thread daemon puede perder las
+    ultimas lineas bufferizadas justo cuando el proceso principal sale
+    (el thread muere junto con el proceso antes de terminar de leer el
+    pipe). `awk`, al ser un proceso del sistema operativo aparte, sigue
+    vivo el tiempo necesario para vaciar el pipe aunque el nuestro ya
+    haya terminado — probado localmente, sin esto se perdian lineas.
+
+    Devuelve (log_path, log_evento) — usar log_evento(mensaje) para
+    forzar al log algo que no tiene por que matchear _PATRONES_AWK (ej.
+    encabezado de la sesion, eficiencia baja) pero que conviene guardar
+    igual porque ya lo sabemos por codigo, no hay que adivinarlo del
+    texto impreso.
+
+    LOG_DIR vive en la SD interna, no en el USB/SSD de campo, para que
+    el log sobreviva si el storage externo se desconecta a mitad de
+    sesion (ver desconexion USB del 02/07/2026 en la memoria del
+    proyecto).
+    """
+    os.makedirs(LOG_DIR, exist_ok=True)
+    log_path = os.path.join(LOG_DIR, f'log_{prefix}_{condicion}_{session_ts}.txt')
+
+    fd_stdout_real = os.dup(1)
+    fd_stderr_real = os.dup(2)
+
+    awk_prog = (
+        '{ print; if (tolower($0) ~ /' + _PATRONES_AWK + '/) '
+        'print >> "' + log_path + '"; fflush() }'
+    )
+
+    def _filtrar(fd_original, fd_salida):
+        proc = subprocess.Popen(['awk', awk_prog], stdin=subprocess.PIPE, stdout=fd_salida)
+        os.dup2(proc.stdin.fileno(), fd_original)
+
+    _filtrar(1, fd_stdout_real)
+    _filtrar(2, fd_stderr_real)
+
+    def log_evento(mensaje):
+        ts = datetime.datetime.now().strftime('%H:%M:%S')
+        linea = f'  [LOG {ts}] {mensaje}'
+        os.write(fd_stdout_real, (linea + '\n').encode())
+        with open(log_path, 'a') as f:
+            f.write(linea + '\n')
+
+    return log_path, log_evento
+
+
+def _salida_comando(cmd):
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+        return (r.stdout + r.stderr) or '(sin salida)\n'
+    except Exception as e:
+        return f'(no se pudo ejecutar {cmd}: {e})\n'
+
+
+def guardar_contexto_crash(prefix, condicion, session_ts, chunk_num, excepcion):
+    """
+    Al morir con una excepcion no manejada, vuelca a un archivo dedicado
+    en LOG_DIR el traceback + contexto util para diagnosticar sin tener
+    que ir a buscarlo a mano por SSH (dmesg, estado del streaming-server,
+    espacio libre). El traceback tambien queda en el log filtrado de la
+    sesion (matchea "Traceback" en _PATRONES_AWK) — esto es ademas un
+    resumen aparte, mas facil de ubicar.
+    """
+    os.makedirs(LOG_DIR, exist_ok=True)
+    crash_path = os.path.join(
+        LOG_DIR, f'crash_{prefix}_{condicion}_{session_ts}_{chunk_num:04d}.txt'
+    )
+    with open(crash_path, 'w') as f:
+        f.write(f'=== CRASH — chunk {chunk_num} — {datetime.datetime.now().isoformat()} ===\n\n')
+        f.write('--- Traceback ---\n')
+        f.write(''.join(traceback.format_exception(
+            type(excepcion), excepcion, excepcion.__traceback__)))
+        f.write('\n--- pgrep streaming-server ---\n')
+        f.write(_salida_comando(['pgrep', '-af', 'streaming-server']))
+        f.write('\n--- dmesg (ultimas 40 lineas) ---\n')
+        f.write(_salida_comando(['sh', '-c', 'dmesg | tail -n 40']))
+        f.write('\n--- espacio libre SD (STREAM_DIR) ---\n')
+        try:
+            libre_sd = shutil.disk_usage(STREAM_DIR).free
+            f.write(f'{libre_sd/1e9:.2f} GB libres en {STREAM_DIR}\n')
+        except Exception as e:
+            f.write(f'no se pudo leer: {e}\n')
+    print(f'\n  [!] Contexto de crash guardado en {crash_path}', flush=True)
+    return crash_path
 
 
 def mover_a_red(archivo_sd, pc_host, pc_ruta, chunk_num):
