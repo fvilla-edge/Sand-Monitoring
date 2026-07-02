@@ -46,28 +46,55 @@ signal.signal(signal.SIGINT,  _handle_stop)
 signal.signal(signal.SIGTERM, _handle_stop)
 
 
-def _asegurar_servidor():
-    """Carga bitstream stream_app e inicia streaming-server si no corre."""
+def _asegurar_servidor(max_intentos=3):
+    """
+    Carga bitstream stream_app e inicia streaming-server si no corre.
+
+    Bug 2 (2026-07-02): el streaming-server puede abortar (SIGABRT) casi al
+    instante de arrancar si recibe comandos antes de que su "register
+    controller" termine de inicializarse — un sleep fijo no garantiza que
+    ya este listo. En vez de confiar en el tiempo, se verifica que el
+    proceso siga vivo unos segundos despues de lanzarlo y, si murio, se
+    reintenta el bitstream+arranque desde cero.
+    """
     r = subprocess.run(['pgrep', '-f', 'streaming-server'], capture_output=True)
     if r.returncode == 0:
         return
 
-    print('  Cargando bitstream stream_app...', flush=True)
-    subprocess.run(['/opt/redpitaya/sbin/overlay.sh', 'stream_app'],
-                   check=True, capture_output=True)
-    time.sleep(1)
+    for intento in range(1, max_intentos + 1):
+        print(f'  Cargando bitstream stream_app... (intento {intento}/{max_intentos})', flush=True)
+        subprocess.run(['/opt/redpitaya/sbin/overlay.sh', 'stream_app'],
+                       check=True, capture_output=True)
+        time.sleep(1)
 
-    print('  Iniciando streaming-server...', flush=True)
-    env = os.environ.copy()
-    env['LD_LIBRARY_PATH'] = '/opt/redpitaya/lib'
-    subprocess.Popen(
-        [SERVER_BIN, '-v'],
-        cwd='/opt/redpitaya/bin',
-        env=env,
-        stdout=open('/tmp/sstream_campo.log', 'w'),
-        stderr=subprocess.STDOUT,
-    )
-    time.sleep(2)
+        print('  Iniciando streaming-server...', flush=True)
+        env = os.environ.copy()
+        env['LD_LIBRARY_PATH'] = '/opt/redpitaya/lib'
+        proc = subprocess.Popen(
+            [SERVER_BIN, '-v'],
+            cwd='/opt/redpitaya/bin',
+            env=env,
+            stdout=open('/tmp/sstream_campo.log', 'w'),
+            stderr=subprocess.STDOUT,
+        )
+
+        # Chequeo de vida cada 0.5s en vez de un sleep ciego de 2s.
+        vivo = True
+        for _ in range(6):  # ~3s de margen
+            time.sleep(0.5)
+            if proc.poll() is not None:
+                vivo = False
+                break
+
+        if vivo:
+            return
+
+        print(f'  [!] streaming-server abortó al iniciar (intento {intento}/{max_intentos}). '
+              f'Reintentando...', flush=True)
+        time.sleep(1)
+
+    sys.exit('ERROR: streaming-server no pudo inicializar tras reintentos '
+              '(ver /tmp/sstream_campo.log en la placa).')
 
 
 def _preparar_dirs(directorio):
@@ -198,6 +225,51 @@ def _capturar_chunk(client, n_muestras, fs_ef, chunk_num, condicion, session_ts)
     return senal_s, nombre_final
 
 
+def _nuevo_cliente(args):
+    """
+    Crea, conecta y configura un cliente streaming nuevo.
+
+    Mitigacion provisoria del Bug 1 (2026-07-02): la causa raiz confirmada
+    es una race condition del lado del streaming-server (no una fuga en el
+    cliente), asi que esto no esta confirmado que evite el crash — es un
+    experimento pedido explicitamente para ver si cambia la frecuencia del
+    segfault, mientras se espera respuesta de Red Pitaya sobre el issue.
+    """
+    client = streaming.ADCStreamClient()
+    client.setVerbose(False)
+    if not client.connect():
+        raise RuntimeError('no se pudo conectar al streaming-server')
+
+    client.sendConfig('adc_pass_mode',        'FILE')
+    client.sendConfig('adc_decimation',       str(args.decimacion))
+    client.sendConfig('channel_attenuator_1', 'A_1_20')
+    client.sendConfig('channel_state_1',      'ON')
+    client.sendConfig('channel_state_2',      'OFF')
+    return client
+
+
+def _cerrar_cliente(client):
+    """
+    Descarta un cliente streaming ya usado, de forma best-effort.
+
+    Al llegar aca el streaming del chunk ya termino (via evento
+    'stoppedSDDone' en el camino normal, o via stopStreaming() explicito
+    en _capturar_chunk si hubo timeout) — NO hay que volver a llamar
+    stopStreaming() aca: probado en placa (2026-07-02) que hacerlo sobre
+    una conexion que el server ya cerro del otro lado genera un
+    "Error: ... End of file" de la libreria en cada chunk (ruido, no
+    crash, pero evitable).
+
+    No se conoce con certeza la API de desconexion del binding SWIG (vive
+    solo en la placa, no hay stub de referencia en este repo), asi que
+    simplemente se suelta la referencia para que el garbage collector se
+    encargue del resto. Si en una sesion larga aparecen sockets/file
+    descriptors acumulados (distinto del segfault original), este
+    supuesto es sospechoso numero 1.
+    """
+    pass
+
+
 def _mover_a_usb(archivo_sd, dest_usb, chunk_num):
     """Copia archivo de SD a USB y elimina el original (corre en thread)."""
     nombre  = os.path.basename(archivo_sd)
@@ -270,16 +342,10 @@ def main():
         mover_fn      = lambda archivo, num: _mover_a_red(archivo, args.pc_host, args.pc_ruta, num)
         destino_label = f'{args.pc_host}:{args.pc_ruta}'
 
-    client = streaming.ADCStreamClient()
-    client.setVerbose(False)
-    if not client.connect():
-        sys.exit('ERROR: no se pudo conectar al streaming-server')
-
-    client.sendConfig('adc_pass_mode',        'FILE')
-    client.sendConfig('adc_decimation',       str(args.decimacion))
-    client.sendConfig('channel_attenuator_1', 'A_1_20')
-    client.sendConfig('channel_state_1',      'ON')
-    client.sendConfig('channel_state_2',      'OFF')
+    try:
+        client = _nuevo_cliente(args)
+    except RuntimeError as e:
+        sys.exit(f'ERROR: {e}')
 
     session_ts, json_name = _guardar_metadata(dest_usb, args.condicion, args.decimacion, fs_ef)
 
@@ -336,6 +402,11 @@ def main():
             print(f'--- Chunk {chunk_num:04d} | {espacio_label} ---', flush=True)
             secs, archivo_sd = _capturar_chunk(client, n, fs_ef, chunk_num, args.condicion, session_ts)
             tiempo_capturado += secs
+
+            # Reiniciar el cliente para el proximo chunk (mitigacion Bug 1)
+            _cerrar_cliente(client)
+            client = _nuevo_cliente(args)
+            print('  [cliente reiniciado]', flush=True)
 
             # Esperar que termine el move anterior si sigue corriendo
             if move_thread and move_thread.is_alive():
