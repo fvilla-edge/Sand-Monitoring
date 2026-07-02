@@ -141,6 +141,49 @@ def preparar_dirs(directorio, subdir_nombre):
     return dest_usb
 
 
+def id_dispositivo(directorio):
+    """
+    st_dev del punto de montaje de `directorio` — llamar una vez al
+    arrancar la sesion y guardar el valor para comparar despues con
+    verificar_usb().
+    """
+    return os.stat(directorio).st_dev
+
+
+def verificar_usb(directorio, dev_id_esperado):
+    """
+    Chequea que el storage externo en `directorio` siga siendo el mismo
+    dispositivo y siga aceptando escritura. Cubre los dos sintomas
+    vistos en la desconexion del 02/07/2026: el USB reaparecio como un
+    device node distinto (sda1 -> sdb1, detectado por cambio de st_dev)
+    y el kernel lo remonto automaticamente a solo lectura tras abortar
+    el journal ext4 (detectado con una escritura de prueba — st_dev
+    solo no lo distingue, un remontado ro no cambia el numero de
+    dispositivo).
+
+    Devuelve None si todo esta bien, o un string con el motivo si algo
+    cambio (para loguearlo y frenar la sesion antes de que la captura
+    siguiente degrade en cascada, como paso esa vez).
+    """
+    try:
+        st = os.stat(directorio)
+    except OSError as e:
+        return f'directorio inaccesible: {e}'
+
+    if st.st_dev != dev_id_esperado:
+        return f'cambio el dispositivo de bloque (st_dev {dev_id_esperado} -> {st.st_dev})'
+
+    sentinel = os.path.join(directorio, '.chequeo_escritura')
+    try:
+        with open(sentinel, 'w') as f:
+            f.write('ok')
+        os.remove(sentinel)
+    except OSError as e:
+        return f'no se puede escribir (posible remontado read-only): {e}'
+
+    return None
+
+
 def mover_a_usb(archivo_sd, dest_usb, chunk_num):
     """Copia archivo de SD a USB y elimina el original (corre en thread)."""
     nombre  = os.path.basename(archivo_sd)

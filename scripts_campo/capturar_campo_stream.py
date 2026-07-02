@@ -226,7 +226,8 @@ def main():
     print(f'  Log (solo errores/eventos) → {log_path}', flush=True)
 
     cc.asegurar_servidor('/tmp/sstream_campo.log')
-    dest_usb = cc.preparar_dirs(args.directorio, 'stream_adc')
+    dest_usb  = cc.preparar_dirs(args.directorio, 'stream_adc')
+    usb_dev_id = cc.id_dispositivo(args.directorio)
 
     if args.destino == 'usb':
         mover_fn      = lambda archivo, num: cc.mover_a_usb(archivo, dest_usb, num)
@@ -274,6 +275,12 @@ def main():
         while not _stop.activo:
             if total_s and tiempo_capturado >= total_s:
                 print('[OK] Tiempo total de sesion alcanzado.')
+                break
+
+            motivo_usb = cc.verificar_usb(args.directorio, usb_dev_id)
+            if motivo_usb:
+                print(f'[!] Storage externo con problema en {args.directorio}: '
+                      f'{motivo_usb}. Deteniendo sesion.', flush=True)
                 break
 
             libre_usb = shutil.disk_usage(args.directorio).free
