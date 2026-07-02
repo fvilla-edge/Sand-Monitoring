@@ -140,6 +140,14 @@ Aplica filtro 100–450 kHz a ambos canales y calcula:
 
 ---
 
+## Logs (errores y eventos)
+
+Mismo mecanismo que en mono (comparten `campo_common.py`) — ver la sección
+"Logs (errores y eventos)" en `scripts_campo/PLAN_CAMPO.md`. En la placa, el
+archivo de esta captura queda en `/root/logs_campo/log_dual_<condicion>_<timestamp>.txt`.
+
+---
+
 ## Consideraciones de campo
 
 - **Posición sensor referencia**: aguas arriba preferido — el flujo pasa primero por la referencia y luego por el codo, evitando que arena que ya pasó vuelva a afectar CH2.

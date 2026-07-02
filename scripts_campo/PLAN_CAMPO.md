@@ -330,6 +330,36 @@ python3 /root/scripts_campo/capturar_campo_stream.py \
 
 ---
 
+## Logs (errores y eventos) — en la placa, no en el USB
+
+**Dónde están:** `/root/logs_campo/` en la Red Pitaya. No están en el USB/SSD de campo a
+propósito — así sobreviven si el storage externo se desconecta a mitad de sesión.
+
+```
+/root/logs_campo/
+  log_campo_reposo_20260702_183536.txt        ← una por sesión (mono usa prefijo "campo", dual "dual")
+  log_dual_reposo_20260702_183644.txt
+  crash_campo_reposo_20260702_183536_0007.txt ← solo aparece si la sesion crasheo, uno por crash
+```
+
+**Qué tiene el `log_*.txt`:** NO es todo lo que se ve en pantalla — solo errores, warnings
+(los que arrancan con `[!]`) y los eventos que el script marca a propósito (inicio y fin de
+sesión, chunks con eficiencia baja). Una sesión larga sin problemas genera un archivo de
+apenas un par de líneas.
+
+**Cómo leerlo:** es texto plano, con cualquier editor o:
+
+```bash
+ssh root@<IP_PLACA> "cat /root/logs_campo/log_campo_reposo_20260702_183536.txt"
+```
+
+**Qué tiene el `crash_*.txt`:** si la sesión se cayó con una excepción, además del log
+normal queda este archivo aparte con el traceback completo, el estado de
+`streaming-server` (`pgrep`), las últimas líneas de `dmesg` y el espacio libre en la SD —
+todo lo que antes había que ir a buscar a mano por SSH.
+
+---
+
 ## Espacio en disco y velocidades
 
 ### Tamaño de archivos
