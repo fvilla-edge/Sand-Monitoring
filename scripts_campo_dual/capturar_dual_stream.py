@@ -31,7 +31,6 @@ Uso:
 import sys
 import os
 import time
-import signal
 import shutil
 import argparse
 import datetime
@@ -40,97 +39,17 @@ import subprocess
 import json
 
 sys.path.insert(0, '/root/rpsa_client/python_lib')
+sys.path.insert(0, '/root/scripts_campo_comun')
 import streaming
+import campo_common as cc
 
-FS_BASE     = 125_000_000
+FS_BASE     = cc.FS_BASE
 ESPACIO_MIN = 1000 * 1024 * 1024   # 1 GB minimo libre — chunk dual pesa ~2x que mono
-STREAM_DIR  = '/home/redpitaya/streaming_files/adc'   # siempre en SD
-SERVER_BIN  = '/opt/redpitaya/bin/streaming-server'
+STREAM_DIR  = cc.STREAM_DIR
+SERVER_BIN  = cc.SERVER_BIN
 DEC_SEGURAS = {64}   # unica probada sin perdida sostenida en dual; ver docstring
 
-_stop = False
-
-def _handle_stop(sig, frame):
-    global _stop
-    _stop = True
-    print('\n[!] Ctrl+C — termina el chunk actual y para...', flush=True)
-
-signal.signal(signal.SIGINT,  _handle_stop)
-signal.signal(signal.SIGTERM, _handle_stop)
-
-
-def _asegurar_servidor(max_intentos=3):
-    """
-    Carga bitstream stream_app e inicia streaming-server si no corre.
-
-    Fix Bug 2 (portado de capturar_campo_stream.py, 2026-07-02): el
-    streaming-server puede abortar (SIGABRT) casi al instante de arrancar
-    si recibe comandos antes de que su "register controller" termine de
-    inicializarse — un sleep fijo no garantiza que ya este listo. Se
-    verifica que el proceso siga vivo unos segundos despues de lanzarlo y,
-    si murio, se reintenta el bitstream+arranque desde cero.
-    """
-    r = subprocess.run(['pgrep', '-f', 'streaming-server'], capture_output=True)
-    if r.returncode == 0:
-        return
-
-    for intento in range(1, max_intentos + 1):
-        print(f'  Cargando bitstream stream_app... (intento {intento}/{max_intentos})', flush=True)
-        subprocess.run(['/opt/redpitaya/sbin/overlay.sh', 'stream_app'],
-                       check=True, capture_output=True)
-        time.sleep(1)
-
-        print('  Iniciando streaming-server...', flush=True)
-        env = os.environ.copy()
-        env['LD_LIBRARY_PATH'] = '/opt/redpitaya/lib'
-        proc = subprocess.Popen(
-            [SERVER_BIN, '-v'],
-            cwd='/opt/redpitaya/bin',
-            env=env,
-            stdout=open('/tmp/sstream_dual.log', 'w'),
-            stderr=subprocess.STDOUT,
-        )
-
-        # Chequeo de vida cada 0.5s en vez de un sleep ciego de 2s.
-        vivo = True
-        for _ in range(6):  # ~3s de margen
-            time.sleep(0.5)
-            if proc.poll() is not None:
-                vivo = False
-                break
-
-        if vivo:
-            return
-
-        print(f'  [!] streaming-server abortó al iniciar (intento {intento}/{max_intentos}). '
-              f'Reintentando...', flush=True)
-        time.sleep(1)
-
-    sys.exit('ERROR: streaming-server no pudo inicializar tras reintentos '
-              '(ver /tmp/sstream_dual.log en la placa).')
-
-
-def _preparar_dirs(directorio):
-    """
-    Asegura que STREAM_DIR sea un directorio real en SD (no symlink a USB)
-    y crea el subdirectorio de destino en el USB.
-    """
-    dest_usb = os.path.join(directorio, 'stream_dual')
-    os.makedirs(dest_usb, exist_ok=True)
-
-    if os.path.islink(STREAM_DIR):
-        os.unlink(STREAM_DIR)
-
-    backup = STREAM_DIR + '_sd_backup'
-    if not os.path.isdir(STREAM_DIR):
-        if os.path.isdir(backup):
-            os.rename(backup, STREAM_DIR)
-        else:
-            os.makedirs(STREAM_DIR, exist_ok=True)
-
-    print(f'  Captura (SD) → {STREAM_DIR}', flush=True)
-    print(f'  Archivos (USB) → {dest_usb}', flush=True)
-    return dest_usb
+_stop = cc.instalar_manejador_stop()
 
 
 def _guardar_metadata(dest_dir, condicion, decimacion, fs_ef):
@@ -281,35 +200,6 @@ def _cerrar_cliente(client):
     pass
 
 
-def _mover_a_usb(archivo_sd, dest_usb, chunk_num):
-    """Copia archivo de SD a USB y elimina el original (corre en thread)."""
-    nombre  = os.path.basename(archivo_sd)
-    destino = os.path.join(dest_usb, nombre)
-    t0 = time.perf_counter()
-    shutil.move(archivo_sd, destino)
-    t = time.perf_counter() - t0
-    size_mb = os.path.getsize(destino) / 1e6
-    print(f'  [USB] chunk {chunk_num:04d} → {nombre}'
-          f'  ({size_mb:.0f} MB en {t:.0f}s | {size_mb/t:.1f} MB/s)',
-          flush=True)
-
-
-def _mover_a_red(archivo_sd, pc_host, pc_ruta, chunk_num):
-    """Envia archivo de SD a la PC via scp SSH y elimina el original."""
-    nombre  = os.path.basename(archivo_sd)
-    size_mb = os.path.getsize(archivo_sd) / 1e6
-    t0 = time.perf_counter()
-    subprocess.run(
-        ['scp', '-q', archivo_sd, f'{pc_host}:{pc_ruta}/'],
-        check=True,
-    )
-    os.remove(archivo_sd)
-    t = time.perf_counter() - t0
-    print(f'  [RED] chunk {chunk_num:04d} → {pc_host}:{pc_ruta}/{nombre}'
-          f'  ({size_mb:.0f} MB en {t:.0f}s | {size_mb/t:.1f} MB/s)',
-          flush=True)
-
-
 def main():
     p = argparse.ArgumentParser(
         description='Captura dual CH1+CH2 via streaming FILE mode — SD intermedia, USB/red destino'
@@ -334,9 +224,8 @@ def main():
     if args.destino == 'red' and (not args.pc_host or not args.pc_ruta):
         sys.exit('ERROR: --destino red requiere --pc_host y --pc_ruta')
 
-    DEC_VALIDOS = {1, 2, 4, 8, 16, 32, 64}
-    if args.decimacion not in DEC_VALIDOS:
-        sys.exit(f'Decimacion invalida. Opciones: {sorted(DEC_VALIDOS)}')
+    if args.decimacion not in cc.DEC_VALIDOS:
+        sys.exit(f'Decimacion invalida. Opciones: {sorted(cc.DEC_VALIDOS)}')
 
     if args.decimacion not in DEC_SEGURAS:
         print(f'\n  [!] ADVERTENCIA: decimacion={args.decimacion} con los 2 canales activos NO fue '
@@ -350,14 +239,14 @@ def main():
     total_s    = args.duracion_total * 60.0 if args.duracion_total else None
     n_muestras = int(fs_ef * chunk_s)
 
-    _asegurar_servidor()
-    dest_usb = _preparar_dirs(args.directorio)
+    cc.asegurar_servidor('/tmp/sstream_dual.log')
+    dest_usb = cc.preparar_dirs(args.directorio, 'stream_dual')
 
     if args.destino == 'usb':
-        mover_fn      = lambda archivo, num: _mover_a_usb(archivo, dest_usb, num)
+        mover_fn      = lambda archivo, num: cc.mover_a_usb(archivo, dest_usb, num)
         destino_label = dest_usb
     else:
-        mover_fn      = lambda archivo, num: _mover_a_red(archivo, args.pc_host, args.pc_ruta, num)
+        mover_fn      = lambda archivo, num: cc.mover_a_red(archivo, args.pc_host, args.pc_ruta, num)
         destino_label = f'{args.pc_host}:{args.pc_ruta}'
 
     try:
@@ -394,7 +283,7 @@ def main():
     move_thread      = None
 
     try:
-        while not _stop:
+        while not _stop.activo:
             if total_s and tiempo_capturado >= total_s:
                 print('[OK] Tiempo total de sesion alcanzado.')
                 break
