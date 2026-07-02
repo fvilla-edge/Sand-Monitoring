@@ -140,11 +140,19 @@ Aplica filtro 100–450 kHz a ambos canales y calcula:
 
 ---
 
-## Logs (errores y eventos)
+## Logs (errores y eventos) y relanzado automático
 
-Mismo mecanismo que en mono (comparten `campo_common.py`) — ver la sección
-"Logs (errores y eventos)" en `scripts_campo/PLAN_CAMPO.md`. En la placa, el
-archivo de esta captura queda en `/root/logs_campo/log_dual_<condicion>_<timestamp>.txt`.
+Mismo mecanismo que en mono (comparten `campo_common.py`) — ver las secciones
+"Logs (errores y eventos)" y "Sesiones largas desatendidas: relanzado
+automático" en `scripts_campo/PLAN_CAMPO.md`. En la placa, el log de esta
+captura queda en `/root/logs_campo/log_dual_<condicion>_<timestamp>.txt`.
+Para relanzado automático:
+
+```bash
+bash /root/scripts_campo_comun/relanzar_captura.sh \
+  /root/scripts_campo_dual/capturar_dual_stream.py \
+  --condicion reposo --decimacion 64 --duracion_chunk 1 --directorio /mnt/usb
+```
 
 ---
 

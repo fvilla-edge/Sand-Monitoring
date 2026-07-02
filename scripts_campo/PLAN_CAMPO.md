@@ -259,6 +259,29 @@ python3 /root/scripts_campo/capturar_campo_stream.py \
   --condicion reposo --decimacion 64 --duracion_chunk 5
 ```
 
+### Sesiones largas desatendidas: relanzado automático si crashea
+
+Para sesiones de noche o sin supervisión, envolver el mismo comando con
+`relanzar_captura.sh` — si el script crashea (el bug conocido de la librería
+de Red Pitaya, ver `docs/` para el detalle), lo relanza solo en vez de dejar
+la sesión muerta hasta que alguien la note. Si el script termina limpio
+(Ctrl+C, `--duracion_total` alcanzado, o problema de USB detectado) **no**
+relanza — esos casos son intencionales, no un crash.
+
+```bash
+bash /root/scripts_campo_comun/relanzar_captura.sh \
+  /root/scripts_campo/capturar_campo_stream.py \
+  --condicion reposo --decimacion 32 --duracion_chunk 1 --directorio /mnt/usb
+```
+
+Cada relanzamiento arranca una **sesión nueva** (`session_ts` y chunk 0001
+distintos) — una noche con 2 crashes deja 3 sesiones separadas en el
+directorio, cada una válida y legible por separado con `revisar_campo.py`.
+Máximo 10 reintentos con 5s de espera entre cada uno (mata el
+`streaming-server` residual antes de reintentar, para forzar arranque en
+frío). Si se supera el máximo, el wrapper termina con error — revisar
+`/root/logs_campo/` para diagnosticar antes de relanzar a mano.
+
 ### Lo que se ve mientras corre
 
 **Modo USB:**
