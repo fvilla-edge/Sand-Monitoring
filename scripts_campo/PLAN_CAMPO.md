@@ -261,6 +261,12 @@ python3 /root/scripts_campo/capturar_campo_stream.py \
 
 ### Sesiones largas desatendidas: relanzado automático si crashea
 
+**Para cualquier corrida larga o desatendida, lanzar SIEMPRE con
+`relanzar_captura.sh` (no el script de captura solo) — el bug conocido de
+Red Pitaya sigue sin arreglo, y sin este wrapper un crash deja la sesión
+muerta sin relanzar (confirmado en campo el 2026-07-02, sesión sin wrapper
+se frenó a los ~17 chunks).**
+
 Para sesiones de noche o sin supervisión, envolver el mismo comando con
 `relanzar_captura.sh` — si el script crashea (el bug conocido de la librería
 de Red Pitaya, ver `docs/` para el detalle), lo relanza solo en vez de dejar
