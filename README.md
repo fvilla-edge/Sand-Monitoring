@@ -39,7 +39,7 @@ Sand Monitoring/
 ├── analisis/              # Scripts de analisis local (corren en la PC)
 │   ├── revisar_campo.py   # Revision rapida de capturas mono (.bin)
 │   ├── revisar_dual.py    # Revision rapida de capturas dual (.bin)
-│   └── analisis_semana*.py  # Analisis historico del dataset de laboratorio
+│   └── espectrograma.py   # Espectrograma STFT de una captura de campo
 ├── capturas/              # Archivos HDF5 de laboratorio (gitignoreado)
 └── docs/                  # Informes y roadmap
 ```
@@ -53,21 +53,6 @@ python3 -m venv .venv
 ```
 
 ## Flujo basico
-
-```bash
-# 1. Copiar script a la Red Pitaya
-scp scripts_rp/capturar.py root@<IP>:/root/
-
-# 2. Capturar (en la Red Pitaya via SSH)
-PYTHONPATH=/opt/redpitaya/lib/python python3 /root/capturar.py --condicion reposo
-PYTHONPATH=/opt/redpitaya/lib/python python3 /root/capturar.py --condicion alta
-
-# 3. Traer capturas a la PC
-scp root@<IP>:/root/captura_*.h5 capturas/
-
-# 4. Analizar
-.venv/bin/python3 analisis/analisis_semana1.py
-```
 
 Para captura en campo (loop continuo, storage externo) ver `scripts_campo/PLAN_CAMPO.md`.
 Para dual-canal ver `scripts_campo_dual/PLAN_DUAL.md`.
