@@ -29,23 +29,6 @@ python3 scripts_campo/capturar_stream.py --condicion reposo --directorio /mnt/us
 | `--pc_ruta` | — | Ruta destino en la PC — solo con `--destino red` |
 | `--verbosidad` | `completo` | `completo` (todo, con color) o `minimo` (solo warnings/errores) |
 
-### `scripts_campo/capturar_campo.py` — alternativa HDF5
-
-Solo mono. Archivos auto-descriptos (float32), ~54% eficiencia, sin depender de un JSON aparte.
-
-```bash
-PYTHONPATH=/opt/redpitaya/lib/python python3 scripts_campo/capturar_campo.py --condicion reposo
-```
-
-| Argumento | Default | Descripción |
-|---|---|---|
-| `--condicion` | *obligatorio* | `reposo` o `con_arena` |
-| `--decimacion` | `32` | Factor de decimación → fs = 125 MHz / dec |
-| `--duracion_chunk` | `1.0` | Minutos por chunk/archivo |
-| `--duracion_total` | sin límite | Minutos totales de la sesión |
-| `--directorio` | `/mnt/usb` | Directorio de salida |
-| `--compresion` | `False` (flag) | Activa compresión gzip-1 (menor tamaño, menor eficiencia) |
-
 ### `scripts_campo/probar_dual_stream.py` — prueba de banco
 
 Captura corta de solo lectura para investigar formato/mapeo de canales con 2 canales

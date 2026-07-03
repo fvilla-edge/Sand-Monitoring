@@ -115,7 +115,6 @@ al USB o red no cuenta en esa métrica — ocurre fuera del loop de captura.
 Sand Monitoring/
   scripts_campo/
     capturar_stream.py      ← RECOMENDADO para campo (98% eficiencia, int16 raw, --canales 1|2)
-    capturar_campo.py       ← alternativa HDF5 (54% eficiencia, float32 autodescrip., solo mono)
     probar_dual_stream.py   ← prueba de banco de solo lectura, para reconfirmar mapeo de canales
     PLAN_CAMPO.md           ← este documento
   scripts_campo_comun/
@@ -676,28 +675,6 @@ mount /dev/sda1 /mnt/usb
 | Attenuator config | `A_1_20` (ambos canales en dual) |
 | Acceso SSH | `root@<IP_PLACA>` / pass: `edge1234` (ver sección de IPs) |
 | Storage campo | USB/HDD externo en `/mnt/usb` |
-
----
-
-## Script alternativo: HDF5 (capturar_campo.py)
-
-Si necesitás archivos auto-descriptos sin depender de `session_info.json`. Solo soporta
-mono (1 canal).
-
-```bash
-PYTHONPATH=/opt/redpitaya/lib/python \
-  python3 /root/scripts_campo/capturar_campo.py \
-  --condicion reposo --decimacion 32 --duracion_chunk 1 --directorio /mnt/usb
-```
-
-| | `capturar_stream.py` | `capturar_campo.py` |
-|---|---|---|
-| Eficiencia | **98%** | 54% |
-| Formato | raw int16 (.bin) | float32 HDF5 (.h5) |
-| Canales | 1 o 2 | solo 1 |
-| Tamaño/min (dec=32, 1 canal) | **~469 MB** | ~940 MB |
-| Metadata | `session_*_info.json` aparte | dentro del archivo |
-| Modos destino | USB o RED (scp) | USB solo |
 
 ---
 
