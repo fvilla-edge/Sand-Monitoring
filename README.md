@@ -11,7 +11,7 @@ Una placa ADC digitaliza esa senal a alta frecuencia, y un script calcula metric
 rms diferencial) que permiten distinguir reposo de produccion de arena.
 
 ```
-tuberia  →  sensor(es) VS150-RI  →  Red Pitaya (ADC)  →  captura (HDF5 en lab / .bin en campo)  →  analisis en PC
+tuberia  →  sensor(es) VS150-RI  →  Red Pitaya (ADC)  →  captura .bin en campo  →  analisis en PC
 ```
 
 ## Hardware
@@ -26,9 +26,6 @@ tuberia  →  sensor(es) VS150-RI  →  Red Pitaya (ADC)  →  captura (HDF5 en 
 
 ```
 Sand Monitoring/
-├── scripts_rp/            # Scripts de laboratorio (corren en la Red Pitaya)
-│   ├── capturar.py        # Captura + metricas, guarda HDF5
-│   └── leer_h5.py         # Lectura rapida de metadatos
 ├── scripts_campo/         # Captura mono-canal en campo (corren en la Red Pitaya)
 │   ├── capturar_campo_stream.py  # Recomendado — streaming, raw .bin, ~98% eficiencia
 │   ├── capturar_campo.py         # Alternativa HDF5, ~54% eficiencia
@@ -40,7 +37,7 @@ Sand Monitoring/
 │   ├── revisar_campo.py   # Revision rapida de capturas mono (.bin)
 │   ├── revisar_dual.py    # Revision rapida de capturas dual (.bin)
 │   └── espectrograma.py   # Espectrograma STFT de una captura de campo
-├── capturas/              # Archivos HDF5 de laboratorio (gitignoreado)
+├── capturas/              # Capturas de campo (gitignoreado)
 └── docs/                  # Informes y roadmap
 ```
 
