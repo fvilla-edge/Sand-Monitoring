@@ -157,13 +157,12 @@ def _capturar_chunk(client, n_muestras, fs_ef, chunk_num, condicion, session_ts,
 
     eficiencia = senal_s / t_total * 100
     size_mb    = bytes_totales / 1e6
-    print(f'  [SD] dual_{condicion}_{session_ts}_{chunk_num:04d}.bin'
-          f'  ({senal_s:.1f}s | {t_total:.1f}s reloj | '
-          f'{eficiencia:.0f}% efic | {size_mb:.0f} MB)',
-          flush=True)
+    cc.log('OK', f'  [SD] dual_{condicion}_{session_ts}_{chunk_num:04d}.bin'
+                 f'  ({senal_s:.1f}s | {t_total:.1f}s reloj | '
+                 f'{eficiencia:.0f}% efic | {size_mb:.0f} MB)')
     if eficiencia < cc.UMBRAL_EFICIENCIA_BAJA:
         log_evento(f'EFICIENCIA BAJA en chunk {chunk_num}: {eficiencia:.0f}% '
-                    f'(esperado ~90-98%)')
+                    f'(esperado ~90-98%)', nivel='WARNING')
     return senal_s, nombre_final
 
 
@@ -221,7 +220,11 @@ def main():
                    help='usuario@ip de la PC destino (ej: facu@192.168.0.10) — solo con --destino red')
     p.add_argument('--pc_ruta',        default=None,
                    help='Ruta en la PC donde guardar los archivos — solo con --destino red')
+    p.add_argument('--verbosidad',     choices=['completo', 'minimo'], default='completo',
+                   help='completo (default): todo, con color. minimo: solo warnings/errores')
     args = p.parse_args()
+
+    cc.configurar_salida(args.verbosidad)
 
     if args.destino == 'red' and (not args.pc_host or not args.pc_ruta):
         sys.exit('ERROR: --destino red requiere --pc_host y --pc_ruta')
@@ -230,11 +233,11 @@ def main():
         sys.exit(f'Decimacion invalida. Opciones: {sorted(cc.DEC_VALIDOS)}')
 
     if args.decimacion not in DEC_SEGURAS:
-        print(f'\n  [!] ADVERTENCIA: decimacion={args.decimacion} con los 2 canales activos NO fue '
-              f'validada sin perdida de muestras en esta placa.')
-        print(f'      Medido: dec=32 sostenido (60s) perdio ~0.42% de muestras por canal (982.068/233M).')
-        print(f'      Medido: dec=64 sostenido (60s) — 0 perdidas.')
-        print(f'      Se continua igual porque la decimacion queda a tu criterio, pero quedas avisado.\n')
+        cc.log('WARNING', f'\n  [!] ADVERTENCIA: decimacion={args.decimacion} con los 2 canales activos NO fue '
+                           f'validada sin perdida de muestras en esta placa.')
+        cc.log('WARNING', f'      Medido: dec=32 sostenido (60s) perdio ~0.42% de muestras por canal (982.068/233M).')
+        cc.log('WARNING', f'      Medido: dec=64 sostenido (60s) — 0 perdidas.')
+        cc.log('WARNING', f'      Se continua igual porque la decimacion queda a tu criterio, pero quedas avisado.\n')
 
     fs_ef      = FS_BASE / args.decimacion
     chunk_s    = args.duracion_chunk * 60.0
@@ -243,7 +246,7 @@ def main():
 
     session_ts = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
     log_path, log_evento = cc.activar_log_archivo('dual', args.condicion, session_ts)
-    print(f'  Log (solo errores/eventos) → {log_path}', flush=True)
+    cc.log('INFO', f'  Log (solo errores/eventos) → {log_path}')
 
     cc.asegurar_servidor('/tmp/sstream_dual.log')
     dest_usb   = cc.preparar_dirs(args.directorio, 'stream_dual')
@@ -272,18 +275,18 @@ def main():
         )
 
     bytes_chunk = n_muestras * 4   # 2 canales x 2 bytes, intercalados
-    print(f'\n=== CAPTURA DUAL CH1+CH2 — SD intermedia + {args.destino.upper()} destino ===')
-    print(f'  condicion  : {args.condicion}')
-    print(f'  decimacion : {args.decimacion}  →  fs = {fs_ef/1e6:.4f} MHz por canal '
-          f'({fs_ef*2/1e6:.4f} MHz combinado)')
-    print(f'  chunk      : {args.duracion_chunk} min  ({n_muestras:,} muestras/canal | {bytes_chunk/1e6:.0f} MB)')
-    print(f'  destino    : {destino_label}')
+    cc.log('INFO', f'\n=== CAPTURA DUAL CH1+CH2 — SD intermedia + {args.destino.upper()} destino ===')
+    cc.log('INFO', f'  condicion  : {args.condicion}')
+    cc.log('INFO', f'  decimacion : {args.decimacion}  →  fs = {fs_ef/1e6:.4f} MHz por canal '
+                    f'({fs_ef*2/1e6:.4f} MHz combinado)')
+    cc.log('INFO', f'  chunk      : {args.duracion_chunk} min  ({n_muestras:,} muestras/canal | {bytes_chunk/1e6:.0f} MB)')
+    cc.log('INFO', f'  destino    : {destino_label}')
     if total_s:
         n_est = max(1, int(total_s / chunk_s))
-        print(f'  total      : {args.duracion_total} min  (~{n_est} chunks)')
+        cc.log('INFO', f'  total      : {args.duracion_total} min  (~{n_est} chunks)')
     else:
-        print(f'  total      : indefinido  (Ctrl+C para detener)')
-    print(f'  Presiona Ctrl+C para detener.\n')
+        cc.log('INFO', f'  total      : indefinido  (Ctrl+C para detener)')
+    cc.log('INFO', f'  Presiona Ctrl+C para detener.\n')
 
     log_evento(f'Sesion iniciada — condicion={args.condicion} decimacion={args.decimacion} '
                 f'chunk={args.duracion_chunk}min destino={args.destino}')
@@ -295,24 +298,24 @@ def main():
     try:
         while not _stop.activo:
             if total_s and tiempo_capturado >= total_s:
-                print('[OK] Tiempo total de sesion alcanzado.')
+                cc.log('OK', '[OK] Tiempo total de sesion alcanzado.')
                 break
 
             motivo_usb = cc.verificar_usb(args.directorio, usb_dev_id)
             if motivo_usb:
-                print(f'[!] Storage externo con problema en {args.directorio}: '
-                      f'{motivo_usb}. Deteniendo sesion.', flush=True)
+                cc.log('ERROR', f'[!] Storage externo con problema en {args.directorio}: '
+                                 f'{motivo_usb}. Deteniendo sesion.')
                 break
 
             libre_usb = shutil.disk_usage(args.directorio).free
             if libre_usb < ESPACIO_MIN:
-                print(f'[!] USB sin espacio ({libre_usb/1e6:.0f} MB libres). Deteniendo.')
+                cc.log('ERROR', f'[!] USB sin espacio ({libre_usb/1e6:.0f} MB libres). Deteniendo.')
                 break
 
             if total_s:
                 restante = total_s - tiempo_capturado
                 if restante < 2.0:
-                    print('[OK] Tiempo total de sesion alcanzado.')
+                    cc.log('OK', '[OK] Tiempo total de sesion alcanzado.')
                     break
                 n = min(n_muestras, int(fs_ef * restante))
             else:
@@ -323,17 +326,17 @@ def main():
             else:
                 libre_sd = shutil.disk_usage(STREAM_DIR).free
                 espacio_label = f'SD {libre_sd/1e9:.2f} GB libres'
-            print(f'--- Chunk {chunk_num:04d} | {espacio_label} ---', flush=True)
+            cc.log('INFO', f'--- Chunk {chunk_num:04d} | {espacio_label} ---')
             secs, archivo_sd = _capturar_chunk(client, n, fs_ef, chunk_num, args.condicion, session_ts, log_evento)
             tiempo_capturado += secs
 
             # Reiniciar el cliente para el proximo chunk (mitigacion Bug 1)
             _cerrar_cliente(client)
             client = _nuevo_cliente(args)
-            print('  [cliente reiniciado]', flush=True)
+            cc.log('INFO', '  [cliente reiniciado]')
 
             if move_thread and move_thread.is_alive():
-                print('  [esperando move anterior...]', flush=True)
+                cc.log('INFO', '  [esperando move anterior...]')
                 move_thread.join()
 
             move_thread = threading.Thread(
@@ -350,12 +353,12 @@ def main():
 
     finally:
         if move_thread and move_thread.is_alive():
-            print(f'\n  [esperando ultimo move a {args.destino.upper()}...]', flush=True)
+            cc.log('INFO', f'\n  [esperando ultimo move a {args.destino.upper()}...]')
             move_thread.join()
-        print(f'\n=== SESION TERMINADA ===')
-        print(f'  Chunks guardados : {chunk_num - 1}')
-        print(f'  Tiempo capturado : {tiempo_capturado/60:.2f} min  ({tiempo_capturado:.0f}s)')
-        print(f'  Archivos en       : {destino_label}')
+        cc.log('OK', f'\n=== SESION TERMINADA ===')
+        cc.log('OK', f'  Chunks guardados : {chunk_num - 1}')
+        cc.log('OK', f'  Tiempo capturado : {tiempo_capturado/60:.2f} min  ({tiempo_capturado:.0f}s)')
+        cc.log('OK', f'  Archivos en       : {destino_label}')
         log_evento(f'Sesion terminada — {chunk_num - 1} chunks, '
                     f'{tiempo_capturado/60:.2f} min capturados')
 

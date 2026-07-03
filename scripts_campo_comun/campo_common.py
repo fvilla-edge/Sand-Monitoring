@@ -31,6 +31,18 @@ LOG_DIR     = '/root/logs_campo'   # SD interna, no el USB/SSD de campo (ver Why
 
 UMBRAL_EFICIENCIA_BAJA = 80   # %, por debajo de esto se loguea (operacion normal: 90-98%)
 
+_NIVEL_COLOR = {
+    'INFO':    '\033[34m',   # azul   — configuracion/setup, no es una confirmacion de resultado
+    'OK':      '\033[32m',   # verde  — chunk generado/guardado/enviado bien
+    'WARNING': '\033[33m',   # amarillo
+    'ERROR':   '\033[31m',   # rojo
+}
+_RESET = '\033[0m'
+_ESC   = '\033'   # para el gsub de awk que le saca el color al log persistente
+
+_es_tty     = False
+_verbosidad = 'completo'   # 'completo' o 'minimo', ver configurar_salida()
+
 # Lineas que valen la pena guardar en el log persistente: errores/warnings
 # propios (marcados con "[!]") y firmas conocidas de crashes de la
 # libreria nativa, que no pasan por nuestro codigo asi que no se pueden
@@ -42,6 +54,49 @@ _PATRONES_AWK = (
     r'register controller|directormethodexception|terminate called|'
     r'no se pudo'
 )
+
+# Ruido conocido de la libreria nativa: confirmado benigno (ver memoria del
+# proyecto, "End of file" aparece en cada chunk desde 2026-07-02, nunca se
+# encontro la causa, no rompe la sesion). En consola se muestra en amarillo
+# en verbosidad completa y se suprime del todo en minima — el archivo de
+# log lo sigue guardando igual que siempre (ya matchea _PATRONES_AWK).
+_RUIDO_BENIGNO = r'end of file'
+
+
+def configurar_salida(verbosidad):
+    """
+    Llamar UNA VEZ al principio de main(), antes de activar_log_archivo().
+
+    activar_log_archivo() redirige el file descriptor 1 a un pipe hacia
+    `awk` (para el archivo de log) — si esta funcion se llama despues de
+    eso, `os.isatty(1)` siempre da False porque fd 1 ya no apunta a la
+    terminal real sino al pipe, y el color quedaria desactivado siempre
+    aunque haya una terminal real del otro lado.
+    """
+    global _es_tty, _verbosidad
+    assert verbosidad in ('completo', 'minimo')
+    _es_tty     = os.isatty(1)
+    _verbosidad = verbosidad
+
+
+def log(nivel, mensaje, flush=True):
+    """
+    Imprime `mensaje` en color segun `nivel` ('INFO', 'OK', 'WARNING' o
+    'ERROR').
+
+    En verbosidad 'minimo' las lineas INFO/OK (rutina) no se imprimen —
+    WARNING y ERROR se muestran siempre, pase lo que pase. Sin terminal
+    real detras (salida redirigida a archivo, corriendo en background)
+    nunca colorea, para no dejar codigos ANSI crudos en una salida no
+    interactiva.
+    """
+    if nivel in ('INFO', 'OK') and _verbosidad == 'minimo':
+        return
+    if _es_tty:
+        color = _NIVEL_COLOR.get(nivel, '')
+        print(f'{color}{mensaje}{_RESET}', flush=flush)
+    else:
+        print(mensaje, flush=flush)
 
 
 def instalar_manejador_stop():
@@ -55,7 +110,7 @@ def instalar_manejador_stop():
 
     def _handler(sig, frame):
         _StopFlag.activo = True
-        print('\n[!] Ctrl+C — termina el chunk actual y para...', flush=True)
+        log('INFO', '\n[!] Ctrl+C — termina el chunk actual y para...')
 
     signal.signal(signal.SIGINT, _handler)
     signal.signal(signal.SIGTERM, _handler)
@@ -83,12 +138,12 @@ def asegurar_servidor(log_path, max_intentos=3):
         return
 
     for intento in range(1, max_intentos + 1):
-        print(f'  Cargando bitstream stream_app... (intento {intento}/{max_intentos})', flush=True)
+        log('INFO', f'  Cargando bitstream stream_app... (intento {intento}/{max_intentos})')
         subprocess.run(['/opt/redpitaya/sbin/overlay.sh', 'stream_app'],
                        check=True, capture_output=True)
         time.sleep(1)
 
-        print('  Iniciando streaming-server...', flush=True)
+        log('INFO', '  Iniciando streaming-server...')
         env = os.environ.copy()
         env['LD_LIBRARY_PATH'] = '/opt/redpitaya/lib'
         proc = subprocess.Popen(
@@ -110,8 +165,8 @@ def asegurar_servidor(log_path, max_intentos=3):
         if vivo:
             return
 
-        print(f'  [!] streaming-server abortó al iniciar (intento {intento}/{max_intentos}). '
-              f'Reintentando...', flush=True)
+        log('WARNING', f'  [!] streaming-server abortó al iniciar (intento {intento}/{max_intentos}). '
+                        f'Reintentando...')
         time.sleep(1)
 
     sys.exit(f'ERROR: streaming-server no pudo inicializar tras reintentos '
@@ -136,8 +191,8 @@ def preparar_dirs(directorio, subdir_nombre):
         else:
             os.makedirs(STREAM_DIR, exist_ok=True)
 
-    print(f'  Captura (SD) → {STREAM_DIR}', flush=True)
-    print(f'  Archivos (USB) → {dest_usb}', flush=True)
+    log('INFO', f'  Captura (SD) → {STREAM_DIR}')
+    log('INFO', f'  Archivos (USB) → {dest_usb}')
     return dest_usb
 
 
@@ -192,9 +247,8 @@ def mover_a_usb(archivo_sd, dest_usb, chunk_num):
     shutil.move(archivo_sd, destino)
     t = time.perf_counter() - t0
     size_mb = os.path.getsize(destino) / 1e6
-    print(f'  [USB] chunk {chunk_num:04d} → {nombre}'
-          f'  ({size_mb:.0f} MB en {t:.0f}s | {size_mb/t:.1f} MB/s)',
-          flush=True)
+    log('OK', f'  [USB] chunk {chunk_num:04d} → {nombre}'
+              f'  ({size_mb:.0f} MB en {t:.0f}s | {size_mb/t:.1f} MB/s)')
 
 
 def activar_log_archivo(prefix, condicion, session_ts):
@@ -230,6 +284,21 @@ def activar_log_archivo(prefix, condicion, session_ts):
     el log sobreviva si el storage externo se desconecta a mitad de
     sesion (ver desconexion USB del 02/07/2026 en la memoria del
     proyecto).
+
+    Nota color (2026-07-03): las lineas que pasan por log() pueden venir
+    con codigos ANSI (para la terminal). El awk de abajo les saca el
+    color (`gsub`) ANTES de matchear y guardar — la terminal recibe $0
+    tal cual (con color), el archivo solo recibe la version sin color.
+    Sin este gsub, un [!] coloreado quedaria en el archivo con los
+    codigos ANSI crudos, ensuciando un log pensado para texto plano.
+
+    Nota ruido benigno (2026-07-03): las lineas que matchean
+    _RUIDO_BENIGNO (ej. "End of file", ver esa constante) se manejan
+    aparte del resto — en vez del passthrough normal, se recolorean en
+    amarillo (si hay TTY) y se suprimen del todo en verbosidad minima.
+    El color/supresion se decide en Python (via _es_tty/_verbosidad) y
+    se embebe como texto fijo en el programa de awk al construirlo, asi
+    que awk no necesita saber nada de verbosidad ni de TTY.
     """
     os.makedirs(LOG_DIR, exist_ok=True)
     log_path = os.path.join(LOG_DIR, f'log_{prefix}_{condicion}_{session_ts}.txt')
@@ -237,9 +306,21 @@ def activar_log_archivo(prefix, condicion, session_ts):
     fd_stdout_real = os.dup(1)
     fd_stderr_real = os.dup(2)
 
+    color_ruido = _NIVEL_COLOR['WARNING'] if _es_tty else ''
+    reset_ruido = _RESET if _es_tty else ''
+    suprimir_ruido = (_verbosidad == 'minimo')
+
+    if suprimir_ruido:
+        rama_ruido = ''   # no imprime nada a la terminal
+    else:
+        rama_ruido = 'print "' + color_ruido + '" plano "' + reset_ruido + '"'
+
     awk_prog = (
-        '{ print; if (tolower($0) ~ /' + _PATRONES_AWK + '/) '
-        'print >> "' + log_path + '"; fflush() }'
+        '{ plano = $0; gsub(/' + _ESC + r'\[[0-9;]*m/, "", plano); '
+        'if (tolower(plano) ~ /' + _RUIDO_BENIGNO + '/) { ' + rama_ruido + ' } '
+        'else { print } '
+        'if (tolower(plano) ~ /' + _PATRONES_AWK + '/) '
+        'print plano >> "' + log_path + '"; fflush() }'
     )
 
     def _filtrar(fd_original, fd_salida):
@@ -249,10 +330,14 @@ def activar_log_archivo(prefix, condicion, session_ts):
     _filtrar(1, fd_stdout_real)
     _filtrar(2, fd_stderr_real)
 
-    def log_evento(mensaje):
+    def log_evento(mensaje, nivel='OK'):
         ts = datetime.datetime.now().strftime('%H:%M:%S')
         linea = f'  [LOG {ts}] {mensaje}'
-        os.write(fd_stdout_real, (linea + '\n').encode())
+        if _es_tty:
+            color = _NIVEL_COLOR.get(nivel, '')
+            os.write(fd_stdout_real, f'{color}{linea}{_RESET}\n'.encode())
+        else:
+            os.write(fd_stdout_real, (linea + '\n').encode())
         with open(log_path, 'a') as f:
             f.write(linea + '\n')
 
@@ -295,7 +380,7 @@ def guardar_contexto_crash(prefix, condicion, session_ts, chunk_num, excepcion):
             f.write(f'{libre_sd/1e9:.2f} GB libres en {STREAM_DIR}\n')
         except Exception as e:
             f.write(f'no se pudo leer: {e}\n')
-    print(f'\n  [!] Contexto de crash guardado en {crash_path}', flush=True)
+    log('WARNING', f'\n  [!] Contexto de crash guardado en {crash_path}')
     return crash_path
 
 
@@ -310,6 +395,5 @@ def mover_a_red(archivo_sd, pc_host, pc_ruta, chunk_num):
     )
     os.remove(archivo_sd)
     t = time.perf_counter() - t0
-    print(f'  [RED] chunk {chunk_num:04d} → {pc_host}:{pc_ruta}/{nombre}'
-          f'  ({size_mb:.0f} MB en {t:.0f}s | {size_mb/t:.1f} MB/s)',
-          flush=True)
+    log('OK', f'  [RED] chunk {chunk_num:04d} → {pc_host}:{pc_ruta}/{nombre}'
+              f'  ({size_mb:.0f} MB en {t:.0f}s | {size_mb/t:.1f} MB/s)')
