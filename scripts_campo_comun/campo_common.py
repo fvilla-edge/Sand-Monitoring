@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-campo_common.py — funciones compartidas entre capturar_campo_stream.py
-(mono) y capturar_dual_stream.py (dual).
+campo_common.py — funciones compartidas usadas por capturar_stream.py
+(1 o 2 canales, via --canales).
 
 Todo lo que es igual entre mono y dual vive aca: arranque del
 streaming-server (con el fix del Bug 2 — reintento si aborta al iniciar),

@@ -1,19 +1,19 @@
 #!/bin/bash
-# relanzar_captura.sh — supervisor simple para capturar_campo_stream.py /
-# capturar_dual_stream.py. Relanza el script si termina con error (crash),
+# relanzar_captura.sh — supervisor simple para capturar_stream.py
+# (mono o dual, via --canales). Relanza el script si termina con error (crash),
 # no si termina limpio (Ctrl+C, duracion_total alcanzado, o problema de USB
 # detectado por verificar_usb() — los tres casos salen con exit code 0 a
 # proposito, no hay que relanzar en esos casos).
 #
 # Uso:
-#   bash relanzar_captura.sh /root/scripts_campo/capturar_campo_stream.py \
+#   bash relanzar_captura.sh /root/scripts_campo/capturar_stream.py \
 #     --condicion reposo --decimacion 32 --duracion_chunk 1 --directorio /mnt/usb
 #
 # Decision (2026-07-02): cada relanzamiento arranca una sesion nueva
 # (session_ts y numeracion de chunk desde 0001), no continua la anterior.
-# Mas simple — cero cambios en capturar_campo_stream.py/capturar_dual_stream.py.
-# revisar_campo.py/revisar_dual.py leen cada sesion por separado sin problema,
-# solo hay que saber que son fragmentos de la misma noche si hubo reintentos.
+# Mas simple — cero cambios en capturar_stream.py.
+# revisar.py lee cada sesion por separado sin problema, solo hay que
+# saber que son fragmentos de la misma noche si hubo reintentos.
 
 set -u
 

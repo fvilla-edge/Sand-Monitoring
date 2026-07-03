@@ -26,19 +26,18 @@ tuberia  →  sensor(es) VS150-RI  →  Red Pitaya (ADC)  →  captura .bin en c
 
 ```
 Sand Monitoring/
-├── scripts_campo/         # Captura mono-canal en campo (corren en la Red Pitaya)
-│   ├── capturar_campo_stream.py  # Recomendado — streaming, raw .bin, ~98% eficiencia
-│   ├── capturar_campo.py         # Alternativa HDF5, ~54% eficiencia
-│   └── PLAN_CAMPO.md      # Parametros, procedimiento y ejemplos de uso en campo
-├── scripts_campo_dual/    # Captura dual-canal (codo + referencia), experimental
-│   ├── capturar_dual_stream.py
-│   └── PLAN_DUAL.md
-├── analisis/              # Scripts de analisis local (corren en la PC)
-│   ├── revisar_campo.py   # Revision rapida de capturas mono (.bin)
-│   ├── revisar_dual.py    # Revision rapida de capturas dual (.bin)
-│   └── espectrograma.py   # Espectrograma STFT de una captura de campo
-├── capturas/              # Capturas de campo (gitignoreado)
-└── docs/                  # Informes y roadmap
+├── scripts_campo/          # Captura en campo (corren en la Red Pitaya)
+│   ├── capturar_stream.py  # Recomendado — streaming, raw .bin, ~98% eficiencia, --canales 1|2
+│   ├── capturar_campo.py   # Alternativa HDF5, ~54% eficiencia, solo mono
+│   ├── probar_dual_stream.py  # Prueba de banco para mapeo de canales (2 canales)
+│   ├── PLAN_CAMPO.md       # Parametros, procedimiento y ejemplos de uso en campo
+│   └── PLAN_DUAL.md        # Especifico de --canales 2 (mapeo, consideraciones de sensor referencia)
+├── scripts_campo_comun/    # Codigo y supervisor compartidos (campo_common.py, relanzar_captura.sh)
+├── analisis/               # Scripts de analisis local (corren en la PC)
+│   ├── revisar.py          # Revision rapida de capturas, mono o dual (.bin)
+│   └── espectrograma.py    # Espectrograma STFT de una captura de campo
+├── capturas/               # Capturas de campo (gitignoreado)
+└── docs/                   # Informes y roadmap
 ```
 
 ## Setup (PC local — una sola vez)
@@ -52,11 +51,10 @@ python3 -m venv .venv
 ## Flujo basico
 
 Para captura en campo (loop continuo, storage externo) ver `scripts_campo/PLAN_CAMPO.md`.
-Para dual-canal ver `scripts_campo_dual/PLAN_DUAL.md`.
+Para dual-canal (`--canales 2`) ver `scripts_campo/PLAN_DUAL.md`.
 
 Revision rapida de una captura de campo:
 
 ```bash
-.venv/bin/python3 analisis/revisar_campo.py /ruta/a/la/captura/
-.venv/bin/python3 analisis/revisar_dual.py /ruta/a/la/captura/
+.venv/bin/python3 analisis/revisar.py /ruta/a/la/captura/
 ```

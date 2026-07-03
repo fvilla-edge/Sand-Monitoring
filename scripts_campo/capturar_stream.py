@@ -1,20 +1,43 @@
 #!/usr/bin/env python3
 """
-capturar_campo_stream.py — Captura continua via streaming FILE mode.
+capturar_stream.py — Captura continua via streaming FILE mode, 1 o 2 canales.
 
 El streaming-server escribe int16 raw a la SD interna (15 MB/s, suficiente
-para 7.8 MB/s de captura a dec=32). Cada chunk terminado se mueve al USB en
-un thread de fondo mientras ya se captura el siguiente. Eficiencia: ~98%.
+para 7.8 MB/s de captura a dec=32 por canal). Cada chunk terminado se mueve
+al destino en un thread de fondo mientras ya se captura el siguiente.
+Eficiencia: ~98%.
 
-Formato de salida: raw int16, little-endian, muestras secuenciales, sin header.
-Metadata en session_{condicion}_{ts}_info.json en el directorio destino.
+Formato de salida con 1 canal (--canales 1, default): raw int16 little-endian,
+muestras secuenciales, sin header.
+
+Formato de salida con 2 canales (--canales 2): raw int16 little-endian,
+INTERCALADO por muestra (CH_par, CH_impar, CH_par, CH_impar, ...) en un solo
+archivo — asi es como el streaming-server escribe cuando los dos canales
+estan activos, no es algo configurable:
+    posiciones IMPARES (indices 1,3,5,...) = CH1 (IN1, sensor codo)
+    posiciones PARES   (indices 0,2,4,...) = CH2 (IN2, sensor referencia)
+Este mapeo hay que re-confirmarlo con el sensor VS150-RI realmente puesto —
+la prueba se hizo golpeando el cable sin transductor.
+
+IMPORTANTE — decimacion con 2 canales: el ancho de banda se duplica.
+Medido en esta placa: dec=32 sostenido pierde ~0.42% de muestras por canal
+(982.068 de 233M en 60s). A dec=64 no se midio perdida. Se deja
+--decimacion configurable igual que con 1 canal, pero se avisa si con 2
+canales se elige un valor que no llego a probarse sin perdidas.
+
+Metadata en session_{condicion}_{ts}_info.json en el directorio destino
+(campo "canales": 1 o 2; el bloque "mapeo_canales" solo aparece con 2).
 
 Uso:
-  python3 capturar_campo_stream.py --condicion reposo --directorio /mnt/usb
+  python3 capturar_stream.py --condicion reposo --directorio /mnt/usb
 
-  # 2 horas, chunks de 10 minutos
-  python3 capturar_campo_stream.py --condicion con_arena \
+  # 2 horas, chunks de 10 minutos, 1 canal
+  python3 capturar_stream.py --condicion con_arena \
       --duracion_total 120 --duracion_chunk 10 --directorio /mnt/usb
+
+  # dual, decimacion segura
+  python3 capturar_stream.py --condicion con_arena --canales 2 \
+      --decimacion 64 --duracion_total 120 --duracion_chunk 10 --directorio /mnt/usb
 """
 import sys
 import os
@@ -31,38 +54,58 @@ sys.path.insert(0, '/root/scripts_campo_comun')
 import streaming
 import campo_common as cc
 
-FS_BASE     = cc.FS_BASE
-ESPACIO_MIN = 500 * 1024 * 1024   # 500 MB minimo libre en USB
-STREAM_DIR  = cc.STREAM_DIR
-SERVER_BIN  = cc.SERVER_BIN
+FS_BASE          = cc.FS_BASE
+ESPACIO_MIN_BASE = 500 * 1024 * 1024   # 500 MB minimo libre en USB, por canal
+STREAM_DIR       = cc.STREAM_DIR
+SERVER_BIN       = cc.SERVER_BIN
+DEC_SEGURAS_DUAL = {64}   # unica probada sin perdida sostenida con 2 canales; ver docstring
 
 _stop = cc.instalar_manejador_stop()
 
 
-def _guardar_metadata(dest_dir, condicion, decimacion, fs_ef, session_ts):
+def _guardar_metadata(dest_dir, condicion, decimacion, fs_ef, session_ts, canales):
     """Escribe session_{condicion}_{ts}_info.json en el directorio destino."""
-    info = {
-        'formato':       'raw_int16_le',
-        'descripcion':   'Muestras ADC canal 1, int16 little-endian, sin header',
+    if canales == 1:
+        info = {
+            'formato':       'raw_int16_le',
+            'descripcion':   'Muestras ADC canal 1, int16 little-endian, sin header',
+            'canales':       1,
+        }
+    else:
+        info = {
+            'formato':      'raw_int16_le_interleaved',
+            'descripcion':  'Muestras CH1+CH2 intercaladas por muestra, int16 little-endian, sin header',
+            'canales':      2,
+            'mapeo_canales': {
+                'ch1_posiciones': 'impares (indices 1,3,5,...)',
+                'ch2_posiciones': 'pares (indices 0,2,4,...)',
+                'confirmado':     'golpe fisico en cable IN1 sin sensor conectado, 2026-07-01',
+                'advertencia':    'reconfirmar mapeo con sensor VS150-RI conectado antes de usar para analisis final',
+            },
+            'canal_ch1':     'IN1 — sensor codo (medicion)',
+            'canal_ch2':     'IN2 — sensor referencia (ruido de linea)',
+        }
+    info.update({
         'condicion':     condicion,
         'decimacion':    decimacion,
-        'fs_hz':         fs_ef,
+        'fs_hz_por_canal' if canales == 2 else 'fs_hz': fs_ef,
         'fs_base_hz':    FS_BASE,
         'sensor':        'VS150-RI',
-        'gain':          'A_1_20 (HV jumper instalado, rango +-20V)',
+        'gain':          'A_1_20 (HV jumper instalado, rango +-20V)' + (', ambos canales' if canales == 2 else ''),
         'acoplamiento':  'DC',
         'escala_voltios': '(valor_int16 / 32767.0) * 20.0  [aprox]',
         'fecha_inicio':  datetime.datetime.now().isoformat(),
-    }
+    })
     json_name = f'session_{condicion}_{session_ts}_info.json'
     with open(os.path.join(dest_dir, json_name), 'w') as f:
         json.dump(info, f, indent=2, ensure_ascii=False)
     return json_name
 
 
-def _capturar_chunk(client, n_muestras, fs_ef, chunk_num, condicion, session_ts, log_evento):
+def _capturar_chunk(client, n_muestras, fs_ef, chunk_num, condicion, session_ts, canales, log_evento):
     """
-    Dispara un chunk de n_muestras a SD y renombra el archivo resultante.
+    Dispara un chunk de n_muestras POR CANAL a SD y renombra el archivo resultante.
+    Con 2 canales el archivo real pesa 2x (interlado CH1/CH2).
     Retorna (senal_s, ruta_archivo_en_sd).
     """
     done  = threading.Event()
@@ -93,9 +136,10 @@ def _capturar_chunk(client, n_muestras, fs_ef, chunk_num, condicion, session_ts,
         raise RuntimeError("startStreaming fallo")
 
     # Timeout: tiempo de captura + flush a SD (15 MB/s) + margen
-    bytes_esperados = n_muestras * 2
-    flush_sd_s      = bytes_esperados / (12 * 1024 * 1024) + 20  # conservador 12 MB/s
-    timeout_total   = n_muestras / fs_ef + flush_sd_s
+    bytes_por_muestra = 2 * canales
+    bytes_esperados    = n_muestras * bytes_por_muestra
+    flush_sd_s         = bytes_esperados / (12 * 1024 * 1024) + 20  # conservador 12 MB/s
+    timeout_total      = n_muestras / fs_ef + flush_sd_s
     completado = done.wait(timeout=timeout_total)
     t_total = time.perf_counter() - t0
 
@@ -118,7 +162,7 @@ def _capturar_chunk(client, n_muestras, fs_ef, chunk_num, condicion, session_ts,
 
     nombre_orig   = os.path.join(STREAM_DIR, archivos[-1])
     bytes_totales = os.path.getsize(nombre_orig)
-    senal_s       = (bytes_totales // 2) / fs_ef
+    senal_s       = (bytes_totales // bytes_por_muestra) / fs_ef
     nombre_final  = os.path.join(
         STREAM_DIR,
         f'campo_{condicion}_{session_ts}_{chunk_num:04d}.bin'
@@ -162,7 +206,11 @@ def _nuevo_cliente(args):
     client.sendConfig('adc_decimation',       str(args.decimacion))
     client.sendConfig('channel_attenuator_1', 'A_1_20')
     client.sendConfig('channel_state_1',      'ON')
-    client.sendConfig('channel_state_2',      'OFF')
+    if args.canales == 2:
+        client.sendConfig('channel_attenuator_2', 'A_1_20')
+        client.sendConfig('channel_state_2',      'ON')
+    else:
+        client.sendConfig('channel_state_2',      'OFF')
     return client
 
 
@@ -190,11 +238,13 @@ def _cerrar_cliente(client):
 
 def main():
     p = argparse.ArgumentParser(
-        description='Captura campo via streaming FILE mode — SD intermedia, USB destino'
+        description='Captura campo via streaming FILE mode — SD intermedia, USB/red destino, 1 o 2 canales'
     )
     p.add_argument('--condicion',      required=True, choices=['reposo', 'con_arena'])
+    p.add_argument('--canales',        type=int, default=1, choices=[1, 2],
+                   help='Cantidad de canales activos: 1 = mono/IN1 (default), 2 = dual IN1+IN2')
     p.add_argument('--decimacion',     type=int, default=32,
-                   help='Factor de decimacion (default 32 → 3.906 MHz)')
+                   help='Factor de decimacion, por canal (default 32 → 3.906 MHz/canal)')
     p.add_argument('--duracion_chunk', type=float, default=1.0,
                    help='Minutos por chunk (default 1)')
     p.add_argument('--duracion_total', type=float, default=None,
@@ -202,7 +252,7 @@ def main():
     p.add_argument('--directorio',     default='/mnt/usb',
                    help='Storage externo montado (default /mnt/usb)')
     p.add_argument('--destino',        choices=['usb', 'red'], default='usb',
-                   help='Destino de los chunks: usb (default) o red (rsync SSH a PC)')
+                   help='Destino de los chunks: usb (default) o red (scp SSH a PC)')
     p.add_argument('--pc_host',        default=None,
                    help='usuario@ip de la PC destino (ej: facu@192.168.0.10) — solo con --destino red')
     p.add_argument('--pc_ruta',        default=None,
@@ -219,6 +269,14 @@ def main():
     if args.decimacion not in cc.DEC_VALIDOS:
         sys.exit(f'Decimacion invalida. Opciones: {sorted(cc.DEC_VALIDOS)}')
 
+    if args.canales == 2 and args.decimacion not in DEC_SEGURAS_DUAL:
+        cc.log('WARNING', f'\n  [!] ADVERTENCIA: decimacion={args.decimacion} con los 2 canales activos NO fue '
+                           f'validada sin perdida de muestras en esta placa.')
+        cc.log('WARNING', f'      Medido: dec=32 sostenido (60s) perdio ~0.42% de muestras por canal (982.068/233M).')
+        cc.log('WARNING', f'      Medido: dec=64 sostenido (60s) — 0 perdidas.')
+        cc.log('WARNING', f'      Se continua igual porque la decimacion queda a tu criterio, pero quedas avisado.\n')
+
+    ESPACIO_MIN = ESPACIO_MIN_BASE * args.canales
     fs_ef      = FS_BASE / args.decimacion
     chunk_s    = args.duracion_chunk * 60.0
     total_s    = args.duracion_total * 60.0 if args.duracion_total else None
@@ -229,7 +287,7 @@ def main():
     cc.log('INFO', f'  Log (solo errores/eventos) → {log_path}')
 
     cc.asegurar_servidor('/tmp/sstream_campo.log')
-    dest_usb  = cc.preparar_dirs(args.directorio, 'stream_adc')
+    dest_usb   = cc.preparar_dirs(args.directorio, 'stream_adc')
     usb_dev_id = cc.id_dispositivo(args.directorio)
 
     if args.destino == 'usb':
@@ -244,7 +302,7 @@ def main():
     except RuntimeError as e:
         sys.exit(f'ERROR: {e}')
 
-    json_name = _guardar_metadata(dest_usb, args.condicion, args.decimacion, fs_ef, session_ts)
+    json_name = _guardar_metadata(dest_usb, args.condicion, args.decimacion, fs_ef, session_ts, args.canales)
 
     if args.destino == 'red':
         subprocess.run(
@@ -254,11 +312,17 @@ def main():
             check=True,
         )
 
-    bytes_chunk = n_muestras * 2
-    cc.log('INFO', f'\n=== CAPTURA CAMPO — SD intermedia + {args.destino.upper()} destino ===')
+    bytes_chunk = n_muestras * 2 * args.canales
+    cc.log('INFO', f'\n=== CAPTURA CAMPO ({args.canales} canal{"es" if args.canales == 2 else ""}) — '
+                    f'SD intermedia + {args.destino.upper()} destino ===')
     cc.log('INFO', f'  condicion  : {args.condicion}')
-    cc.log('INFO', f'  decimacion : {args.decimacion}  →  fs = {fs_ef/1e6:.4f} MHz')
-    cc.log('INFO', f'  chunk      : {args.duracion_chunk} min  ({n_muestras:,} muestras | {bytes_chunk/1e6:.0f} MB)')
+    if args.canales == 2:
+        cc.log('INFO', f'  decimacion : {args.decimacion}  →  fs = {fs_ef/1e6:.4f} MHz por canal '
+                        f'({fs_ef*2/1e6:.4f} MHz combinado)')
+        cc.log('INFO', f'  chunk      : {args.duracion_chunk} min  ({n_muestras:,} muestras/canal | {bytes_chunk/1e6:.0f} MB)')
+    else:
+        cc.log('INFO', f'  decimacion : {args.decimacion}  →  fs = {fs_ef/1e6:.4f} MHz')
+        cc.log('INFO', f'  chunk      : {args.duracion_chunk} min  ({n_muestras:,} muestras | {bytes_chunk/1e6:.0f} MB)')
     cc.log('INFO', f'  destino    : {destino_label}')
     if total_s:
         n_est = max(1, int(total_s / chunk_s))
@@ -267,7 +331,7 @@ def main():
         cc.log('INFO', f'  total      : indefinido  (Ctrl+C para detener)')
     cc.log('INFO', f'  Presiona Ctrl+C para detener.\n')
 
-    log_evento(f'Sesion iniciada — condicion={args.condicion} decimacion={args.decimacion} '
+    log_evento(f'Sesion iniciada — condicion={args.condicion} canales={args.canales} decimacion={args.decimacion} '
                 f'chunk={args.duracion_chunk}min destino={args.destino}')
 
     chunk_num        = 1
@@ -306,7 +370,8 @@ def main():
                 libre_sd = shutil.disk_usage(STREAM_DIR).free
                 espacio_label = f'SD {libre_sd/1e9:.2f} GB libres'
             cc.log('INFO', f'--- Chunk {chunk_num:04d} | {espacio_label} ---')
-            secs, archivo_sd = _capturar_chunk(client, n, fs_ef, chunk_num, args.condicion, session_ts, log_evento)
+            secs, archivo_sd = _capturar_chunk(
+                client, n, fs_ef, chunk_num, args.condicion, session_ts, args.canales, log_evento)
             tiempo_capturado += secs
 
             # Reiniciar el cliente para el proximo chunk (mitigacion Bug 1)

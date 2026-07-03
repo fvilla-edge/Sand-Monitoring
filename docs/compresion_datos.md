@@ -70,4 +70,4 @@ Usar `zstd -1` (no niveles más altos) aplicado únicamente en el momento de la 
 
 Ejemplo de ganancia esperada por archivo de ~450MB: ~30-42% menos para transferir, a cambio de ~30-60s de espera en la placa. Vale la pena si la conexión remota es lenta (celular/satelital); el margen es menor si la conexión es rápida.
 
-**Pendiente si se decide implementar:** definir el punto exacto del flujo de "conectarse y traer paquetes" donde se dispara la compresión (antes de mandar cada archivo, bajo demanda), sin tocar `capturar_campo_stream.py`/`capturar_dual_stream.py`.
+**Pendiente si se decide implementar:** definir el punto exacto del flujo de "conectarse y traer paquetes" donde se dispara la compresión (antes de mandar cada archivo, bajo demanda), sin tocar `capturar_stream.py`.

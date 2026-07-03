@@ -38,7 +38,7 @@ Agregar un segundo sensor VS150-RI como **referencia de ruido de línea**, aprov
 Verificado con `probar_dual_stream.py` (ver mas abajo) usando el modo streaming
 FILE en vez del `rp` viejo. `test_dual_adc.py` y `capturar_dual.py` (basados en
 la libreria `rp` directa, HDF5, ~54% eficiencia) fueron **reemplazados** por el
-esquema de streaming FILE mode (98% eficiencia, igual que `capturar_campo_stream.py`).
+esquema de streaming FILE mode (98% eficiencia, igual que `capturar_stream.py`).
 
 ---
 
@@ -84,43 +84,54 @@ script final. No mueve ni borra nada del USB/red.
 
 ---
 
-### Paso 2 — Captura y guardado dual ✅ COMPLETO (2026-07-01)
-**Script:** `capturar_dual_stream.py` — calcado de `capturar_campo_stream.py`.
+### Paso 2 — Captura y guardado dual ✅ COMPLETO (2026-07-01, unificado con mono el 2026-07-03)
+**Script:** `capturar_stream.py --canales 2` — mismo script que mono (`scripts_campo/capturar_stream.py`), con los 2 canales activos.
 
 - Mismo esquema SD-intermedia + move en background, 98% eficiencia esperada.
 - `channel_state_1` y `channel_state_2` ambos `ON`, mismo attenuator `A_1_20`.
-- Salida: `dual_{condicion}_{ts}_{NNNN}.bin` — raw int16 LE intercalado, un
-  solo archivo (no se de-intercala en captura, eso queda para el análisis).
-- `session_dual_{condicion}_{ts}_info.json` con el mapeo de canales y la
-  advertencia de re-confirmarlo con sensor puesto.
+- Salida: `campo_{condicion}_{ts}_{NNNN}.bin` — mismo nombre que mono, raw int16 LE
+  intercalado (no se de-intercala en captura, eso queda para el análisis).
+- `session_{condicion}_{ts}_info.json` — mismo archivo que mono, con `"canales": 2`
+  y el bloque `mapeo_canales` (con la advertencia de re-confirmarlo con sensor puesto).
 - Advertencia en consola si `--decimacion` < 64 (con los números medidos de
   pérdida arriba). No bloquea — la decimación queda a criterio del operador.
-- `ESPACIO_MIN` = 1 GB (el `capturar_dual.py` viejo tenía un bug: el
-  comentario decía "el doble que campo simple" pero el valor puesto era
-  *menor* — 400 MB vs 500 MB del mono).
+- `ESPACIO_MIN` escala con `--canales` (500 MB × canales): 1 GB con 2 canales,
+  igual que antes.
 - Mismos 3 destinos que campo: `usb`, `red` via gateway, `red` via link directo.
 
 Uso:
 ```bash
-python3 capturar_dual_stream.py --condicion reposo --decimacion 64 --directorio /mnt/usb
-python3 capturar_dual_stream.py --condicion con_arena --decimacion 64 \
+python3 capturar_stream.py --condicion reposo --canales 2 --decimacion 64 --directorio /mnt/usb
+python3 capturar_stream.py --condicion con_arena --canales 2 --decimacion 64 \
     --duracion_total 30 --destino red --pc_host facu-edge@10.42.0.1 --pc_ruta /home/facu-edge/datos_campo
 ```
 
 **Para leer el .bin y separar canales:**
 ```python
 import numpy as np
-datos = np.fromfile('dual_....bin', dtype='<i2')
+datos = np.fromfile('campo_....bin', dtype='<i2')
 ch1 = datos[1::2]   # codo — a reconfirmar con sensor puesto
 ch2 = datos[0::2]   # referencia
 ```
 
 ---
 
-### Paso 3 — Análisis diferencial ✅ COMPLETO (2026-07-01)
-**Script:** `revisar_dual.py` — adaptado para leer los `.bin` intercalados de
-`capturar_dual_stream.py` (ya no soporta `.h5`, no se va a usar más). Lee el
-mapeo de canales desde `session_dual_*_info.json` en vez de asumirlo fijo.
+### Paso 3 — Análisis diferencial ✅ COMPLETO (2026-07-01, unificado con mono el 2026-07-03)
+**Script:** `revisar.py` — un solo script para mono y dual, detecta la cantidad
+de canales leyendo `"canales"` del `session_*_info.json` (antes eran
+`revisar_campo.py`/`revisar_dual.py` separados, ~55% de codigo duplicado). Lee
+el mapeo de canales desde `mapeo_canales` en el mismo JSON en vez de asumirlo
+fijo. Un mismo lote puede mezclar capturas mono y dual — se muestran en tablas
+separadas. Probado con datos sinteticos (mono y dual, con y sin picos de
+"arena") antes de confirmar la unificacion.
+
+Nota: la prueba original de banco (10s, entradas al aire, 2026-07-01, ver
+resultado abajo) se guardo con el nombre viejo `dual_*.bin`/`session_dual_*_info.json`.
+`revisar.py` unificado ya no busca ese prefijo (solo `campo_*.bin`, ver
+decision de nomenclatura del 2026-07-03) — ese archivo bench especifico quedo
+sin re-analizar con el script nuevo, no es un problema porque no era dato real
+(entradas al aire), solo se cita el resultado que dio en su momento:
+
 Probado con una captura real de 10s (entradas al aire): separó los canales
 bien y el resultado fue coherente — k2 (CH2, flotante) dio kurtosis 9266 y
 fa2%=100% por el artefacto periódico ya documentado (falso positivo esperado,
@@ -142,16 +153,17 @@ Aplica filtro 100–450 kHz a ambos canales y calcula:
 
 ## Logs (errores y eventos) y relanzado automático
 
-Mismo mecanismo que en mono (comparten `campo_common.py`) — ver las secciones
-"Logs (errores y eventos)" y "Sesiones largas desatendidas: relanzado
-automático" en `scripts_campo/PLAN_CAMPO.md`. En la placa, el log de esta
-captura queda en `/root/logs_campo/log_dual_<condicion>_<timestamp>.txt`.
-Para relanzado automático:
+Mismo mecanismo que en mono (comparten `campo_common.py`, y desde la
+unificacion tambien el mismo script) — ver las secciones "Logs (errores y
+eventos)" y "Sesiones largas desatendidas: relanzado automático" en
+`scripts_campo/PLAN_CAMPO.md`. En la placa, el log de esta captura queda en
+`/root/logs_campo/log_campo_<condicion>_<timestamp>.txt` (mismo prefijo que
+mono, sin distincion "dual" en el nombre). Para relanzado automático:
 
 ```bash
 bash /root/scripts_campo_comun/relanzar_captura.sh \
-  /root/scripts_campo_dual/capturar_dual_stream.py \
-  --condicion reposo --decimacion 64 --duracion_chunk 1 --directorio /mnt/usb
+  /root/scripts_campo/capturar_stream.py \
+  --condicion reposo --canales 2 --decimacion 64 --duracion_chunk 1 --directorio /mnt/usb
 ```
 
 ---
@@ -171,7 +183,7 @@ bash /root/scripts_campo_comun/relanzar_captura.sh \
 |---|---|
 | 1 — Verificar doble ADC | ✅ Completo (`probar_dual_stream.py`) |
 | 1b — Formato, mapeo de canales, decimación segura | ✅ Completo (2026-07-01) |
-| 2 — `capturar_dual_stream.py` (streaming FILE mode) | ✅ Completo (2026-07-01) |
+| 2 — `capturar_stream.py --canales 2` (streaming FILE mode) | ✅ Completo (2026-07-01, unificado con mono 2026-07-03) |
 | 2b — Prueba mecánica del script (3 chunks, dec=64, USB) | ✅ Completo (2026-07-01) — 94-97% efic, sin errores. **Con entradas al aire, no es dato válido** — solo valida que el script funciona. |
 | 2c — Prueba con sensores VS150-RI conectados | ⬜ **Pendiente — bloqueante antes de usar en campo real.** Repetir mapeo de canales (golpe con sensor puesto) y verificar el ruido de base real (sin las entradas flotantes debería desaparecer el artefacto periódico de ~30 Hz). |
-| 3 — `revisar_dual.py` (adaptar a `.bin` intercalado) | ✅ Completo (2026-07-01) |
+| 3 — `revisar.py` (adaptar a `.bin` intercalado) | ✅ Completo (2026-07-01) |

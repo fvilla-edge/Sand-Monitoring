@@ -2,7 +2,7 @@
 
 ## Resumen
 
-El script recomendado es **`capturar_campo_stream.py`**.  
+El script recomendado es **`capturar_stream.py`**.  
 Captura a ~98% de eficiencia escribiendo primero a la SD interna de la placa (15 MB/s,
 suficiente para los 7.8 MB/s de datos) y luego mueve cada chunk al destino elegido en
 un thread de fondo mientras ya empieza el siguiente chunk.
@@ -65,11 +65,11 @@ cuenta en esa métrica — ocurre fuera del loop de captura.
 ```
 Sand Monitoring/
   scripts_campo/
-    capturar_campo_stream.py   ← RECOMENDADO para campo (98% eficiencia, int16 raw)
+    capturar_stream.py   ← RECOMENDADO para campo (98% eficiencia, int16 raw)
     capturar_campo.py          ← alternativa HDF5 (54% eficiencia, float32 autodescrip.)
     PLAN_CAMPO.md              ← este documento
   analisis/
-    revisar_campo.py           ← revision rapida en PC (lee .bin)
+    revisar.py           ← revision rapida en PC (lee .bin)
 ```
 
 ---
@@ -83,7 +83,7 @@ Estos pasos se hacen una vez por placa. Después de un reset de firmware hay que
 La IP de la placa depende de cómo esté conectada (ver sección de IPs más abajo):
 
 ```bash
-scp scripts_campo/capturar_campo_stream.py root@<IP_PLACA>:/root/scripts_campo/
+scp scripts_campo/capturar_stream.py root@<IP_PLACA>:/root/scripts_campo/
 ```
 
 ### 2. Librería de streaming — persistencia automática (RESUELTO)
@@ -188,7 +188,7 @@ df -h /mnt/usb              # verificar espacio disponible
 **Modo USB** (storage externo conectado a la placa):
 
 ```bash
-python3 /root/scripts_campo/capturar_campo_stream.py \
+python3 /root/scripts_campo/capturar_stream.py \
   --condicion reposo \
   --decimacion 32 \
   --duracion_chunk 1 \
@@ -198,7 +198,7 @@ python3 /root/scripts_campo/capturar_campo_stream.py \
 **Modo RED via gateway** (placa y PC en la misma red con router):
 
 ```bash
-python3 /root/scripts_campo/capturar_campo_stream.py \
+python3 /root/scripts_campo/capturar_stream.py \
   --condicion reposo \
   --decimacion 32 \
   --duracion_chunk 1 \
@@ -210,7 +210,7 @@ python3 /root/scripts_campo/capturar_campo_stream.py \
 **Modo RED via link directo** (RJ45 placa ↔ PC, sin router):
 
 ```bash
-python3 /root/scripts_campo/capturar_campo_stream.py \
+python3 /root/scripts_campo/capturar_stream.py \
   --condicion reposo \
   --decimacion 32 \
   --duracion_chunk 1 \
@@ -238,24 +238,24 @@ python3 /root/scripts_campo/capturar_campo_stream.py \
 
 ```bash
 # Loop indefinido a USB, chunks de 1 minuto (uso típico campo sin PC)
-python3 /root/scripts_campo/capturar_campo_stream.py --condicion reposo
+python3 /root/scripts_campo/capturar_stream.py --condicion reposo
 
 # 2 horas a USB con chunks de 10 minutos
-python3 /root/scripts_campo/capturar_campo_stream.py \
+python3 /root/scripts_campo/capturar_stream.py \
   --condicion con_arena --duracion_total 120 --duracion_chunk 10
 
 # Directo a la PC por gateway, loop indefinido
-python3 /root/scripts_campo/capturar_campo_stream.py \
+python3 /root/scripts_campo/capturar_stream.py \
   --condicion reposo \
   --destino red --pc_host facu-edge@192.168.0.147 --pc_ruta /home/facu-edge/datos_campo
 
 # Directo a la PC por link directo (RJ45), 3 chunks de prueba
-python3 /root/scripts_campo/capturar_campo_stream.py \
+python3 /root/scripts_campo/capturar_stream.py \
   --condicion reposo --duracion_total 3 \
   --destino red --pc_host facu-edge@10.42.0.1 --pc_ruta /home/facu-edge/datos_campo
 
 # Menor frecuencia de muestreo (archivos más chicos)
-python3 /root/scripts_campo/capturar_campo_stream.py \
+python3 /root/scripts_campo/capturar_stream.py \
   --condicion reposo --decimacion 64 --duracion_chunk 5
 ```
 
@@ -276,13 +276,13 @@ relanza — esos casos son intencionales, no un crash.
 
 ```bash
 bash /root/scripts_campo_comun/relanzar_captura.sh \
-  /root/scripts_campo/capturar_campo_stream.py \
+  /root/scripts_campo/capturar_stream.py \
   --condicion reposo --decimacion 32 --duracion_chunk 1 --directorio /mnt/usb
 ```
 
 Cada relanzamiento arranca una **sesión nueva** (`session_ts` y chunk 0001
 distintos) — una noche con 2 crashes deja 3 sesiones separadas en el
-directorio, cada una válida y legible por separado con `revisar_campo.py`.
+directorio, cada una válida y legible por separado con `revisar.py`.
 Máximo 10 reintentos con 5s de espera entre cada uno (mata el
 `streaming-server` residual antes de reintentar, para forzar arranque en
 frío). Si se supera el máximo, el wrapper termina con error — revisar
@@ -437,10 +437,10 @@ o hacer pausas entre bloques para que la SD drene.
 
 ```bash
 # Revisar todo el directorio (USB o red)
-.venv/bin/python3 analisis/revisar_campo.py /ruta/al/directorio/stream_adc/
+.venv/bin/python3 analisis/revisar.py /ruta/al/directorio/stream_adc/
 
 # Revisar archivos específicos
-.venv/bin/python3 analisis/revisar_campo.py campo_reposo_*.bin
+.venv/bin/python3 analisis/revisar.py campo_reposo_*.bin
 ```
 
 Salida de ejemplo:
@@ -570,7 +570,7 @@ PYTHONPATH=/opt/redpitaya/lib/python \
   --condicion reposo --decimacion 32 --duracion_chunk 1 --directorio /mnt/usb
 ```
 
-| | `capturar_campo_stream.py` | `capturar_campo.py` |
+| | `capturar_stream.py` | `capturar_campo.py` |
 |---|---|---|
 | Eficiencia | **98%** | 54% |
 | Formato | raw int16 (.bin) | float32 HDF5 (.h5) |
@@ -589,5 +589,5 @@ PYTHONPATH=/opt/redpitaya/lib/python \
 - [x] Modo RED via link directo RJ45 — sin router, 5.6 MB/s concurrente, límite ~2.9 h
 - [x] Librería `rpsa_client` con persistencia automática vía systemd (`rpsa-lib.service`)
 - [x] Loop continuo con Ctrl+C limpio, chequeo de espacio, chunks numerados
-- [x] Revisión rápida en PC (`revisar_campo.py`) para .bin
+- [x] Revisión rápida en PC (`revisar.py`) para .bin
 - [ ] Análisis post-campo con métricas completas (kurtosis, espectro, clasificación)

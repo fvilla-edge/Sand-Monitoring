@@ -2,8 +2,8 @@
 """
 espectrograma.py — Espectrograma STFT de capturas de campo (.bin) para visualizacion en PC.
 
-Acepta archivos .bin de capturar_campo_stream.py (int16 raw, requiere
-session_info.json en el mismo directorio, mismo formato que revisar_campo.py).
+Acepta archivos .bin de capturar_stream.py (int16 raw, requiere
+session_info.json en el mismo directorio, mismo formato que revisar.py).
 
 Por defecto grafica todo el archivo, banda 0-600 kHz (marca con lineas
 punteadas la banda del sensor 100-450 kHz), ventana Hann con 50% de solape.
