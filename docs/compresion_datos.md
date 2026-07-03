@@ -46,7 +46,7 @@ La prueba en PC no sirve para decidir nada por sí sola, porque la compresión (
 
 Un chunk de captura dura 60s (duración configurable, pero ese es el valor típico de campo). `zstd -1`, el nivel más rápido, tarda **61s** en comprimir un chunk de ese tamaño en la placa — prácticamente el mismo tiempo que dura la captura del chunk siguiente.
 
-Esto significa que no hay margen: si se intentara comprimir cada chunk en tiempo real, apenas se sume cualquier otra carga (el thread que ya existe hoy para copiar a USB, por ejemplo) el proceso de compresión se atrasa respecto a la captura y el atraso se acumula sin límite — nunca vuelve a ponerse al día. Es la misma razón por la que en su momento se descartó calcular FFT en tiempo real en la placa (ver `informe_deteccion_arena.md` / notas de esa decisión): el ARM está justo al límite con la captura sola, no hay CPU de sobra para sumarle trabajo en paralelo sin arriesgar la eficiencia de captura (~98%) que costó conseguir.
+Esto significa que no hay margen: si se intentara comprimir cada chunk en tiempo real, apenas se sume cualquier otra carga (el thread que ya existe hoy para copiar a USB, por ejemplo) el proceso de compresión se atrasa respecto a la captura y el atraso se acumula sin límite — nunca vuelve a ponerse al día. Es la misma razón por la que en su momento se descartó calcular el espectrograma (FFT) en tiempo real en la placa en vez de en la PC (decisión del 2026-07-01): el ARM está justo al límite con la captura sola, no hay CPU de sobra para sumarle trabajo en paralelo sin arriesgar la eficiencia de captura (~98%) que costó conseguir.
 
 ---
 

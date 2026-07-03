@@ -6,6 +6,13 @@
 **Objetivo:** Clasificar el nivel de producción de arena en 4 categorías: sin arena / baja / moderada / alta  
 **Estado:** Sensor instalado, señal capturada, firma acústica de arena verificada
 
+> **Nota (2026-07-03):** este roadmap se escribió antes de tener datos de campo reales —
+> los umbrales de kurtosis/fracción activa que aparecen abajo son objetivos de diseño, no
+> valores medidos. Los valores reales ya medidos (campo y laboratorio) están en
+> `analisis/INTERPRETACION_RESULTADOS.md` — consultar ahí antes de calibrar nada, no acá.
+> `docs/informe_deteccion_arena.md` es la investigación bibliográfica previa (archivada,
+> banda de frecuencia genérica en vez de la real del VS150-RI).
+
 ---
 
 ## Índice

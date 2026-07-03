@@ -6,6 +6,13 @@
 **Hardware objetivo:** Red Pitaya Stemlab 125-14  
 **Fecha:** Junio 2026
 
+> **Archivado (2026-07-03):** este informe es la investigación bibliográfica que se hizo
+> **antes** de tener el sensor VS150-RI definido — usa bandas de frecuencia genéricas de
+> la literatura (30–200 kHz / 50–150 kHz) en vez de la banda real del sensor instalado
+> (100–450 kHz). Se conserva como referencia teórica y bibliografía (12 papers), pero
+> **el plan vigente es `docs/roadmap_deteccion_arena.md`**, y los umbrales/valores reales
+> ya medidos están en `analisis/INTERPRETACION_RESULTADOS.md` — no los de este documento.
+
 ---
 
 # PARTE I — ANÁLISIS INDIVIDUAL DE PAPERS

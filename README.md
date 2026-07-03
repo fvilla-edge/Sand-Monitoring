@@ -30,14 +30,14 @@ Sand Monitoring/
 │   ├── capturar_stream.py  # Recomendado — streaming, raw .bin, ~98% eficiencia, --canales 1|2
 │   ├── capturar_campo.py   # Alternativa HDF5, ~54% eficiencia, solo mono
 │   ├── probar_dual_stream.py  # Prueba de banco para mapeo de canales (2 canales)
-│   ├── PLAN_CAMPO.md       # Parametros, procedimiento y ejemplos de uso en campo
-│   └── PLAN_DUAL.md        # Especifico de --canales 2 (mapeo, consideraciones de sensor referencia)
+│   └── PLAN_CAMPO.md       # Guia operativa completa, mono y dual (--canales 1|2)
 ├── scripts_campo_comun/    # Codigo y supervisor compartidos (campo_common.py, relanzar_captura.sh)
 ├── analisis/               # Scripts de analisis local (corren en la PC)
 │   ├── revisar.py          # Revision rapida de capturas, mono o dual (.bin)
 │   └── espectrograma.py    # Espectrograma STFT de una captura de campo
 ├── capturas/               # Capturas de campo (gitignoreado)
-└── docs/                   # Informes y roadmap
+├── docs/                   # Informes y roadmap
+└── COMANDOS.md             # Referencia rapida de todos los scripts y sus argumentos
 ```
 
 ## Setup (PC local — una sola vez)
@@ -50,11 +50,13 @@ python3 -m venv .venv
 
 ## Flujo basico
 
-Para captura en campo (loop continuo, storage externo) ver `scripts_campo/PLAN_CAMPO.md`.
-Para dual-canal (`--canales 2`) ver `scripts_campo/PLAN_DUAL.md`.
+Para captura en campo (loop continuo, storage externo, mono o dual con `--canales`) ver
+`scripts_campo/PLAN_CAMPO.md`.
 
 Revision rapida de una captura de campo:
 
 ```bash
 .venv/bin/python3 analisis/revisar.py /ruta/a/la/captura/
 ```
+
+Para la lista completa de scripts y argumentos ver `COMANDOS.md`.

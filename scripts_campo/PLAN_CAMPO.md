@@ -2,18 +2,65 @@
 
 ## Resumen
 
-El script recomendado es **`capturar_stream.py`**.  
+El script recomendado es **`capturar_stream.py`**, con `--canales 1` (mono, default)
+o `--canales 2` (dual — sensor de referencia además del sensor de medición, ver
+"Sensor de referencia (dual)" más abajo).
+
 Captura a ~98% de eficiencia escribiendo primero a la SD interna de la placa (15 MB/s,
-suficiente para los 7.8 MB/s de datos) y luego mueve cada chunk al destino elegido en
+suficiente para los 7.8 MB/s de datos a 1 canal) y luego mueve cada chunk al destino elegido en
 un thread de fondo mientras ya empieza el siguiente chunk.
 
-**Tres modos de operación:**
+**Tres modos de operación (mono y dual):**
 
 | Modo | Topología de red | Velocidad típica | Límite de sesión |
 |---|---|---|---|
 | `usb` | Sin PC | 4–5 MB/s | Storage del USB |
 | `red` via gateway | Placa y PC en la misma red (router) | 6–15+ MB/s | Sin límite en SD |
-| `red` via link directo | RJ45 placa ↔ PC directamente | 5.6 MB/s concurrente | ~2.9 horas (ver abajo) |
+| `red` via link directo | RJ45 placa ↔ PC directamente | 5.6 MB/s concurrente | ~2.9 horas (ver abajo, 1 canal) |
+
+---
+
+## Sensor de referencia (dual, `--canales 2`)
+
+Un segundo sensor VS150-RI actúa como **referencia de ruido de línea**, aprovechando que
+el STEMlab 125-14 tiene dos ADC que sampean sincrónicamente por hardware. Restando la
+contribución del sensor de referencia (CH2) a la señal del sensor de medición (CH1), se
+puede aislar el evento de arena del ruido mecánico/de línea que afecta a ambos por igual.
+
+```
+[Línea de producción]
+
+       IN1 (CH1)              IN2 (CH2)
+       Sensor codo       Sensor referencia
+           |                   |
+      [Evento arena]     [Ruido de fondo/línea]
+           |                   |
+           +---[Red Pitaya]----+
+               Adquisición
+               simultánea
+```
+
+| Elemento | Detalle |
+|---|---|
+| Sensor medición | VS150-RI → **IN1 (CH1)** — montado en el codo |
+| Sensor referencia | VS150-RI → **IN2 (CH2)** — aguas arriba o abajo del codo |
+
+**Sincronía:** garantizada por el FPGA del RP. Ambos canales se sampean en el mismo
+ciclo de clock — no hay offset temporal entre CH1 y CH2.
+
+**Consideraciones de posicionamiento:**
+- **Posición sensor referencia:** aguas arriba preferido — el flujo pasa primero por la
+  referencia y luego por el codo, evitando que arena que ya pasó vuelva a afectar CH2.
+- **Distancia mínima:** suficiente para que las ondas de impacto del codo no lleguen al
+  sensor de referencia (regla de dedo: >0.5 m en tubería metálica).
+- **Cables:** misma longitud de cable BNC posible para ambos sensores — reduce diferencia
+  de ganancia.
+
+**Pendiente — bloqueante antes de usar dual en campo real:** el mapeo de canales y la
+ausencia de artefactos de entrada flotante (ver "Historial de desarrollo dual" al final
+de este documento) se confirmaron con las entradas al aire o golpeando el cable, no con
+los sensores VS150-RI reales puestos. Repetir esa confirmación antes de confiar en datos
+dual de campo.
 
 ---
 
@@ -21,10 +68,12 @@ un thread de fondo mientras ya empieza el siguiente chunk.
 
 ### Por qué la SD como buffer intermedio
 
-El streaming-server de Red Pitaya genera datos a **7.8 MB/s** (decimación 32, 2 bytes por muestra).
+El streaming-server de Red Pitaya genera datos a **7.8 MB/s por canal** (decimación 32,
+2 bytes por muestra) — con `--canales 2` el ancho de banda combinado se duplica.
 Un USB 2.0 típico escribe a 4–5 MB/s — más lento que la tasa de datos. Si el servidor escribiera
 directo al USB, el buffer interno se llenaría y los datos se perderían o el servidor pararía antes
-de tiempo. La SD interna de la placa escribe a **15 MB/s**, suficiente para no perder nada.
+de tiempo. La SD interna de la placa escribe a **15 MB/s**, suficiente para 1 canal a
+cualquier decimación válida, y para 2 canales a partir de dec=64 (ver más abajo).
 
 ### Flujo por chunk
 
@@ -55,8 +104,8 @@ nunca se acumulan archivos en la SD.
 ### Eficiencia real
 
 La **eficiencia** que imprime el script es `tiempo_de_señal / tiempo_de_reloj`. Con SD como
-destino de captura se obtiene consistentemente 97–99%. El tiempo de move al USB o red no
-cuenta en esa métrica — ocurre fuera del loop de captura.
+destino de captura se obtiene consistentemente 97–99%, en mono y en dual. El tiempo de move
+al USB o red no cuenta en esa métrica — ocurre fuera del loop de captura.
 
 ---
 
@@ -65,11 +114,15 @@ cuenta en esa métrica — ocurre fuera del loop de captura.
 ```
 Sand Monitoring/
   scripts_campo/
-    capturar_stream.py   ← RECOMENDADO para campo (98% eficiencia, int16 raw)
-    capturar_campo.py          ← alternativa HDF5 (54% eficiencia, float32 autodescrip.)
-    PLAN_CAMPO.md              ← este documento
+    capturar_stream.py      ← RECOMENDADO para campo (98% eficiencia, int16 raw, --canales 1|2)
+    capturar_campo.py       ← alternativa HDF5 (54% eficiencia, float32 autodescrip., solo mono)
+    probar_dual_stream.py   ← prueba de banco de solo lectura, para reconfirmar mapeo de canales
+    PLAN_CAMPO.md           ← este documento
+  scripts_campo_comun/
+    campo_common.py         ← funciones compartidas (arranque servidor, logs, USB/red)
+    relanzar_captura.sh     ← supervisor para sesiones largas desatendidas
   analisis/
-    revisar.py           ← revision rapida en PC (lee .bin)
+    revisar.py              ← revision rapida en PC (lee .bin, mono o dual)
 ```
 
 ---
@@ -185,12 +238,22 @@ df -h /mnt/usb              # verificar espacio disponible
 
 ### 3. Ejecutar la captura
 
-**Modo USB** (storage externo conectado a la placa):
+**Modo USB, mono** (storage externo conectado a la placa):
 
 ```bash
 python3 /root/scripts_campo/capturar_stream.py \
   --condicion reposo \
   --decimacion 32 \
+  --duracion_chunk 1 \
+  --directorio /mnt/usb
+```
+
+**Modo USB, dual** (sensor de referencia conectado a IN2):
+
+```bash
+python3 /root/scripts_campo/capturar_stream.py \
+  --condicion reposo --canales 2 \
+  --decimacion 64 \
   --duracion_chunk 1 \
   --directorio /mnt/usb
 ```
@@ -226,7 +289,8 @@ python3 /root/scripts_campo/capturar_stream.py \
 | Parámetro | Default | Descripción |
 |---|---|---|
 | `--condicion` | obligatorio | `reposo` o `con_arena` |
-| `--decimacion` | `32` | Factor de decimación → fs = 125 MHz / dec |
+| `--canales` | `1` | `1` = mono (IN1), `2` = dual (IN1+IN2, ver "Sensor de referencia" arriba) |
+| `--decimacion` | `32` | Factor de decimación, por canal → fs = 125 MHz / dec. Con `--canales 2`, usar `64` (ver "Decimación segura con 2 canales" abajo) |
 | `--duracion_chunk` | `1` | Minutos por archivo |
 | `--duracion_total` | sin límite | Minutos totales. Sin esto corre hasta Ctrl+C |
 | `--directorio` | `/mnt/usb` | Storage externo (siempre requerido, aunque sea modo red) |
@@ -234,15 +298,32 @@ python3 /root/scripts_campo/capturar_stream.py \
 | `--pc_host` | — | `usuario@ip` de la PC (solo con `--destino red`) |
 | `--pc_ruta` | — | Ruta en la PC donde guardar (solo con `--destino red`) |
 
+### Decimación segura con 2 canales
+
+Con los dos canales activos el ancho de banda se duplica. Medido en esta placa:
+
+| Decimación (dual) | Ancho de banda combinado | Pérdida de muestras (test 60s) |
+|---|---|---|
+| 32 | ~15.6 MB/s | ~0.42% por canal (982.068 de 233M) — supera lo que la SD sostiene (15 MB/s) |
+| 64 | ~7.8 MB/s | 0% — mismo margen que mono a dec=32 |
+
+`capturar_stream.py` avisa en consola (sin bloquear) si se usa `--canales 2` con una
+decimación que no sea 64.
+
 ### Ejemplos de uso
 
 ```bash
-# Loop indefinido a USB, chunks de 1 minuto (uso típico campo sin PC)
+# Loop indefinido a USB, chunks de 1 minuto (uso típico campo sin PC, mono)
 python3 /root/scripts_campo/capturar_stream.py --condicion reposo
 
 # 2 horas a USB con chunks de 10 minutos
 python3 /root/scripts_campo/capturar_stream.py \
   --condicion con_arena --duracion_total 120 --duracion_chunk 10
+
+# Dual, 2 horas a USB, chunks de 10 minutos, decimacion segura
+python3 /root/scripts_campo/capturar_stream.py \
+  --condicion con_arena --canales 2 --decimacion 64 \
+  --duracion_total 120 --duracion_chunk 10
 
 # Directo a la PC por gateway, loop indefinido
 python3 /root/scripts_campo/capturar_stream.py \
@@ -275,9 +356,15 @@ la sesión muerta hasta que alguien la note. Si el script termina limpio
 relanza — esos casos son intencionales, no un crash.
 
 ```bash
+# Mono
 bash /root/scripts_campo_comun/relanzar_captura.sh \
   /root/scripts_campo/capturar_stream.py \
   --condicion reposo --decimacion 32 --duracion_chunk 1 --directorio /mnt/usb
+
+# Dual
+bash /root/scripts_campo_comun/relanzar_captura.sh \
+  /root/scripts_campo/capturar_stream.py \
+  --condicion reposo --canales 2 --decimacion 64 --duracion_chunk 1 --directorio /mnt/usb
 ```
 
 Cada relanzamiento arranca una **sesión nueva** (`session_ts` y chunk 0001
@@ -290,10 +377,10 @@ frío). Si se supera el máximo, el wrapper termina con error — revisar
 
 ### Lo que se ve mientras corre
 
-**Modo USB:**
+**Modo USB, mono:**
 
 ```
-=== CAPTURA CAMPO — SD intermedia + USB destino ===
+=== CAPTURA CAMPO (1 canal) — SD intermedia + USB destino ===
   condicion  : reposo
   decimacion : 32  →  fs = 3.9062 MHz
   chunk      : 1.0 min  (234,375,000 muestras | 469 MB)
@@ -308,10 +395,24 @@ frío). Si se supera el máximo, el wrapper termina con error — revisar
   [USB] chunk 0001 → campo_reposo_20260630_141907_0001.bin  (469 MB en 97s | 4.9 MB/s)
 ```
 
+**Modo USB, dual:**
+
+```
+=== CAPTURA CAMPO (2 canales) — SD intermedia + USB destino ===
+  condicion  : reposo
+  decimacion : 64  →  fs = 1.9531 MHz por canal (3.9062 MHz combinado)
+  chunk      : 1.0 min  (117,187,500 muestras/canal | 469 MB)
+  destino    : /mnt/usb/stream_adc
+  total      : indefinido  (Ctrl+C para detener)
+
+--- Chunk 0001 | USB 6.18 GB libres ---
+  [SD] campo_reposo_20260703_090000_0001.bin  (60.0s | 61.2s reloj | 98% efic | 469 MB)
+```
+
 **Modo RED:**
 
 ```
-=== CAPTURA CAMPO — SD intermedia + RED destino ===
+=== CAPTURA CAMPO (1 canal) — SD intermedia + RED destino ===
   condicion  : reposo
   decimacion : 32  →  fs = 3.9062 MHz
   chunk      : 1.0 min  (234,375,000 muestras | 469 MB)
@@ -338,24 +439,25 @@ frío). Si se supera el máximo, el wrapper termina con error — revisar
 
 ```
 /mnt/usb/stream_adc/
-  session_info.json                        ← parámetros de la sesión (leer primero)
-  campo_reposo_20260630_134042_0001.bin    ← muestras CH1, int16 raw
+  session_reposo_20260630_134042_info.json  ← parámetros de la sesión (leer primero)
+  campo_reposo_20260630_134042_0001.bin     ← muestras (mono: CH1 | dual: CH1+CH2 intercalado)
   campo_reposo_20260630_135042_0002.bin
   ...
 ```
 
-**Modo RED** — los archivos llegan directamente a la PC en `--pc_ruta`:
+**Modo RED** — los archivos llegan directamente a la PC en `--pc_ruta`.
 
-```
-/home/facu-edge/datos_campo/
-  session_info.json
-  campo_reposo_20260630_145328_0001.bin
-  campo_reposo_20260630_145429_0002.bin
-  ...
-```
+**Formato `.bin`:** int16 little-endian, sin header.
+- Mono: muestras secuenciales del Canal 1.
+- Dual: muestras intercaladas por paridad (`datos[1::2]` = CH1 codo, `datos[0::2]` = CH2
+  referencia — mapeo confirmado por golpe de cable, pendiente re-confirmar con sensor
+  real puesto, ver "Historial de desarrollo dual" al final).
 
-**Formato `.bin`:** int16 little-endian, muestras secuenciales del Canal 1, sin header.  
 **No abrir con un editor de texto** — son datos binarios.
+
+**JSON de sesión:** mismo nombre y ubicación para mono y dual — el campo `"canales": 1`
+o `"canales": 2` adentro indica cuál es. Con `"canales": 2` además incluye un bloque
+`mapeo_canales` con la posición de cada canal y la advertencia de reconfirmarlo.
 
 ---
 
@@ -366,8 +468,7 @@ propósito — así sobreviven si el storage externo se desconecta a mitad de se
 
 ```
 /root/logs_campo/
-  log_campo_reposo_20260702_183536.txt        ← una por sesión (mono usa prefijo "campo", dual "dual")
-  log_dual_reposo_20260702_183644.txt
+  log_campo_reposo_20260702_183536.txt        ← una por sesión, mono o dual (mismo prefijo "campo")
   crash_campo_reposo_20260702_183536_0007.txt ← solo aparece si la sesion crasheo, uno por crash
 ```
 
@@ -393,20 +494,22 @@ todo lo que antes había que ir a buscar a mano por SSH.
 
 ### Tamaño de archivos
 
-| Decimación | fs | Chunk 1 min | Chunk 10 min |
+| Decimación | fs (1 canal) | Chunk 1 min (1 canal) | Chunk 1 min (2 canales) |
 |---|---|---|---|
-| 32 | 3.906 MHz | ~469 MB | ~4.7 GB |
-| 64 | 1.953 MHz | ~235 MB | ~2.4 GB |
+| 32 | 3.906 MHz | ~469 MB | ~938 MB (no recomendado, pierde muestras) |
+| 64 | 1.953 MHz | ~235 MB | ~469 MB (recomendado para dual) |
 
-### Capacidad de storage
+Con dec=64 dual, el combinado de los 2 canales pesa lo mismo que 1 canal a dec=32 en mono.
 
-| Storage | Capacidad útil | Chunks de 1 min (dec=32) |
+### Capacidad de storage (1 canal, dec=32 — para dual a dec=64 son los mismos numeros)
+
+| Storage | Capacidad útil | Chunks de 1 min |
 |---|---|---|
 | Pendrive 8 GB | ~7.5 GB | ~16 chunks (~16 min) |
 | HDD 500 GB | ~500 GB | ~1.065 chunks (~17.7 hs) |
 | HDD 1 TB | ~1 TB | ~2.130 chunks (~35.5 hs) |
 
-### Velocidades de transferencia medidas (esta placa, dec=32, chunk=1min)
+### Velocidades de transferencia medidas (esta placa, dec=32 1 canal, chunk=1min)
 
 | Destino | Velocidad medida | Tiempo transfer / chunk | Espera entre chunks |
 |---|---|---|---|
@@ -429,21 +532,25 @@ la SD acumula chunks no transferidos a un ritmo de ~130 MB por chunk capturado.
 **Para sesiones más largas:** usar modo gateway (si la red da >7.8 MB/s sostenido, no acumula)
 o hacer pausas entre bloques para que la SD drene.
 
-**Fórmula:** `limite_min = SD_libre_MB / 130 * 1`  (chunks de 1 min, dec=32)
+**Fórmula:** `limite_min = SD_libre_MB / 130 * 1`  (chunks de 1 min, dec=32, 1 canal)
 
 ---
 
 ## Revisar los archivos en la PC
 
+`revisar.py` detecta automáticamente si cada archivo es mono o dual leyendo el JSON de
+sesión — no hace falta indicarlo. Si el lote tiene de los dos tipos, se muestran en tablas
+separadas.
+
 ```bash
-# Revisar todo el directorio (USB o red)
+# Revisar todo el directorio (USB o red) — mono y/o dual
 .venv/bin/python3 analisis/revisar.py /ruta/al/directorio/stream_adc/
 
 # Revisar archivos específicos
 .venv/bin/python3 analisis/revisar.py campo_reposo_*.bin
 ```
 
-Salida de ejemplo:
+Salida de ejemplo (mono):
 
 ```
 archivo                                     cond        chunk   dur     kurt   crest   fa%     MB   deteccion
@@ -451,15 +558,25 @@ campo_reposo_20260630_134042_0001.bin       reposo          1  1.0m      3.1    
 campo_con_arena_20260630_150000_0001.bin    con_arena       1  1.0m    412.5   101.8  68.0%  469.0  *** ARENA ***
 ```
 
+Con capturas dual en el lote, `revisar.py` agrega ademas metricas cruzadas por canal:
+kurtosis por canal (k1/k2), su diferencia (dk = k1-k2), fraccion_activa por canal
+(fa1%/fa2%) y rms_ratio (CH1/CH2) — usadas para separar arena localizada de ruido comun
+a ambos sensores.
+
 ### Leer un archivo .bin manualmente en Python
 
 ```python
 import numpy as np, json
 
-info  = json.load(open('/ruta/al/directorio/session_info.json'))
-datos = np.fromfile('campo_reposo_20260630_134042_0001.bin', dtype='<i2')
-fs    = info['fs_hz']          # ej: 3906250.0
-volts = datos * (20.0 / 32767) # escala aproximada ±20V
+info  = json.load(open('/ruta/al/directorio/session_reposo_20260630_134042_info.json'))
+canales = info.get('canales', 1)
+raw = np.fromfile('campo_reposo_20260630_134042_0001.bin', dtype='<i2')
+
+if canales == 1:
+    volts = raw * (20.0 / 32767)   # escala aproximada ±20V
+else:
+    ch1 = raw[1::2] * (20.0 / 32767)   # codo
+    ch2 = raw[0::2] * (20.0 / 32767)   # referencia
 ```
 
 ---
@@ -529,8 +646,9 @@ Si el servicio no existe (placa reflasheada), reinstalar siguiendo la sección "
 
 ### Espacio insuficiente en USB
 
-El script para automáticamente cuando quedan menos de 500 MB libres e imprime un mensaje.
-Montar un storage más grande o borrar capturas ya copiadas a la PC.
+El script para automáticamente cuando quedan menos de 500 MB × `--canales` libres e
+imprime un mensaje (1 GB con `--canales 2`). Montar un storage más grande o borrar
+capturas ya copiadas a la PC.
 
 ### El USB no aparece con lsblk
 
@@ -551,10 +669,11 @@ mount /dev/sda1 /mnt/usb
 
 | Componente | Detalle |
 |---|---|
-| Sensor | Vallen VS150-RI (100–450 kHz, preamp 40 dB) |
-| ADC | Red Pitaya STEMlab 125-14 (125 MHz, 14 bits) |
+| Sensor (medición, IN1) | Vallen VS150-RI (100–450 kHz, preamp 40 dB) |
+| Sensor (referencia, IN2 — solo dual) | Vallen VS150-RI, mismo modelo |
+| ADC | Red Pitaya STEMlab 125-14 (125 MHz, 14 bits, 2 canales sincrónicos) |
 | Jumper | HV → rango ±20 V |
-| Attenuator config | `A_1_20` |
+| Attenuator config | `A_1_20` (ambos canales en dual) |
 | Acceso SSH | `root@<IP_PLACA>` / pass: `edge1234` (ver sección de IPs) |
 | Storage campo | USB/HDD externo en `/mnt/usb` |
 
@@ -562,7 +681,8 @@ mount /dev/sda1 /mnt/usb
 
 ## Script alternativo: HDF5 (capturar_campo.py)
 
-Si necesitás archivos auto-descriptos sin depender de `session_info.json`:
+Si necesitás archivos auto-descriptos sin depender de `session_info.json`. Solo soporta
+mono (1 canal).
 
 ```bash
 PYTHONPATH=/opt/redpitaya/lib/python \
@@ -574,20 +694,83 @@ PYTHONPATH=/opt/redpitaya/lib/python \
 |---|---|---|
 | Eficiencia | **98%** | 54% |
 | Formato | raw int16 (.bin) | float32 HDF5 (.h5) |
-| Tamaño/min (dec=32) | **~469 MB** | ~940 MB |
-| Metadata | `session_info.json` aparte | dentro del archivo |
+| Canales | 1 o 2 | solo 1 |
+| Tamaño/min (dec=32, 1 canal) | **~469 MB** | ~940 MB |
+| Metadata | `session_*_info.json` aparte | dentro del archivo |
 | Modos destino | USB o RED (scp) | USB solo |
 
 ---
 
-## Estado del proyecto (junio 2026)
+## Historial de desarrollo dual (hallazgos empíricos, no operativo día a día)
 
-- [x] Captura via streaming FILE mode — 97–99% eficiencia, 0 muestras perdidas
+Migración de la captura dual desde la librería `rp` vieja (HDF5, ~54% eficiencia,
+`test_dual_adc.py`/`capturar_dual.py`, descartados) al esquema de streaming FILE mode,
+y su unificación con el script mono. Placa conectada por link directo (10.42.0.180)
+durante las pruebas, salvo que se indique otra cosa.
+
+**Verificación del doble ADC (2026-07-01):** confirmado con `probar_dual_stream.py`
+(captura corta de solo lectura, no mueve ni borra nada del USB/red, sirve para
+investigar el formato de salida antes de confiar en él).
+
+**Hallazgos:**
+
+1. **Un solo archivo intercalado**, no dos archivos separados por canal. Confirmado con
+   un archivo de prueba: el tamaño coincide con "2 canales intercalados" (78.16 MB vs
+   78.125 MB esperados a dec=32, 5s), y la separación por paridad (`datos[0::2]` /
+   `datos[1::2]`) da estadisticas estables (std constante) en todo el archivo. La
+   documentación oficial de Red Pitaya no especifica esto ("Streaming always creates
+   three files" por sesión, no por canal) — se resolvió empíricamente.
+
+2. **Mapeo de canales confirmado por golpe físico** (cable IN1 sin sensor conectado,
+   ambas entradas al aire, 2026-07-01 15:06 UTC-3): posiciones **impares**
+   (`datos[1::2]`) = CH1 (codo), posiciones **pares** (`datos[0::2]`) = CH2
+   (referencia). El std de CH1 subió de 42.7 (baseline) a picos de 300-410 en los
+   momentos irregulares del golpe; CH2 se mantuvo plano. **Re-confirmar este mapeo con
+   el sensor VS150-RI puesto** — la prueba se hizo golpeando el cable, no un transductor
+   real (ver bloqueante en "Sensor de referencia" al principio de este documento).
+
+3. **Entradas flotantes generan artefacto periódico** — con ambas entradas al aire, CH2
+   mostró un valor idéntico repetido exactamente cada ~65.631 muestras (~30 Hz), sin
+   relación con eventos reales (un evento físico no repite el mismo valor bit a bit). Es
+   ruido de entrada sin terminar, mismo fenómeno que el "reposo contaminado" de la
+   prueba de campo del 30/06. No es un bug — hay que tenerlo presente al interpretar
+   capturas de banco sin sensor conectado.
+
+4. **dec=32 con los 2 canales activos pierde muestras de verdad** — ver tabla en
+   "Decimación segura con 2 canales" más arriba.
+
+5. **Unificación con mono (2026-07-03):** `capturar_dual_stream.py` y
+   `capturar_campo_stream.py` compartían ~80% del código fuera de `campo_common.py` —
+   se unificaron en `capturar_stream.py --canales 1|2`. Mismo criterio para
+   `revisar_campo.py`/`revisar_dual.py` (~55% duplicado) → `revisar.py` único, que
+   detecta canales por el JSON. Los `.bin`/JSON de salida pasaron a usar siempre el
+   prefijo `campo_`/`session_..._info.json` (antes dual usaba `dual_`/`session_dual_`) —
+   el campo `"canales"` adentro del JSON es lo que distingue, no el nombre de archivo.
+   Un archivo de prueba de banco viejo con el prefijo `dual_` (10s, entradas al aire,
+   01/07) quedó sin poder re-analizarse con `revisar.py` nuevo — aceptado porque no era
+   dato real:
+
+   > Probado en su momento con esa captura de 10s (entradas al aire): separó los
+   > canales bien y el resultado fue coherente — k2 (CH2, flotante) dio kurtosis 9266 y
+   > fa2%=100% por el artefacto periódico ya documentado (falso positivo esperado, no
+   > arena); k1 se mantuvo en baseline (~3) porque no hubo golpe durante esa captura.
+
+**Prueba mecánica del script dual (2026-07-01):** 3 chunks de ~20s a dec=64, modo USB,
+94-97% eficiencia, sin errores, JSON y move a USB correctos. Con las entradas al aire,
+no es dato válido — solo valida que el script funciona.
+
+---
+
+## Estado del proyecto (julio 2026)
+
+- [x] Captura via streaming FILE mode — 97–99% eficiencia, 0 muestras perdidas (mono y dual a dec=64)
 - [x] SD interna como buffer intermedio (evita cuello de botella del USB)
 - [x] Modo USB — move en background mientras captura el siguiente chunk
 - [x] Modo RED via gateway — scp directo a PC (6–15 MB/s)
-- [x] Modo RED via link directo RJ45 — sin router, 5.6 MB/s concurrente, límite ~2.9 h
+- [x] Modo RED via link directo RJ45 — sin router, 5.6 MB/s concurrente, límite ~2.9 h (1 canal)
 - [x] Librería `rpsa_client` con persistencia automática vía systemd (`rpsa-lib.service`)
 - [x] Loop continuo con Ctrl+C limpio, chequeo de espacio, chunks numerados
-- [x] Revisión rápida en PC (`revisar.py`) para .bin
+- [x] Captura dual (`--canales 2`) unificada con mono en un solo script (2026-07-03)
+- [x] Revisión rápida en PC (`revisar.py`, mono y dual unificados) para .bin
+- [ ] Reconfirmar mapeo de canales y ausencia de artefactos con sensores VS150-RI reales puestos en dual — **bloqueante para campo real con dual**
 - [ ] Análisis post-campo con métricas completas (kurtosis, espectro, clasificación)
