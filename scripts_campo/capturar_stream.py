@@ -373,6 +373,16 @@ def main():
                 libre_sd = shutil.disk_usage(STREAM_DIR).free
                 espacio_label = f'SD {libre_sd/1e9:.2f} GB libres'
             cc.log('INFO', f'--- Chunk {chunk_num:04d} | {espacio_label} ---')
+
+            # Rechequear que el streaming-server siga vivo antes de cada chunk
+            # (no solo antes del primero) — si crasheo a mitad de un chunk
+            # anterior y quedo un proceso zombie (sin cmdline, pgrep -f no lo
+            # matchea), esto lo detecta y lo relanza antes de intentar
+            # transmitir contra un servidor que ya no existe. Ver hallazgo
+            # 2026-07-06: sin este rechequeo, la sesion queda colgada el
+            # resto del tiempo sin capturar nada y sin ningun error visible.
+            cc.asegurar_servidor('/tmp/sstream_campo.log')
+
             secs, archivo_sd = _capturar_chunk(
                 client, n, fs_ef, chunk_num, args.condicion, session_ts, args.canales, log_evento)
             tiempo_capturado += secs
