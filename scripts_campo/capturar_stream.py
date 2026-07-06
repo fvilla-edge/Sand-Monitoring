@@ -374,21 +374,22 @@ def main():
                 espacio_label = f'SD {libre_sd/1e9:.2f} GB libres'
             cc.log('INFO', f'--- Chunk {chunk_num:04d} | {espacio_label} ---')
 
-            # Rechequear que el streaming-server siga vivo antes de cada chunk
-            # (no solo antes del primero) — si crasheo a mitad de un chunk
-            # anterior y quedo un proceso zombie (sin cmdline, pgrep -f no lo
-            # matchea), esto lo detecta y lo relanza antes de intentar
-            # transmitir contra un servidor que ya no existe. Ver hallazgo
-            # 2026-07-06: sin este rechequeo, la sesion queda colgada el
-            # resto del tiempo sin capturar nada y sin ningun error visible.
-            cc.asegurar_servidor('/tmp/sstream_campo.log')
-
             secs, archivo_sd = _capturar_chunk(
                 client, n, fs_ef, chunk_num, args.condicion, session_ts, args.canales, log_evento)
             tiempo_capturado += secs
 
-            # Reiniciar el cliente para el proximo chunk (mitigacion Bug 1)
+            # Reiniciar el cliente para el proximo chunk (mitigacion Bug 1).
+            # Rechequear el streaming-server ANTES de reconectar, no solo
+            # antes del primer chunk — si crasheo durante el chunk que
+            # recien termino (zombie, sin cmdline, pgrep -f no lo matchea),
+            # esto lo detecta y lo relanza antes de que _nuevo_cliente()
+            # intente conectarse contra un servidor que ya no existe.
+            # Ver hallazgo 2026-07-06: con el chequeo puesto antes de
+            # _capturar_chunk en vez de aca, _nuevo_cliente() explotaba
+            # igual (RuntimeError sin capturar) porque la reconexion pasa
+            # ANTES del proximo chequeo, no despues.
             _cerrar_cliente(client)
+            cc.asegurar_servidor('/tmp/sstream_campo.log')
             client = _nuevo_cliente(args)
             cc.log('INFO', '  [cliente reiniciado]')
 
