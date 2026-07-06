@@ -14,10 +14,13 @@ Formato de salida con 2 canales (--canales 2): raw int16 little-endian,
 INTERCALADO por muestra (CH_par, CH_impar, CH_par, CH_impar, ...) en un solo
 archivo — asi es como el streaming-server escribe cuando los dos canales
 estan activos, no es algo configurable:
-    posiciones IMPARES (indices 1,3,5,...) = CH1 (IN1, sensor codo)
-    posiciones PARES   (indices 0,2,4,...) = CH2 (IN2, sensor referencia)
-Este mapeo hay que re-confirmarlo con el sensor VS150-RI realmente puesto —
-la prueba se hizo golpeando el cable sin transductor.
+    posiciones PARES   (indices 0,2,4,...) = CH1 (IN1, sensor codo)
+    posiciones IMPARES (indices 1,3,5,...) = CH2 (IN2, sensor referencia)
+Mapeo corregido 2026-07-03: el mapeo original (golpe fisico en el cable,
+2026-07-01) estaba invertido. Se reconfirmo comparando mono (siempre IN1,
+sin ambiguedad) contra dual con el mismo cableado/decimacion. Pendiente
+reconfirmar en campo con los 2 sensores VS150-RI reales puestos (el bench
+test todavia se hizo con 1 solo sensor + 1 entrada al aire).
 
 IMPORTANTE — decimacion con 2 canales: el ancho de banda se duplica.
 Medido en esta placa: dec=32 sostenido pierde ~0.42% de muestras por canal
@@ -77,10 +80,10 @@ def _guardar_metadata(dest_dir, condicion, decimacion, fs_ef, session_ts, canale
             'descripcion':  'Muestras CH1+CH2 intercaladas por muestra, int16 little-endian, sin header',
             'canales':      2,
             'mapeo_canales': {
-                'ch1_posiciones': 'impares (indices 1,3,5,...)',
-                'ch2_posiciones': 'pares (indices 0,2,4,...)',
-                'confirmado':     'golpe fisico en cable IN1 sin sensor conectado, 2026-07-01',
-                'advertencia':    'reconfirmar mapeo con sensor VS150-RI conectado antes de usar para analisis final',
+                'ch1_posiciones': 'pares (indices 0,2,4,...)',
+                'ch2_posiciones': 'impares (indices 1,3,5,...)',
+                'confirmado':     'comparacion mono vs dual, mismo cableado/decimacion, 2026-07-03 (corrige mapeo previo por golpe de cable del 2026-07-01)',
+                'advertencia':    'reconfirmar en campo con los 2 sensores VS150-RI reales puestos antes de usar para analisis final',
             },
             'canal_ch1':     'IN1 — sensor codo (medicion)',
             'canal_ch2':     'IN2 — sensor referencia (ruido de linea)',

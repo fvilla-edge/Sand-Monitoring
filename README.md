@@ -32,8 +32,7 @@ Sand Monitoring/
 │   └── PLAN_CAMPO.md       # Guia operativa completa, mono y dual (--canales 1|2)
 ├── scripts_campo_comun/    # Codigo y supervisor compartidos (campo_common.py, relanzar_captura.sh)
 ├── analisis/               # Scripts de analisis local (corren en la PC)
-│   ├── revisar.py          # Revision rapida de capturas, mono o dual (.bin)
-│   └── espectrograma.py    # Espectrograma STFT de una captura de campo
+│   └── revisar.py          # Revision rapida de capturas, mono o dual (.bin)
 ├── capturas/               # Capturas de campo (gitignoreado)
 ├── docs/                   # Informes y roadmap
 └── COMANDOS.md             # Referencia rapida de todos los scripts y sus argumentos

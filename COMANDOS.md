@@ -80,26 +80,6 @@ es dual). No usa `argparse` — rutas posicionales.
 |---|---|
 | rutas (posicional) | Archivos `.bin` o directorios (busca `campo_*.bin` recursivamente) |
 
-### `analisis/espectrograma.py` — espectrograma STFT
-
-Genera un PNG por archivo con el espectrograma (Hann, banda del sensor marcada con
-líneas punteadas).
-
-```bash
-.venv/bin/python3 analisis/espectrograma.py /ruta/al/directorio/
-```
-
-| Argumento | Default | Descripción |
-|---|---|---|
-| `rutas` (posicional) | *obligatorio* | Archivos `.bin` o directorios con `campo_*.bin` |
-| `--nperseg` | `4096` | Puntos por ventana FFT |
-| `--overlap` | `0.5` | Fracción de solape (0–1) |
-| `--fmin` | `0` | Frecuencia mínima a graficar (Hz) |
-| `--fmax` | `600000` | Frecuencia máxima a graficar (Hz) |
-| `--inicio` | `0.0` | Segundo de inicio dentro del archivo |
-| `--duracion` | todo el archivo | Segundos a procesar desde `--inicio` |
-| `--outdir` | `analisis/outputs` | Directorio de salida |
-
 ---
 
 ## Referencias

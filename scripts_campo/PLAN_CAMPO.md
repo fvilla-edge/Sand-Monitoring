@@ -56,11 +56,12 @@ ciclo de clock — no hay offset temporal entre CH1 y CH2.
 - **Cables:** misma longitud de cable BNC posible para ambos sensores — reduce diferencia
   de ganancia.
 
-**Pendiente — bloqueante antes de usar dual en campo real:** el mapeo de canales y la
-ausencia de artefactos de entrada flotante (ver "Historial de desarrollo dual" al final
-de este documento) se confirmaron con las entradas al aire o golpeando el cable, no con
-los sensores VS150-RI reales puestos. Repetir esa confirmación antes de confiar en datos
-dual de campo.
+**Pendiente — bloqueante antes de usar dual en campo real:** el mapeo de canales
+(corregido 2026-07-03, ver "Historial de desarrollo dual" al final de este documento) y
+la ausencia de artefactos de entrada flotante se confirmaron con las entradas al aire,
+golpeando el cable, o comparando mono vs dual — nunca con los sensores VS150-RI reales
+puestos en ambos canales. Repetir esa confirmación antes de confiar en datos dual de
+campo.
 
 ---
 
@@ -296,6 +297,7 @@ python3 /root/scripts_campo/capturar_stream.py \
 | `--destino` | `usb` | Destino de los chunks: `usb` o `red` |
 | `--pc_host` | — | `usuario@ip` de la PC (solo con `--destino red`) |
 | `--pc_ruta` | — | Ruta en la PC donde guardar (solo con `--destino red`) |
+| `--verbosidad` | `completo` | `completo` (todo, con color) o `minimo` (solo warnings/errores) |
 
 ### Decimación segura con 2 canales
 
@@ -448,9 +450,9 @@ frío). Si se supera el máximo, el wrapper termina con error — revisar
 
 **Formato `.bin`:** int16 little-endian, sin header.
 - Mono: muestras secuenciales del Canal 1.
-- Dual: muestras intercaladas por paridad (`datos[1::2]` = CH1 codo, `datos[0::2]` = CH2
-  referencia — mapeo confirmado por golpe de cable, pendiente re-confirmar con sensor
-  real puesto, ver "Historial de desarrollo dual" al final).
+- Dual: muestras intercaladas por paridad (`datos[0::2]` = CH1 codo, `datos[1::2]` = CH2
+  referencia — mapeo corregido 2026-07-03, pendiente re-confirmar con los 2 sensores
+  reales puestos, ver "Historial de desarrollo dual" al final).
 
 **No abrir con un editor de texto** — son datos binarios.
 
@@ -574,8 +576,8 @@ raw = np.fromfile('campo_reposo_20260630_134042_0001.bin', dtype='<i2')
 if canales == 1:
     volts = raw * (20.0 / 32767)   # escala aproximada ±20V
 else:
-    ch1 = raw[1::2] * (20.0 / 32767)   # codo
-    ch2 = raw[0::2] * (20.0 / 32767)   # referencia
+    ch1 = raw[0::2] * (20.0 / 32767)   # codo
+    ch2 = raw[1::2] * (20.0 / 32767)   # referencia
 ```
 
 ---
@@ -702,9 +704,17 @@ investigar el formato de salida antes de confiar en él).
    ambas entradas al aire, 2026-07-01 15:06 UTC-3): posiciones **impares**
    (`datos[1::2]`) = CH1 (codo), posiciones **pares** (`datos[0::2]`) = CH2
    (referencia). El std de CH1 subió de 42.7 (baseline) a picos de 300-410 en los
-   momentos irregulares del golpe; CH2 se mantuvo plano. **Re-confirmar este mapeo con
-   el sensor VS150-RI puesto** — la prueba se hizo golpeando el cable, no un transductor
-   real (ver bloqueante en "Sensor de referencia" al principio de este documento).
+   momentos irregulares del golpe; CH2 se mantuvo plano.
+
+   **Corrección (2026-07-03):** este mapeo estaba invertido. Con el cableado conocido
+   con certeza (IN1 al aire, único sensor real en IN2), se comparó mono (siempre IN1,
+   sin ambigüedad) contra dual con el mismo cableado/decimación: el canal par dio
+   kurtosis en el mismo orden de magnitud que el mono (miles, fa%=100%), el impar dio
+   valores de un solo dígito. Mapeo correcto: **pares (`datos[0::2]`) = CH1 (IN1,
+   codo)**, **impares (`datos[1::2]`) = CH2 (IN2, referencia)**. Sigue **pendiente
+   reconfirmar con los 2 sensores VS150-RI reales puestos** — este método de banco
+   todavía usó 1 solo sensor + 1 entrada al aire (ver bloqueante en "Sensor de
+   referencia" al principio de este documento).
 
 3. **Entradas flotantes generan artefacto periódico** — con ambas entradas al aire, CH2
    mostró un valor idéntico repetido exactamente cada ~65.631 muestras (~30 Hz), sin
@@ -749,5 +759,6 @@ no es dato válido — solo valida que el script funciona.
 - [x] Loop continuo con Ctrl+C limpio, chequeo de espacio, chunks numerados
 - [x] Captura dual (`--canales 2`) unificada con mono en un solo script (2026-07-03)
 - [x] Revisión rápida en PC (`revisar.py`, mono y dual unificados) para .bin
-- [ ] Reconfirmar mapeo de canales y ausencia de artefactos con sensores VS150-RI reales puestos en dual — **bloqueante para campo real con dual**
+- [x] Mapeo de canales corregido por método de banco (mono vs dual, 2026-07-03) — pares=CH1/IN1, impares=CH2/IN2
+- [ ] Reconfirmar mapeo de canales y ausencia de artefactos con los 2 sensores VS150-RI reales puestos en dual — **bloqueante para campo real con dual**
 - [ ] Análisis post-campo con métricas completas (kurtosis, espectro, clasificación)
