@@ -16,3 +16,6 @@ __pycache__/
 *.tmp
 *.swp
 .DS_Store
+
+
+/datos_campo/
