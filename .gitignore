@@ -1,9 +1,6 @@
 # Entorno virtual Python
 .venv/
 
-# Capturas HDF5 (archivos grandes, no van en git)
-capturas/
-
 # Outputs generados por el analizador
 analisis/outputs/
 
@@ -16,6 +13,5 @@ __pycache__/
 *.tmp
 *.swp
 .DS_Store
-
 
 /datos_campo/

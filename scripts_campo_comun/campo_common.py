@@ -4,10 +4,10 @@ campo_common.py — funciones compartidas usadas por capturar_stream.py
 (1 o 2 canales, via --canales).
 
 Todo lo que es igual entre mono y dual vive aca: arranque del
-streaming-server (con el fix del Bug 2 — reintento si aborta al iniciar),
-manejo de Ctrl+C, preparacion de directorios SD/USB, y el movido de
-archivos a USB o red. Lo que difiere (config de canales, aritmetica de
-bytes por muestra, metadata especifica) queda en cada script.
+streaming-server (con reintento si aborta al iniciar), manejo de Ctrl+C,
+preparacion de directorios SD/USB, y el movido de archivos a USB o red.
+Lo que difiere (config de canales, aritmetica de bytes por muestra,
+metadata especifica) queda en cada script.
 
 Requiere que el script que importa este modulo haya insertado antes en
 sys.path el directorio de la libreria streaming
@@ -55,11 +55,10 @@ _PATRONES_AWK = (
     r'no se pudo'
 )
 
-# Ruido conocido de la libreria nativa: confirmado benigno (ver memoria del
-# proyecto, "End of file" aparece en cada chunk desde 2026-07-02, nunca se
-# encontro la causa, no rompe la sesion). En consola se muestra en amarillo
-# en verbosidad completa y se suprime del todo en minima — el archivo de
-# log lo sigue guardando igual que siempre (ya matchea _PATRONES_AWK).
+# Ruido conocido de la libreria nativa, benigno (no rompe la sesion). En
+# consola se muestra en amarillo en verbosidad completa y se suprime del
+# todo en minima — el archivo de log lo sigue guardando igual (ya matchea
+# _PATRONES_AWK).
 _RUIDO_BENIGNO = r'end of file'
 
 
@@ -121,17 +120,13 @@ def asegurar_servidor(log_path, max_intentos=3):
     """
     Carga bitstream stream_app e inicia streaming-server si no corre.
 
-    Fix Bug 2 (2026-07-02): el streaming-server puede abortar (SIGABRT)
-    casi al instante de arrancar si recibe comandos antes de que su
-    "register controller" termine de inicializarse — un sleep fijo no
-    garantiza que ya este listo. Se verifica que el proceso siga vivo
-    unos segundos despues de lanzarlo y, si murio, se reintenta el
-    bitstream+arranque desde cero.
+    El streaming-server puede abortar (SIGABRT) casi al instante de
+    arrancar si recibe comandos antes de terminar de inicializarse — se
+    verifica que el proceso siga vivo unos segundos despues de lanzarlo y,
+    si murio, se reintenta el bitstream+arranque desde cero.
 
-    Nota: si ya hay un streaming-server corriendo (pgrep positivo), se
-    retorna de inmediato SIN pasar por este chequeo — si ese server
-    preexistente esta en mal estado (mismo bug), el crash va a pasar
-    igual en el primer startStreaming(), fuera del alcance de este fix.
+    Si ya hay un streaming-server corriendo (pgrep positivo), se retorna
+    de inmediato sin pasar por este chequeo.
     """
     r = subprocess.run(['pgrep', '-f', 'streaming-server'], capture_output=True)
     if r.returncode == 0:
@@ -208,17 +203,15 @@ def id_dispositivo(directorio):
 def verificar_usb(directorio, dev_id_esperado):
     """
     Chequea que el storage externo en `directorio` siga siendo el mismo
-    dispositivo y siga aceptando escritura. Cubre los dos sintomas
-    vistos en la desconexion del 02/07/2026: el USB reaparecio como un
-    device node distinto (sda1 -> sdb1, detectado por cambio de st_dev)
-    y el kernel lo remonto automaticamente a solo lectura tras abortar
-    el journal ext4 (detectado con una escritura de prueba — st_dev
-    solo no lo distingue, un remontado ro no cambia el numero de
-    dispositivo).
+    dispositivo y siga aceptando escritura. Cubre dos sintomas de una
+    desconexion: el USB reaparece como un device node distinto (sda1 ->
+    sdb1, detectado por cambio de st_dev) y el kernel lo remonta a solo
+    lectura tras abortar el journal ext4 (detectado con una escritura de
+    prueba — un remontado ro no cambia st_dev, hace falta escribir para
+    notarlo).
 
     Devuelve None si todo esta bien, o un string con el motivo si algo
-    cambio (para loguearlo y frenar la sesion antes de que la captura
-    siguiente degrade en cascada, como paso esa vez).
+    cambio (para loguearlo y frenar la sesion antes de perder datos).
     """
     try:
         st = os.stat(directorio)
@@ -256,49 +249,31 @@ def activar_log_archivo(prefix, condicion, session_ts):
     La consola sigue mostrando TODO igual que siempre. Al archivo en
     LOG_DIR solo se escriben las lineas que matchean _PATRONES_AWK
     (errores, warnings marcados "[!]", firmas de crash) — no el log
-    completo linea por linea, para no acumular ruido en sesiones largas
-    (decision del usuario, 2026-07-02: "prefiero guardar datos que
-    realmente nos digan cosas... pero no todo").
+    completo linea por linea, para no acumular ruido en sesiones largas.
 
     Se filtra a nivel de file descriptor (dup2 hacia un `awk` externo),
     no reasignando sys.stdout, porque parte de lo interesante (ej.
     "Error: ... End of file", "Can't start ADC on remote machines") lo
     imprime directo la libreria C++ nativa sin pasar por Python —
-    sys.stdout no lo veria.
-
-    Se usa un proceso `awk` separado en vez de un thread Python interno
-    (que fue el primer intento): un thread daemon puede perder las
-    ultimas lineas bufferizadas justo cuando el proceso principal sale
-    (el thread muere junto con el proceso antes de terminar de leer el
-    pipe). `awk`, al ser un proceso del sistema operativo aparte, sigue
-    vivo el tiempo necesario para vaciar el pipe aunque el nuestro ya
-    haya terminado — probado localmente, sin esto se perdian lineas.
+    sys.stdout no lo veria. Se usa un proceso `awk` separado en vez de un
+    thread Python interno porque un thread daemon puede morir con el
+    proceso principal antes de vaciar el pipe; `awk`, al ser un proceso
+    aparte, sigue vivo lo necesario para no perder las ultimas lineas.
 
     Devuelve (log_path, log_evento) — usar log_evento(mensaje) para
-    forzar al log algo que no tiene por que matchear _PATRONES_AWK (ej.
-    encabezado de la sesion, eficiencia baja) pero que conviene guardar
-    igual porque ya lo sabemos por codigo, no hay que adivinarlo del
-    texto impreso.
+    forzar al log algo que no matchea _PATRONES_AWK (ej. encabezado de
+    sesion, eficiencia baja) pero conviene guardar igual porque ya se
+    sabe por codigo.
 
-    LOG_DIR vive en la SD interna, no en el USB/SSD de campo, para que
-    el log sobreviva si el storage externo se desconecta a mitad de
-    sesion (ver desconexion USB del 02/07/2026 en la memoria del
-    proyecto).
+    LOG_DIR vive en la SD interna, no en el USB/SSD de campo, para que el
+    log sobreviva si el storage externo se desconecta a mitad de sesion.
 
-    Nota color (2026-07-03): las lineas que pasan por log() pueden venir
-    con codigos ANSI (para la terminal). El awk de abajo les saca el
-    color (`gsub`) ANTES de matchear y guardar — la terminal recibe $0
-    tal cual (con color), el archivo solo recibe la version sin color.
-    Sin este gsub, un [!] coloreado quedaria en el archivo con los
-    codigos ANSI crudos, ensuciando un log pensado para texto plano.
-
-    Nota ruido benigno (2026-07-03): las lineas que matchean
-    _RUIDO_BENIGNO (ej. "End of file", ver esa constante) se manejan
-    aparte del resto — en vez del passthrough normal, se recolorean en
-    amarillo (si hay TTY) y se suprimen del todo en verbosidad minima.
-    El color/supresion se decide en Python (via _es_tty/_verbosidad) y
-    se embebe como texto fijo en el programa de awk al construirlo, asi
-    que awk no necesita saber nada de verbosidad ni de TTY.
+    Las lineas de log() pueden traer codigos ANSI (color de terminal); el
+    awk de abajo se los saca (`gsub`) antes de matchear y guardar — la
+    terminal recibe la linea con color, el archivo solo texto plano.
+    Las lineas que matchean _RUIDO_BENIGNO se manejan aparte: se
+    recolorean en amarillo (si hay TTY) y se suprimen del todo en
+    verbosidad minima, sin afectar si van al archivo de log.
     """
     os.makedirs(LOG_DIR, exist_ok=True)
     log_path = os.path.join(LOG_DIR, f'log_{prefix}_{condicion}_{session_ts}.txt')

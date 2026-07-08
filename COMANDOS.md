@@ -60,6 +60,12 @@ Primer argumento: ruta del script de captura. El resto se pasa tal cual a ese sc
 `--canales 2`). Constantes internas fijas: `MAX_REINTENTOS=10`, 5s de espera entre
 reintentos, mata `streaming-server` residual antes de cada reintento.
 
+### `scripts_campo/repro_in1_file_bug.py` — referencia
+
+Script mínimo de reproducción enviado a Red Pitaya para un issue ya resuelto (el formato
+`.bin` tiene headers, no es raw — ver `analisis/revisar.py`). Se conserva como referencia,
+no es parte del flujo operativo normal.
+
 ---
 
 ## Análisis (corren en la PC)

@@ -10,8 +10,8 @@
 > los umbrales de kurtosis/fracción activa que aparecen abajo son objetivos de diseño, no
 > valores medidos. Los valores reales ya medidos (campo y laboratorio) están en
 > `analisis/INTERPRETACION_RESULTADOS.md` — consultar ahí antes de calibrar nada, no acá.
-> `docs/informe_deteccion_arena.md` es la investigación bibliográfica previa (archivada,
-> banda de frecuencia genérica en vez de la real del VS150-RI).
+> `docs/archivo/informe_deteccion_arena.md` es la investigación bibliográfica previa
+> (archivada, banda de frecuencia genérica en vez de la real del VS150-RI).
 
 ---
 

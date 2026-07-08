@@ -1,35 +1,18 @@
 #!/usr/bin/env python3
 """
-Minimal reproduction script for the IN1 / FILE-mode artifact.
+Minimal reproduction script for the IN1 / FILE-mode "artifact" reported to
+Red Pitaya (github.com/RedPitaya/RedPitaya/issues/337).
 
-Symptom: with `adc_pass_mode=FILE`, channel 1 (IN1, HV attenuator) shows
-periodic bursts of a fixed out-of-range raw code, -25910 (~-15.8147 V at
-HV), even with IN1 left disconnected. The same channel is clean using
-`adc_pass_mode=NET` and clean using the classic (non-streaming, `rp`)
-acquisition API instead of the streaming one -- so this looks specific to
-the FILE-mode write path, not the analog front end.
-
-The artifact is exactly periodic in OUTPUT samples, and the period does not
-scale with adc_decimation (same period at 32 and 64) -- so the cause looks
-tied to a fixed count of post-decimation samples in the write pipeline
-(block/DMA/SD write), not to a real-time clock event on the analog side.
-However, the absolute period is NOT a universal constant: it stays
-perfectly constant across repeated captures and both decimations within one
-streaming-server run, but changes to a different (still perfectly constant)
-value after the server is restarted -- e.g. we measured 8334 samples in one
-session and 4238 in another. This points to something established once per
-server session (a buffer size, a pointer offset) rather than a fixed
-hardware period.
+RESOLVED: this is not a hardware or streaming bug. The periodic bursts this
+script detects are header bytes of the segmented .bin format being
+misread as raw samples -- see `analisis/revisar.py::_leer_canales_bin` for
+the correct parser. This script intentionally still reads the file as raw
+int16 (no header parsing) to reproduce the original symptom for reference.
 
 Run directly on the board (needs streaming-server running and the
-rpsa_client python_lib on sys.path). Only channel 1 is enabled; channel 2
-is left OFF to isolate the channel under test.
+rpsa_client python_lib on sys.path). Only channel 1 is enabled.
 
     python3 repro_in1_file_bug.py
-
-Tested against Ecosystem 3.00-e00665135 (Release_2026.1). The same
-artifact (same fixed code, same periodicity) was already present on the
-previous Ecosystem 2.07-51 before migrating.
 """
 import sys
 import os
@@ -145,11 +128,6 @@ def analyze(path):
         period = np.diff(events)
         print(f'spacing between events (samples): min={period.min()} max={period.max()} '
               f'mean={period.mean():.1f}')
-        print('  -> constant within THIS capture and independent of decimation in our tests, '
-              'but the absolute value is NOT fixed across separate streaming-server restarts '
-              '(we measured 8334 samples in one session and 4238 in another, both perfectly '
-              'constant within their own session) -- points to something tied to server/session '
-              'state rather than a hardware constant.')
 
 
 def main():

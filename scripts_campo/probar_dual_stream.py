@@ -2,7 +2,7 @@
 """
 probar_dual_stream.py — Prueba minima: modo FILE con CH1+CH2 activos.
 
-Objetivo: ver que archivos genera el streaming-server en la SD cuando
+Objetivo: ver que archivo genera el streaming-server en la SD cuando
 channel_state_1 y channel_state_2 estan ambos ON. No mueve nada a USB/red,
 no borra nada — solo lista lo que aparece en STREAM_DIR despues de una
 captura corta.
@@ -57,51 +57,54 @@ def main():
 
     _asegurar_servidor()
 
-    # Limpiar SD de archivos previos de prueba/campo para que la lista final sea clara
     print(f'\n  Contenido de {STREAM_DIR} ANTES de la prueba:')
     antes = set(os.listdir(STREAM_DIR)) if os.path.isdir(STREAM_DIR) else set()
     for f in sorted(antes):
         print(f'    {f}  ({os.path.getsize(os.path.join(STREAM_DIR, f))/1e6:.1f} MB)')
 
-    client = streaming.ADCStreamClient()
-    client.setVerbose(False)
-    if not client.connect():
-        sys.exit('ERROR: no se pudo conectar al streaming-server')
-
-    client.sendConfig('adc_pass_mode',        'FILE')
-    client.sendConfig('adc_decimation',       str(args.decimacion))
-    client.sendConfig('channel_attenuator_1', 'A_1_20')
-    client.sendConfig('channel_attenuator_2', 'A_1_20')
-    client.sendConfig('channel_state_1',      'ON')
-    client.sendConfig('channel_state_2',      'ON')
-
     done  = threading.Event()
     error = [None]
 
-    class CB(streaming.ADCCallback):
-        def recievePack(self, c, n): pass
-        def connected(self, c, h):   pass
-        def disconnected(self, c, h):pass
-        def error(self, c, h, code): error[0] = f'code={code}'; done.set()
-        def stopped(self, c, h, code):           done.set()
-        def stoppedNoActiveChannels(self, c, h): error[0] = 'no-channels'; done.set()
-        def stoppedMemError(self, c, h):         error[0] = 'mem-error'; done.set()
-        def stoppedMemModify(self, c, h):        done.set()
-        def stoppedSDFull(self, c, h):           error[0] = 'sd-full'; done.set()
-        def stoppedSDDone(self, c, h):           done.set()
-        def configConnected(self, c, h):  pass
-        def configError(self, c, h, code):pass
-        def configErrorTimeout(self, c, h):pass
+    class ADC_CB(streaming.ADCCallback):
+        def receivePack(self, c, n): pass
+        def connected(self, c, h):    pass
+        def disconnected(self, c, h): pass
+        def error(self, c, h, code):  error[0] = f'code={code}'; done.set()
 
-    cb = CB()
-    client.setReciveDataFunction(cb.__disown__())
-    client.sendConfig('samples_limit_sd', str(n_muestras))
+    class Config_CB(streaming.ConfigCallback):
+        def adcServerStoppedNoActiveChannels(self, c, h): error[0] = 'no-channels'; done.set()
+        def adcServerStoppedMemError(self, c, h):         error[0] = 'mem-error'; done.set()
+        def adcServerStoppedMemModify(self, c, h):        done.set()
+        def adcServerStoppedSDFull(self, c, h):           error[0] = 'sd-full'; done.set()
+        def adcServerStoppedSDDone(self, c, h):           done.set()
+        def configError(self, c, h, code): pass
+        def configErrorTimeout(self, c, h): pass
+
+    confObj = streaming.ConfigStreamClient()
+    adcObj  = streaming.ADCStreamClient(confObj)
+    confObj.setVerbose(False)
+    adcObj.setVerbose(False)
+    if not confObj.connect():
+        sys.exit('ERROR: no se pudo conectar al streaming-server')
+
+    adc_cb = ADC_CB()
+    adcObj.setCallback(adc_cb)
+    cfg_cb = Config_CB()
+    confObj.addCallback(cfg_cb)
+
+    confObj.sendConfig('adc_pass_mode',        'FILE')
+    confObj.sendConfig('adc_decimation',       str(args.decimacion))
+    confObj.sendConfig('channel_attenuator_1', 'A_1_20')
+    confObj.sendConfig('channel_attenuator_2', 'A_1_20')
+    confObj.sendConfig('channel_state_1',      'ON')
+    confObj.sendConfig('channel_state_2',      'ON')
+    confObj.sendConfig('samples_limit_sd',     str(n_muestras))
 
     print(f'\n  Capturando {args.duracion}s a dec={args.decimacion} '
           f'(fs={fs_ef/1e6:.4f} MHz), CH1+CH2 ON...', flush=True)
 
     t0 = time.perf_counter()
-    if not client.startStreaming():
+    if not adcObj.startStreaming():
         sys.exit('ERROR: startStreaming fallo')
 
     bytes_esperados_1ch = n_muestras * 2
@@ -112,11 +115,14 @@ def main():
 
     if not completado:
         try:
-            client.stopStreaming()
+            adcObj.stopStreaming()
         except Exception:
             pass
         time.sleep(2)
         print('  [!] Timeout esperando el callback de fin — reviso igual lo que quedo en SD.')
+
+    confObj.removeCallback(cfg_cb)
+    adcObj.removeCallback()
 
     if error[0]:
         print(f'  [!] Error reportado por el server: {error[0]}')
@@ -131,10 +137,7 @@ def main():
         size = os.path.getsize(ruta)
         print(f'    {f}  ({size/1e6:.1f} MB, {size} bytes)')
 
-    print(f'\n  Bytes esperados por canal (1ch): {bytes_esperados_1ch:,}')
-    print(f'  Bytes esperados si 2ch intercalado en 1 archivo: {bytes_esperados_1ch*2:,}')
-    print(f'  Bytes esperados si 2ch en archivos separados: {bytes_esperados_1ch:,} c/u')
-    print('\n  No se movio ni borro nada. Revisar a mano en la placa antes de repetir.')
+    print('\n  No se movio ni borro nada. Revisar con analisis/revisar.py antes de repetir.')
 
 
 if __name__ == '__main__':

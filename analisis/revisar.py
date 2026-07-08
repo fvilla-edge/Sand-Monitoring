@@ -30,18 +30,10 @@ Uso:
   .venv/bin/python3 analisis/revisar.py /mnt/usb/stream_adc/
   .venv/bin/python3 analisis/revisar.py campo_reposo_*.bin campo_con_arena_*.bin
 
-NOTA DE FORMATO (2026-07-08): el .bin del streaming-server en modo FILE NO es
-raw plano — es un tren de segmentos [header][datos canal0][datos canal1]
-[marcador fin, 12 bytes 0xFF]. Confirmado por un mantenedor de Red Pitaya en
-github.com/RedPitaya/RedPitaya/issues/337 (los "picos periodicos" que se
-venian investigando como posible defecto de hardware en IN1 eran bytes del
-header leidos como si fueran muestras). El layout exacto del header (112
-bytes, sizeCh[4] en offset 4) fue reconstruido a mano contra archivos reales
-de esta placa (Ecosystem 3.00-e00665135) porque no coincide con el struct
-`CBinInfo::BinHeader` publicado en el repo de Red Pitaya (esa version da 144
-bytes) — reversear con archivos propios en vez de confiar en el struct
-publicado si esto se repite en otra placa/ecosistema. Ver `_leer_canales_bin`
-mas abajo.
+Formato del .bin: NO es raw plano — es un tren de segmentos [header][datos
+canal0][datos canal1][marcador fin, 12 bytes 0xFF]. El tamaño de header
+varia segun firmware (112 o 144 bytes) y se autodetecta por archivo — ver
+`_leer_canales_bin` mas abajo.
 """
 import re
 import sys
@@ -60,30 +52,19 @@ FA_THRESH   = 20        # kurtosis Pearson > 20 → ventana activa
 
 V_REF = 20.0            # ±20V con jumper HV y gain A_1_20
 
-# Formato real de los .bin en modo FILE (ver nota arriba) — reconstruido
-# empiricamente, validado byte a byte (walk completo del archivo, 0
-# desajustes de marcador) contra capturas mono y dual reales.
-#
-# El tamaño de header NO es una constante unica — cambia segun el firmware:
-# los archivos de antes de la migracion a Release_2026.1 (2026-07-07, ej.
-# los del 2026-07-06) usan 112 bytes; los de 2026.1 en adelante (confirmado
-# con dos capturas frescas del 2026-07-08, mono y dual, walk limpio de punta
-# a punta en ambas) usan 144 bytes — que ademas coincide con el struct
-# `CBinInfo::BinHeader` publicado en el repo de Red Pitaya, a diferencia del
-# de 112 que no esta en ningun lado publicado. Por eso se autodetecta por
-# archivo en vez de asumir uno fijo — un mismo lote de revisar.py puede
-# mezclar capturas de antes y despues de la migracion.
+# El tamaño de header cambia segun firmware: 144 bytes en Release_2026.1 en
+# adelante (coincide con el struct oficial CBinInfo::BinHeader, w_binary.h
+# del repo Red Pitaya), 112 bytes en firmware anterior (sin struct oficial
+# publicado). Se autodetecta por archivo — un mismo lote puede mezclar
+# capturas de ambos firmwares.
 _HEADER_SIZES_CONOCIDOS = (144, 112)   # probar 144 primero (firmware vigente)
 _MARKER      = b'\xff' * 12  # fin de segmento
 _OFF_SIZE_CH = 4              # offset del array sizeCh[4] (uint32 LE) dentro del header
 
 # lostCount[4] (uint64 LE, muestras perdidas por canal) y oscRate[4] (uint64
 # LE, Hz efectivos post-decimacion) — offsets del struct oficial CBinInfo::
-# BinHeader (w_binary.h, repo Red Pitaya), validados byte a byte contra
-# capturas reales de 2026.1 el 2026-07-08. Solo existen en el header de 144
-# bytes (2026.1 en adelante) — el de 112 bytes (pre-migracion) no tiene
-# struct oficial publicado, por eso ambos quedan como None para esos archivos
-# en vez de asumir un offset no verificado.
+# BinHeader. Solo existen en el header de 144 bytes; en el de 112 (sin
+# struct publicado) quedan como None en vez de asumir un offset no verificado.
 _OFF_LOST_COUNT = 40
 _OFF_OSC_RATE   = 72
 _TOLERANCIA_OSC_RATE = 0.005   # 0.5% — margen contra redondeo de fs
@@ -113,13 +94,12 @@ def _leer_canales_bin(ruta):
     """
     Recorre el archivo segmento por segmento (header + datos + marcador) y
     devuelve (ch0, ch1, meta) — ch0/ch1 son arrays int16 con SOLO muestras
-    reales, sin los bytes de header/marcador mezclados adentro (ver nota de
-    formato arriba).
+    reales, sin los bytes de header/marcador mezclados adentro.
 
     ch0/ch1 corresponden a los canales tal cual los arma el streaming-server
-    (indice 0 = IN1, indice 1 = IN2, orden fijo — no hay interleaving por
-    muestra como se penso antes, cada canal es un bloque contiguo dentro del
-    segmento). En mono, ch1 queda vacio.
+    (indice 0 = IN1, indice 1 = IN2, orden fijo — cada canal es un bloque
+    contiguo dentro del segmento, no hay interleaving por muestra). En
+    mono, ch1 queda vacio.
 
     meta trae, si el header es de 144 bytes (2026.1+; None si es el de 112,
     ver constantes de arriba):
@@ -227,8 +207,8 @@ def _session_key_from_nombre(stem):
 
 
 def _cargar_info(ruta):
-    """Busca el JSON de sesion de `ruta`, con fallback para capturas viejas
-    (pre session_{condicion}_{ts}_info.json, ver memoria del proyecto)."""
+    """Busca el JSON de sesion de `ruta`, con fallback a session_info.json
+    para capturas viejas sin el nombre por condicion/timestamp."""
     m = re.match(r'campo_(reposo|con_arena)_(\d{8}_\d{6})_\d{4}', ruta.stem)
     info_path = None
     if m:

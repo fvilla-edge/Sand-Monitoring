@@ -2,34 +2,26 @@
 """
 capturar_stream.py — Captura continua via streaming FILE mode, 1 o 2 canales.
 
-El streaming-server escribe int16 raw a la SD interna (15 MB/s, suficiente
-para 7.8 MB/s de captura a dec=32 por canal). Cada chunk terminado se mueve
-al destino en un thread de fondo mientras ya se captura el siguiente.
-Eficiencia: ~98%.
+El streaming-server escribe a la SD interna (15 MB/s, suficiente para 7.8
+MB/s de captura a dec=32 por canal). Cada chunk terminado se mueve al
+destino (USB o red) en un thread de fondo mientras ya se captura el
+siguiente. Eficiencia tipica: ~98%.
 
-Formato de salida con 1 canal (--canales 1, default): raw int16 little-endian,
-muestras secuenciales, sin header.
+Formato del .bin: NO es raw plano — es un tren de segmentos [header]
+[datos IN1][datos IN2 si esta activo][marcador de fin, 12 bytes 0xFF],
+repetido hasta el final del archivo. Cada canal es un bloque contiguo
+dentro del segmento (IN1 siempre primero, IN2 segundo — fijo por
+construccion del formato, no depende de decimacion ni cableado). Para leer
+estos .bin usar `analisis/revisar.py::_leer_canales_bin`, no `np.fromfile`
+directo.
 
-Formato de salida con 2 canales (--canales 2): raw int16 little-endian,
-INTERCALADO por muestra (CH_par, CH_impar, CH_par, CH_impar, ...) en un solo
-archivo — asi es como el streaming-server escribe cuando los dos canales
-estan activos, no es algo configurable:
-    posiciones PARES   (indices 0,2,4,...) = CH1 (IN1, sensor codo)
-    posiciones IMPARES (indices 1,3,5,...) = CH2 (IN2, sensor referencia)
-Mapeo corregido 2026-07-03: el mapeo original (golpe fisico en el cable,
-2026-07-01) estaba invertido. Se reconfirmo comparando mono (siempre IN1,
-sin ambiguedad) contra dual con el mismo cableado/decimacion. Pendiente
-reconfirmar en campo con los 2 sensores VS150-RI reales puestos (el bench
-test todavia se hizo con 1 solo sensor + 1 entrada al aire).
-
-IMPORTANTE — decimacion con 2 canales: el ancho de banda se duplica.
-Medido en esta placa: dec=32 sostenido pierde ~0.42% de muestras por canal
-(982.068 de 233M en 60s). A dec=64 no se midio perdida. Se deja
---decimacion configurable igual que con 1 canal, pero se avisa si con 2
-canales se elige un valor que no llego a probarse sin perdidas.
+Con 2 canales el ancho de banda se duplica — usar `--decimacion 64` para
+dual (unico valor validado sin perdida sostenida). Para minimizar perdida
+de muestras en sesiones largas, usar `--duracion_chunk` lo mas grande que
+el caso de uso permita (menos transiciones de chunk = menos perdida total).
 
 Metadata en session_{condicion}_{ts}_info.json en el directorio destino
-(campo "canales": 1 o 2; el bloque "mapeo_canales" solo aparece con 2).
+(campo "canales": 1 o 2).
 
 Uso:
   python3 capturar_stream.py --condicion reposo --directorio /mnt/usb
@@ -70,23 +62,20 @@ def _guardar_metadata(dest_dir, condicion, decimacion, fs_ef, session_ts, canale
     """Escribe session_{condicion}_{ts}_info.json en el directorio destino."""
     if canales == 1:
         info = {
-            'formato':       'raw_int16_le',
-            'descripcion':   'Muestras ADC canal 1, int16 little-endian, sin header',
+            'formato':       'streaming_file_segmentado',
+            'descripcion':   'Segmentos [header][datos IN1][marcador 12B 0xFF] repetidos. '
+                              'Parsear con analisis/revisar.py::_leer_canales_bin, no como raw plano.',
             'canales':       1,
         }
     else:
         info = {
-            'formato':      'raw_int16_le_interleaved',
-            'descripcion':  'Muestras CH1+CH2 intercaladas por muestra, int16 little-endian, sin header',
+            'formato':      'streaming_file_segmentado',
+            'descripcion':  'Segmentos [header][datos IN1][datos IN2][marcador 12B 0xFF] repetidos '
+                             '(bloques contiguos por canal, no intercalado por muestra). '
+                             'Parsear con analisis/revisar.py::_leer_canales_bin, no como raw plano.',
             'canales':      2,
-            'mapeo_canales': {
-                'ch1_posiciones': 'pares (indices 0,2,4,...)',
-                'ch2_posiciones': 'impares (indices 1,3,5,...)',
-                'confirmado':     'comparacion mono vs dual, mismo cableado/decimacion, 2026-07-03 (corrige mapeo previo por golpe de cable del 2026-07-01)',
-                'advertencia':    'reconfirmar en campo con los 2 sensores VS150-RI reales puestos antes de usar para analisis final',
-            },
-            'canal_ch1':     'IN1 — sensor codo (medicion)',
-            'canal_ch2':     'IN2 — sensor referencia (ruido de linea)',
+            'canal_ch1':     'IN1 — sensor codo (medicion), siempre primer bloque del segmento',
+            'canal_ch2':     'IN2 — sensor referencia (ruido de linea), siempre segundo bloque del segmento',
         }
     info.update({
         'condicion':     condicion,
@@ -98,6 +87,7 @@ def _guardar_metadata(dest_dir, condicion, decimacion, fs_ef, session_ts, canale
         'acoplamiento':  'DC',
         'escala_voltios': '(valor_int16 / 32767.0) * 20.0  [aprox]',
         'fecha_inicio':  datetime.datetime.now().isoformat(),
+        'ecosystem':     '3.00-e00665135 (Release_2026.1)',
     })
     json_name = f'session_{condicion}_{session_ts}_info.json'
     with open(os.path.join(dest_dir, json_name), 'w') as f:
@@ -105,37 +95,45 @@ def _guardar_metadata(dest_dir, condicion, decimacion, fs_ef, session_ts, canale
     return json_name
 
 
-def _capturar_chunk(client, n_muestras, fs_ef, chunk_num, condicion, session_ts, canales, log_evento):
+def _capturar_chunk(confObj, adcObj, n_muestras, fs_ef, chunk_num, condicion, session_ts, canales, log_evento):
     """
     Dispara un chunk de n_muestras POR CANAL a SD y renombra el archivo resultante.
-    Con 2 canales el archivo real pesa 2x (interlado CH1/CH2).
     Retorna (senal_s, ruta_archivo_en_sd).
+
+    El evento de fin de chunk llega por dos vias: datos/errores de
+    transporte via ADCCallback (colgado de adcObj), y el resultado del
+    comando de parada (SD lleno, memoria, fin OK) via ConfigCallback
+    (colgado de confObj).
     """
     done  = threading.Event()
     error = [None]
 
-    class CB(streaming.ADCCallback):
-        def recievePack(self, c, n): pass
-        def connected(self, c, h):   pass
-        def disconnected(self, c, h):pass
-        def error(self, c, h, code): error[0] = f'code={code}'; done.set()
-        def stopped(self, c, h, code):           done.set()
-        def stoppedNoActiveChannels(self, c, h): error[0] = 'no-channels'; done.set()
-        def stoppedMemError(self, c, h):         error[0] = 'mem-error'; done.set()
-        def stoppedMemModify(self, c, h):        done.set()
-        def stoppedSDFull(self, c, h):           error[0] = 'sd-full'; done.set()
-        def stoppedSDDone(self, c, h):           done.set()
-        def configConnected(self, c, h):  pass
-        def configError(self, c, h, code):pass
-        def configErrorTimeout(self, c, h):pass
+    class ADC_CB(streaming.ADCCallback):
+        def receivePack(self, c, n): pass
+        def connected(self, c, h):    pass
+        def disconnected(self, c, h): pass
+        def error(self, c, h, code):  error[0] = f'code={code}'; done.set()
 
-    cb = CB()
-    client.setReciveDataFunction(cb.__disown__())
+    class Config_CB(streaming.ConfigCallback):
+        # No escuchar 'adcServerStopped' generico: se dispara como aviso de
+        # "todavia no arranco" antes del inicio real, no es el fin del chunk.
+        def adcServerStoppedNoActiveChannels(self, c, h): error[0] = 'no-channels'; done.set()
+        def adcServerStoppedMemError(self, c, h):         error[0] = 'mem-error'; done.set()
+        def adcServerStoppedMemModify(self, c, h):        done.set()
+        def adcServerStoppedSDFull(self, c, h):           error[0] = 'sd-full'; done.set()
+        def adcServerStoppedSDDone(self, c, h):           done.set()
+        def configError(self, c, h, code): pass
+        def configErrorTimeout(self, c, h): pass
 
-    client.sendConfig('samples_limit_sd', str(n_muestras))
+    adc_cb = ADC_CB()
+    adcObj.setCallback(adc_cb)
+    cfg_cb = Config_CB()
+    confObj.addCallback(cfg_cb)
+
+    confObj.sendConfig('samples_limit_sd', str(n_muestras))
 
     t0 = time.perf_counter()
-    if not client.startStreaming():
+    if not adcObj.startStreaming():
         raise RuntimeError("startStreaming fallo")
 
     # Timeout: tiempo de captura + flush a SD (15 MB/s) + margen
@@ -148,10 +146,18 @@ def _capturar_chunk(client, n_muestras, fs_ef, chunk_num, condicion, session_ts,
 
     if not completado:
         try:
-            client.stopStreaming()
+            adcObj.stopStreaming()
         except Exception:
             pass
         time.sleep(2)
+
+    # El cliente (confObj/adcObj) es unico para toda la sesion (ver
+    # _nuevo_cliente) — sacar los callbacks de este chunk antes del proximo
+    # evita que se acumulen escuchando eventos de chunks futuros.
+    # removeCallback() de ADCStreamClient no toma argumentos; el de
+    # ConfigStreamClient si.
+    confObj.removeCallback(cfg_cb)
+    adcObj.removeCallback()
 
     if error[0]:
         raise RuntimeError(f"Streaming error: {error[0]}")
@@ -192,51 +198,27 @@ def _capturar_chunk(client, n_muestras, fs_ef, chunk_num, condicion, session_ts,
 
 def _nuevo_cliente(args):
     """
-    Crea, conecta y configura un cliente streaming nuevo.
-
-    Mitigacion provisoria del Bug 1 (2026-07-02): la causa raiz confirmada
-    es una race condition del lado del streaming-server (no una fuga en el
-    cliente), asi que esto no esta confirmado que evite el crash — es un
-    experimento pedido explicitamente para ver si cambia la frecuencia del
-    segfault, mientras se espera respuesta de Red Pitaya sobre el issue.
+    Crea, conecta y configura un par confObj (ConfigStreamClient) +
+    adcObj (ADCStreamClient) — UNA VEZ por sesion, se reusa para todos los
+    chunks (recrearlo entre chunks produce un SIGSEGV al reconectar).
     """
-    client = streaming.ADCStreamClient()
-    client.setVerbose(False)
-    if not client.connect():
+    confObj = streaming.ConfigStreamClient()
+    adcObj  = streaming.ADCStreamClient(confObj)
+    confObj.setVerbose(False)
+    adcObj.setVerbose(False)
+    if not confObj.connect():
         raise RuntimeError('no se pudo conectar al streaming-server')
 
-    client.sendConfig('adc_pass_mode',        'FILE')
-    client.sendConfig('adc_decimation',       str(args.decimacion))
-    client.sendConfig('channel_attenuator_1', 'A_1_20')
-    client.sendConfig('channel_state_1',      'ON')
+    confObj.sendConfig('adc_pass_mode',        'FILE')
+    confObj.sendConfig('adc_decimation',       str(args.decimacion))
+    confObj.sendConfig('channel_attenuator_1', 'A_1_20')
+    confObj.sendConfig('channel_state_1',      'ON')
     if args.canales == 2:
-        client.sendConfig('channel_attenuator_2', 'A_1_20')
-        client.sendConfig('channel_state_2',      'ON')
+        confObj.sendConfig('channel_attenuator_2', 'A_1_20')
+        confObj.sendConfig('channel_state_2',      'ON')
     else:
-        client.sendConfig('channel_state_2',      'OFF')
-    return client
-
-
-def _cerrar_cliente(client):
-    """
-    Descarta un cliente streaming ya usado, de forma best-effort.
-
-    Al llegar aca el streaming del chunk ya termino (via evento
-    'stoppedSDDone' en el camino normal, o via stopStreaming() explicito
-    en _capturar_chunk si hubo timeout) — NO hay que volver a llamar
-    stopStreaming() aca: probado en placa (2026-07-02) que hacerlo sobre
-    una conexion que el server ya cerro del otro lado genera un
-    "Error: ... End of file" de la libreria en cada chunk (ruido, no
-    crash, pero evitable).
-
-    No se conoce con certeza la API de desconexion del binding SWIG (vive
-    solo en la placa, no hay stub de referencia en este repo), asi que
-    simplemente se suelta la referencia para que el garbage collector se
-    encargue del resto. Si en una sesion larga aparecen sockets/file
-    descriptors acumulados (distinto del segfault original), este
-    supuesto es sospechoso numero 1.
-    """
-    pass
+        confObj.sendConfig('channel_state_2',      'OFF')
+    return confObj, adcObj
 
 
 def main():
@@ -274,9 +256,7 @@ def main():
 
     if args.canales == 2 and args.decimacion not in DEC_SEGURAS_DUAL:
         cc.log('WARNING', f'\n  [!] ADVERTENCIA: decimacion={args.decimacion} con los 2 canales activos NO fue '
-                           f'validada sin perdida de muestras en esta placa.')
-        cc.log('WARNING', f'      Medido: dec=32 sostenido (60s) perdio ~0.42% de muestras por canal (982.068/233M).')
-        cc.log('WARNING', f'      Medido: dec=64 sostenido (60s) — 0 perdidas.')
+                           f'validada sin perdida de muestras — usar {sorted(DEC_SEGURAS_DUAL)} para dual.')
         cc.log('WARNING', f'      Se continua igual porque la decimacion queda a tu criterio, pero quedas avisado.\n')
 
     ESPACIO_MIN = ESPACIO_MIN_BASE * args.canales
@@ -301,7 +281,7 @@ def main():
         destino_label = f'{args.pc_host}:{args.pc_ruta}'
 
     try:
-        client = _nuevo_cliente(args)
+        confObj, adcObj = _nuevo_cliente(args)
     except RuntimeError as e:
         sys.exit(f'ERROR: {e}')
 
@@ -375,23 +355,15 @@ def main():
             cc.log('INFO', f'--- Chunk {chunk_num:04d} | {espacio_label} ---')
 
             secs, archivo_sd = _capturar_chunk(
-                client, n, fs_ef, chunk_num, args.condicion, session_ts, args.canales, log_evento)
+                confObj, adcObj, n, fs_ef, chunk_num, args.condicion, session_ts, args.canales, log_evento)
             tiempo_capturado += secs
 
-            # Reiniciar el cliente para el proximo chunk (mitigacion Bug 1).
-            # Rechequear el streaming-server ANTES de reconectar, no solo
-            # antes del primer chunk — si crasheo durante el chunk que
-            # recien termino (zombie, sin cmdline, pgrep -f no lo matchea),
-            # esto lo detecta y lo relanza antes de que _nuevo_cliente()
-            # intente conectarse contra un servidor que ya no existe.
-            # Ver hallazgo 2026-07-06: con el chequeo puesto antes de
-            # _capturar_chunk en vez de aca, _nuevo_cliente() explotaba
-            # igual (RuntimeError sin capturar) porque la reconexion pasa
-            # ANTES del proximo chequeo, no despues.
-            _cerrar_cliente(client)
-            cc.asegurar_servidor('/tmp/sstream_campo.log')
-            client = _nuevo_cliente(args)
-            cc.log('INFO', '  [cliente reiniciado]')
+            # confObj/adcObj se reusan para toda la sesion — no se reconecta
+            # entre chunks (ver _nuevo_cliente). Si el streaming-server
+            # llegara a morirse solo entre chunks, el proximo
+            # startStreaming() en _capturar_chunk va a fallar y la excepcion
+            # sube hasta el supervisor externo (relanzar_captura.sh) para
+            # reiniciar la sesion completa.
 
             # Esperar que termine el move anterior si sigue corriendo
             if move_thread and move_thread.is_alive():

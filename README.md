@@ -27,14 +27,14 @@ tuberia  →  sensor(es) VS150-RI  →  Red Pitaya (ADC)  →  captura .bin en c
 ```
 Sand Monitoring/
 ├── scripts_campo/          # Captura en campo (corren en la Red Pitaya)
-│   ├── capturar_stream.py  # Recomendado — streaming, raw .bin, ~98% eficiencia, --canales 1|2
-│   ├── probar_dual_stream.py  # Prueba de banco para mapeo de canales (2 canales)
-│   └── PLAN_CAMPO.md       # Guia operativa completa, mono y dual (--canales 1|2)
+│   ├── capturar_stream.py     # Recomendado — streaming FILE mode, ~98% eficiencia, --canales 1|2
+│   ├── probar_dual_stream.py  # Prueba de banco de solo lectura (2 canales)
+│   └── PLAN_CAMPO.md          # Guia operativa completa, mono y dual (--canales 1|2)
 ├── scripts_campo_comun/    # Codigo y supervisor compartidos (campo_common.py, relanzar_captura.sh)
 ├── analisis/               # Scripts de analisis local (corren en la PC)
 │   └── revisar.py          # Revision rapida de capturas, mono o dual (.bin)
-├── capturas/               # Capturas de campo (gitignoreado)
-├── docs/                   # Informes y roadmap
+├── datos_campo/            # Capturas de campo (gitignoreado)
+├── docs/                   # Roadmap del proyecto y notas tecnicas
 └── COMANDOS.md             # Referencia rapida de todos los scripts y sus argumentos
 ```
 
