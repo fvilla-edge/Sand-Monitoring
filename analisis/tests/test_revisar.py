@@ -25,24 +25,33 @@ import revisar as rv
 # candidato contra el mismo header crudo.
 # ---------------------------------------------------------------------------
 
-def _header_bytes(header_size, size_ch, lost_ch=None, osc_ch=None):
+def _header_bytes(header_size, size_ch, lost_ch=None, osc_ch=None, time_capture=None,
+                   sigment_length=None):
     buf = bytearray(header_size)
     for i, sc in enumerate(size_ch):
         struct.pack_into('<I', buf, rv._OFF_SIZE_CH + i * 4, sc)
     if header_size == 144:
         lost_ch = lost_ch or (0, 0, 0, 0)
         osc_ch = osc_ch or (0, 0, 0, 0)
+        time_capture = time_capture or (0, 0, 0, 0)
         for i, lc in enumerate(lost_ch):
             struct.pack_into('<Q', buf, rv._OFF_LOST_COUNT + i * 8, lc)
         for i, oc in enumerate(osc_ch):
             struct.pack_into('<Q', buf, rv._OFF_OSC_RATE + i * 8, oc)
+        for i, tc in enumerate(time_capture):
+            struct.pack_into('<q', buf, rv._OFF_TIME_CAPTURE + i * 8, tc)
+        if sigment_length is None:
+            sigment_length = sum(size_ch)
+        struct.pack_into('<I', buf, rv._OFF_SIGMENT_LENGTH, sigment_length)
     return bytes(buf)
 
 
 def _escribir_bin(ruta, header_size, segmentos):
     """segmentos: lista de dicts con:
       ch0, ch1 (opcional, default vacio): arrays int16
-      lost, osc (tuplas de 4, solo aplican si header_size==144)
+      lost, osc, time_capture (tuplas de 4, solo aplican si header_size==144)
+      sigment_length (int, default = suma de sizeCh — pasar un valor distinto
+        para simular corrupcion de ese campo)
       marcador: bytes de 12 (default 0xFF*12)
       omitir_marcador: bool — corta el archivo antes de escribir el marcador
         (simula un proceso muerto a mitad de escritura del ultimo segmento)
@@ -52,7 +61,8 @@ def _escribir_bin(ruta, header_size, segmentos):
             ch0 = np.asarray(seg['ch0'], dtype='<i2').tobytes()
             ch1 = np.asarray(seg.get('ch1', np.array([], dtype='<i2')), dtype='<i2').tobytes()
             header = _header_bytes(header_size, (len(ch0), len(ch1), 0, 0),
-                                    seg.get('lost'), seg.get('osc'))
+                                    seg.get('lost'), seg.get('osc'),
+                                    seg.get('time_capture'), seg.get('sigment_length'))
             f.write(header)
             f.write(ch0)
             f.write(ch1)
@@ -133,6 +143,40 @@ def test_leer_canales_bin_header_112_no_tiene_lost_ni_osc(tmp_path):
     assert meta['lost1'] is None
     assert meta['osc0'] is None
     assert meta['osc1'] is None
+    assert meta['dur_real_s'] is None
+
+
+def test_leer_canales_bin_dur_real_s_sin_gap(tmp_path):
+    """1000 muestras a 1000Hz (osc0) = 1s, timeCapture del 2do segmento
+    arranca exactamente 1s despues (sin perdida) -> dur_real_s coincide con
+    la duracion nominal por conteo de muestras (1000+500 muestras / 1000Hz)."""
+    seg1 = {'ch0': np.zeros(1000, dtype='<i2'), 'osc': (1000, 0, 0, 0), 'time_capture': (0, 0, 0, 0)}
+    seg2 = {'ch0': np.zeros(500, dtype='<i2'), 'time_capture': (1_000_000_000, 0, 0, 0)}
+    ruta = _escribir_bin(tmp_path / 'mono.bin', 144, [seg1, seg2])
+    _, _, meta = rv._leer_canales_bin(ruta)
+    assert meta['dur_real_s'] == pytest.approx(1.5)
+
+
+def test_leer_canales_bin_dur_real_s_incluye_gap_de_perdida(tmp_path):
+    """Si el timeCapture del 2do segmento salta mas de lo que darian las
+    muestras del 1ro (aca 2s en vez del 1s esperado por 1000 muestras a
+    1000Hz), dur_real_s refleja el gap real de tiempo -- a diferencia de
+    len(muestras)/fs, que no puede verlo porque esas muestras nunca llegaron."""
+    seg1 = {'ch0': np.zeros(1000, dtype='<i2'), 'osc': (1000, 0, 0, 0), 'time_capture': (0, 0, 0, 0)}
+    seg2 = {'ch0': np.zeros(500, dtype='<i2'), 'time_capture': (2_000_000_000, 0, 0, 0)}
+    ruta = _escribir_bin(tmp_path / 'mono.bin', 144, [seg1, seg2])
+    ch0_leido, _, meta = rv._leer_canales_bin(ruta)
+    dur_nominal_s = len(ch0_leido) / 1000
+    assert dur_nominal_s == pytest.approx(1.5)
+    assert meta['dur_real_s'] == pytest.approx(2.5)
+    assert meta['dur_real_s'] > dur_nominal_s
+
+
+def test_leer_canales_bin_sigment_length_no_coincide_avisa(tmp_path, capsys):
+    seg = {'ch0': [1, 2, 3], 'sigment_length': 999}
+    ruta = _escribir_bin(tmp_path / 'mono.bin', 144, [seg])
+    rv._leer_canales_bin(ruta)
+    assert 'sigmentLength' in capsys.readouterr().err
 
 
 def test_leer_canales_bin_ultimo_segmento_truncado_se_descarta(tmp_path, capsys):

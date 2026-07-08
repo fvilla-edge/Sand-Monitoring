@@ -61,12 +61,24 @@ _HEADER_SIZES_CONOCIDOS = (144, 112)   # probar 144 primero (firmware vigente)
 _MARKER      = b'\xff' * 12  # fin de segmento
 _OFF_SIZE_CH = 4              # offset del array sizeCh[4] (uint32 LE) dentro del header
 
-# lostCount[4] (uint64 LE, muestras perdidas por canal) y oscRate[4] (uint64
-# LE, Hz efectivos post-decimacion) — offsets del struct oficial CBinInfo::
-# BinHeader. Solo existen en el header de 144 bytes; en el de 112 (sin
-# struct publicado) quedan como None en vez de asumir un offset no verificado.
-_OFF_LOST_COUNT = 40
-_OFF_OSC_RATE   = 72
+# lostCount[4] (uint64 LE, muestras perdidas por canal), oscRate[4] (uint64
+# LE, Hz efectivos post-decimacion), timeCapture[4] (int64 LE, ns desde epoca
+# Unix, timestamp de hardware por segmento) y sigmentLength (uint32, bytes
+# totales de datos del segmento = suma de sizeCh) — offsets del struct
+# oficial CBinInfo::BinHeader. Solo existen en el header de 144 bytes; en el
+# de 112 (sin struct publicado) quedan como None en vez de asumir un offset
+# no verificado.
+#
+# timeCapture confirmado como timestamp real de hardware (no un contador
+# derivado de "muestras esperadas sin perdida"): en un segmento con
+# lostCount=26032 a fs=3906250 Hz, el salto hacia el siguiente timeCapture
+# fue exactamente 6.664.192 ns mayor que lo normal — exactamente 26032/fs en
+# ns. O sea, SI incluye el tiempo real de las muestras perdidas, a diferencia
+# de len(muestras)/fs que solo cuenta lo que efectivamente llego.
+_OFF_LOST_COUNT     = 40
+_OFF_OSC_RATE       = 72
+_OFF_TIME_CAPTURE   = 104
+_OFF_SIGMENT_LENGTH = 136
 _TOLERANCIA_OSC_RATE = 0.005   # 0.5% — margen contra redondeo de fs
 
 
@@ -108,14 +120,25 @@ def _leer_canales_bin(ruta):
       - osc0/osc1: oscRate en Hz reportado por el primer segmento (se asume
         constante durante toda la sesion, no cambia la decimacion a mitad de
         una captura)
+      - dur_real_s: duracion real de la captura en segundos, calculada con
+        timeCapture (timestamp de hardware) del primer y ultimo segmento
+        leido, mas la duracion del propio ultimo segmento. A diferencia de
+        len(ch0)/fs, SI incluye el tiempo de las muestras perdidas (ver nota
+        de timeCapture junto a las constantes de arriba). None si no hay
+        ningun segmento con header de 144 bytes.
 
     Si el ultimo segmento quedo truncado (sesion cortada a mitad de escritura)
     se corta ahi y se avisa por stderr, en vez de fallar o inventar datos.
+    Tambien se avisa por stderr si sigmentLength (offset 136, redundante con
+    sizeCh) no coincide con la suma de sizeCh declarada en el mismo header —
+    señal de corrupcion que el chequeo de marcador podria no detectar.
     """
     ch0_partes, ch1_partes = [], []
     header_144 = None
     lost0 = lost1 = 0
     osc0 = osc1 = None
+    t_inicio = t_ultimo = None
+    tam_ultimo_ch0 = 0
     tam = ruta.stat().st_size
     with open(ruta, 'rb') as f:
         header_size = _detectar_header_size(f, tam)
@@ -141,22 +164,35 @@ def _leer_canales_bin(ruta):
                       f'se corta la lectura ahi', file=sys.stderr)
                 break
             if header_144:
+                size_declarado = int(size_ch0) + int(size_ch1) + int(size_ch2) + int(size_ch3)
+                sigment_length = int(np.frombuffer(header, dtype='<u4', count=1, offset=_OFF_SIGMENT_LENGTH)[0])
+                if sigment_length != size_declarado:
+                    print(f'[!] {ruta.name}: sigmentLength del header ({sigment_length}) no coincide '
+                          f'con sizeCh declarado ({size_declarado}) en segmento {n_seg}', file=sys.stderr)
                 lost_ch = np.frombuffer(header, dtype='<u8', count=4, offset=_OFF_LOST_COUNT)
                 lost0 += int(lost_ch[0])
                 lost1 += int(lost_ch[1])
+                t_cap = int(np.frombuffer(header, dtype='<i8', count=1, offset=_OFF_TIME_CAPTURE)[0])
                 if n_seg == 0:
                     osc_ch = np.frombuffer(header, dtype='<u8', count=4, offset=_OFF_OSC_RATE)
                     osc0, osc1 = int(osc_ch[0]), int(osc_ch[1])
+                    t_inicio = t_cap
+                t_ultimo = t_cap
+                tam_ultimo_ch0 = int(size_ch0)
             pos = fin_datos + 12
             n_seg += 1
 
     ch0 = np.frombuffer(b''.join(ch0_partes), dtype='<i2')
     ch1 = np.frombuffer(b''.join(ch1_partes), dtype='<i2')
+    dur_real_s = None
+    if header_144 and t_inicio is not None and osc0:
+        dur_real_s = (t_ultimo - t_inicio) / 1e9 + (tam_ultimo_ch0 // 2) / osc0
     meta = {
         'lost0': lost0 if header_144 else None,
         'lost1': lost1 if header_144 else None,
         'osc0': osc0,
         'osc1': osc1,
+        'dur_real_s': dur_real_s,
     }
     return ch0, ch1, meta
 
@@ -242,8 +278,11 @@ def _calcular_mono(ruta, info):
 
     _chequear_osc_rate(ruta, meta['osc0'], fs)
 
+    dur_real_min = meta['dur_real_s'] / 60 if meta['dur_real_s'] is not None else None
+
     return {
         'archivo': ruta.name, 'cond': cond, 'chunk': chunk, 'dur_min': dur_s / 60,
+        'dur_real_min': dur_real_min,
         'rms': rms, 'kurt': kurt, 'crest': cf, 'fa_pct': fa, 'size_mb': size,
         'lost': meta['lost0'],
     }
@@ -279,8 +318,11 @@ def _calcular_dual(ruta, info):
     _chequear_osc_rate(ruta, meta['osc0'], fs, canal_label=' ch1')
     _chequear_osc_rate(ruta, meta['osc1'], fs, canal_label=' ch2')
 
+    dur_real_min = meta['dur_real_s'] / 60 if meta['dur_real_s'] is not None else None
+
     return {
         'archivo': ruta.name, 'cond': cond, 'chunk': chunk, 'dur_min': dur_s / 60,
+        'dur_real_min': dur_real_min,
         'session': _session_key_from_nombre(ruta.stem),
         'rms1': rms1, 'rms2': rms2, 'cf1': cf1, 'cf2': cf2,
         'k1': k1, 'k2': k2, 'dk': k1 - k2,
@@ -384,7 +426,7 @@ def _mostrar_mono(resultados):
     ancho = max(len(r['archivo']) for r in resultados)
 
     header = (f"{'archivo':<{ancho}}  {'cond':<10}  {'chunk':>5}  "
-              f"{'dur':>5}  {'kurt':>7}  {'crest':>6}  {'fa%':>5}  {'rms_dif':>7}  {'perd':>6}  {'MB':>6}  deteccion")
+              f"{'dur':>6}  {'dur_r':>7}  {'kurt':>7}  {'crest':>6}  {'fa%':>5}  {'rms_dif':>7}  {'perd':>6}  {'MB':>6}  deteccion")
     sep = '-' * len(header)
     print(f'\n=== MONO ({len(resultados)} archivos) ===')
     print(sep)
@@ -393,13 +435,15 @@ def _mostrar_mono(resultados):
 
     for r in resultados:
         det = _detectar_mono(r)
-        rd   = f"{r['rms_dif']:>7.2f}" if r['rms_dif'] is not None else f"{'N/A':>7}"
-        perd = f"{r['lost']:>6}" if r['lost'] is not None else f"{'N/A':>6}"
+        rd     = f"{r['rms_dif']:>7.2f}" if r['rms_dif'] is not None else f"{'N/A':>7}"
+        perd   = f"{r['lost']:>6}" if r['lost'] is not None else f"{'N/A':>6}"
+        dur_r  = f"{r['dur_real_min']:.2f}m" if r['dur_real_min'] is not None else 'N/A'
         print(
             f"{r['archivo']:<{ancho}}  "
             f"{r['cond']:<10}  "
             f"{r['chunk']:>5}  "
-            f"{r['dur_min']:>4.1f}m  "
+            f"{r['dur_min']:>5.2f}m  "
+            f"{dur_r:>7}  "
             f"{r['kurt']:>7.1f}  "
             f"{r['crest']:>6.1f}  "
             f"{r['fa_pct']:>4.1f}%  "
@@ -420,6 +464,9 @@ def _mostrar_mono(resultados):
     print('  rms_diferencial (informativo, no afecta deteccion): sqrt(max(0,rms²-baseline²))/baseline,')
     print('  baseline = mediana RMS de "reposo" en el lote | <0.1 insignificante | 0.1-0.4 leve | >0.4 significativo')
     print('  perd = muestras perdidas (lostCount del header, N/A en archivos pre-2026.1 sin ese campo).')
+    print('  dur_r = duracion real del chunk segun el reloj de hardware (timeCapture del header) —')
+    print('  a diferencia de "dur" (basada en cantidad de muestras), SI incluye el tiempo de "perd".')
+    print('  dur_r > dur revela tiempo real perdido, no solo conteo de muestras; N/A en archivos pre-2026.1.')
     print('  oscRate del header se valida contra fs esperado — mismatch avisa por stderr, no aparece en la tabla.')
 
 
@@ -432,7 +479,7 @@ def _mostrar_dual(resultados):
 
     ancho = max(len(r['archivo']) for r in resultados)
 
-    header = (f"{'archivo':<{ancho}}  {'cond':<10}  {'ck':>5}  {'dur':>5}  "
+    header = (f"{'archivo':<{ancho}}  {'cond':<10}  {'ck':>5}  {'dur':>6}  {'dur_r':>7}  "
               f"{'k1':>7}  {'k2':>7}  {'dk':>7}  "
               f"{'cf1':>6}  {'cf2':>6}  "
               f"{'fa1%':>5}  {'fa2%':>5}  {'rms_r':>6}  {'rd1':>6}  {'rd2':>6}  "
@@ -449,11 +496,13 @@ def _mostrar_dual(resultados):
         rd2   = f"{r['rd2']:>6.2f}" if r['rd2'] is not None else f"{'N/A':>6}"
         perd1 = f"{r['lost1']:>6}" if r['lost1'] is not None else f"{'N/A':>6}"
         perd2 = f"{r['lost2']:>6}" if r['lost2'] is not None else f"{'N/A':>6}"
+        dur_r = f"{r['dur_real_min']:.2f}m" if r['dur_real_min'] is not None else 'N/A'
         print(
             f"{r['archivo']:<{ancho}}  "
             f"{r['cond']:<10}  "
             f"{r['chunk']:>5}  "
-            f"{r['dur_min']:>4.1f}m  "
+            f"{r['dur_min']:>5.2f}m  "
+            f"{dur_r:>7}  "
             f"{r['k1']:>7.1f}  "
             f"{r['k2']:>7.1f}  "
             f"{r['dk']:>7.1f}  "
@@ -488,6 +537,9 @@ def _mostrar_dual(resultados):
     print('  fallback in-session tiende a dar numeros mas altos porque el "piso" ya incluye algo de señal).')
     print('  ch1=IN1, ch2=IN2 por construccion del formato (ver _leer_canales_bin) — ya no depende de pares/impares.')
     print('  perd1/perd2 = muestras perdidas por canal (lostCount del header, N/A en archivos pre-2026.1 sin ese campo).')
+    print('  dur_r = duracion real del chunk segun el reloj de hardware (timeCapture del header) —')
+    print('  a diferencia de "dur" (basada en cantidad de muestras), SI incluye el tiempo de "perd1/perd2".')
+    print('  dur_r > dur revela tiempo real perdido, no solo conteo de muestras; N/A en archivos pre-2026.1.')
     print('  oscRate del header se valida por canal contra fs esperado — mismatch avisa por stderr, no aparece en la tabla.')
 
 
