@@ -73,6 +73,17 @@ _HEADER_SIZES_CONOCIDOS = (144, 112)   # probar 144 primero (firmware vigente)
 _MARKER      = b'\xff' * 12  # fin de segmento
 _OFF_SIZE_CH = 4              # offset del array sizeCh[4] (uint32 LE) dentro del header
 
+# lostCount[4] (uint64 LE, muestras perdidas por canal) y oscRate[4] (uint64
+# LE, Hz efectivos post-decimacion) — offsets del struct oficial CBinInfo::
+# BinHeader (w_binary.h, repo Red Pitaya), validados byte a byte contra
+# capturas reales de 2026.1 el 2026-07-08. Solo existen en el header de 144
+# bytes (2026.1 en adelante) — el de 112 bytes (pre-migracion) no tiene
+# struct oficial publicado, por eso ambos quedan como None para esos archivos
+# en vez de asumir un offset no verificado.
+_OFF_LOST_COUNT = 40
+_OFF_OSC_RATE   = 72
+_TOLERANCIA_OSC_RATE = 0.005   # 0.5% — margen contra redondeo de fs
+
 
 def _detectar_header_size(f, tam):
     """Prueba los tamaños de header conocidos contra el primer segmento del
@@ -97,21 +108,34 @@ def _detectar_header_size(f, tam):
 def _leer_canales_bin(ruta):
     """
     Recorre el archivo segmento por segmento (header + datos + marcador) y
-    devuelve (ch0, ch1) como arrays int16 con SOLO muestras reales — sin los
-    bytes de header/marcador mezclados adentro (ver nota de formato arriba).
+    devuelve (ch0, ch1, meta) — ch0/ch1 son arrays int16 con SOLO muestras
+    reales, sin los bytes de header/marcador mezclados adentro (ver nota de
+    formato arriba).
 
     ch0/ch1 corresponden a los canales tal cual los arma el streaming-server
     (indice 0 = IN1, indice 1 = IN2, orden fijo — no hay interleaving por
     muestra como se penso antes, cada canal es un bloque contiguo dentro del
     segmento). En mono, ch1 queda vacio.
 
+    meta trae, si el header es de 144 bytes (2026.1+; None si es el de 112,
+    ver constantes de arriba):
+      - lost0/lost1: muestras perdidas acumuladas por canal (suma de
+        lostCount de todos los segmentos del archivo)
+      - osc0/osc1: oscRate en Hz reportado por el primer segmento (se asume
+        constante durante toda la sesion, no cambia la decimacion a mitad de
+        una captura)
+
     Si el ultimo segmento quedo truncado (sesion cortada a mitad de escritura)
     se corta ahi y se avisa por stderr, en vez de fallar o inventar datos.
     """
     ch0_partes, ch1_partes = [], []
+    header_144 = None
+    lost0 = lost1 = 0
+    osc0 = osc1 = None
     tam = ruta.stat().st_size
     with open(ruta, 'rb') as f:
         header_size = _detectar_header_size(f, tam)
+        header_144 = header_size == 144
         pos = 0
         n_seg = 0
         while pos + header_size <= tam:
@@ -132,12 +156,38 @@ def _leer_canales_bin(ruta):
                 print(f'[!] {ruta.name}: marcador invalido en segmento {n_seg} (offset {fin_datos}), '
                       f'se corta la lectura ahi', file=sys.stderr)
                 break
+            if header_144:
+                lost_ch = np.frombuffer(header, dtype='<u8', count=4, offset=_OFF_LOST_COUNT)
+                lost0 += int(lost_ch[0])
+                lost1 += int(lost_ch[1])
+                if n_seg == 0:
+                    osc_ch = np.frombuffer(header, dtype='<u8', count=4, offset=_OFF_OSC_RATE)
+                    osc0, osc1 = int(osc_ch[0]), int(osc_ch[1])
             pos = fin_datos + 12
             n_seg += 1
 
     ch0 = np.frombuffer(b''.join(ch0_partes), dtype='<i2')
     ch1 = np.frombuffer(b''.join(ch1_partes), dtype='<i2')
-    return ch0, ch1
+    meta = {
+        'lost0': lost0 if header_144 else None,
+        'lost1': lost1 if header_144 else None,
+        'osc0': osc0,
+        'osc1': osc1,
+    }
+    return ch0, ch1, meta
+
+
+def _chequear_osc_rate(ruta, osc_rate, fs_esperado, canal_label=''):
+    """Avisa por stderr si el oscRate del header no coincide con el fs
+    esperado segun la decimacion configurada en el JSON de sesion. None
+    (header viejo de 112 bytes, sin este campo) no se chequea."""
+    if osc_rate is None:
+        return None
+    ok = abs(osc_rate - fs_esperado) / fs_esperado < _TOLERANCIA_OSC_RATE
+    if not ok:
+        print(f'[!] {ruta.name}: oscRate del header{canal_label} ({osc_rate:.0f} Hz) '
+              f'no coincide con fs esperado ({fs_esperado:.0f} Hz)', file=sys.stderr)
+    return ok
 
 
 def _bandpass(signal, fs):
@@ -187,7 +237,7 @@ def _calcular_mono(ruta, info):
     cond  = str(info.get('condicion', '?'))
     chunk = _chunk_num_from_nombre(ruta.stem)
 
-    raw, _ = _leer_canales_bin(ruta)
+    raw, _, meta = _leer_canales_bin(ruta)
     signal = raw.astype(np.float32) * (V_REF / 32767.0)
     dur_s  = len(signal) / fs
     size   = ruta.stat().st_size / 1e6
@@ -199,9 +249,12 @@ def _calcular_mono(ruta, info):
     cf    = float(pico / rms) if rms > 0 else 0.0
     fa    = _fraccion_activa(sig_f, fs)
 
+    _chequear_osc_rate(ruta, meta['osc0'], fs)
+
     return {
         'archivo': ruta.name, 'cond': cond, 'chunk': chunk, 'dur_min': dur_s / 60,
         'rms': rms, 'kurt': kurt, 'crest': cf, 'fa_pct': fa, 'size_mb': size,
+        'lost': meta['lost0'],
     }
 
 
@@ -210,7 +263,7 @@ def _calcular_dual(ruta, info):
     fs   = float(info.get('fs_hz_por_canal', 125_000_000 / dec))
     cond = str(info.get('condicion', '?'))
 
-    ch1_i16, ch2_i16 = _leer_canales_bin(ruta)
+    ch1_i16, ch2_i16, meta = _leer_canales_bin(ruta)
 
     ch1 = ch1_i16.astype(np.float32) * (V_REF / 32767.0)
     ch2 = ch2_i16.astype(np.float32) * (V_REF / 32767.0)
@@ -228,11 +281,14 @@ def _calcular_dual(ruta, info):
     fa1  = _fraccion_activa(f1, fs)
     fa2  = _fraccion_activa(f2, fs)
 
+    _chequear_osc_rate(ruta, meta['osc0'], fs, canal_label=' ch1')
+    _chequear_osc_rate(ruta, meta['osc1'], fs, canal_label=' ch2')
+
     return {
         'archivo': ruta.name, 'cond': cond, 'chunk': chunk, 'dur_min': dur_s / 60,
         'rms1': rms1, 'rms2': rms2, 'k1': k1, 'k2': k2, 'dk': k1 - k2,
         'fa1': fa1, 'fa2': fa2, 'rms_r': rms1 / rms2 if rms2 > 0 else 0.0,
-        'size_mb': size,
+        'size_mb': size, 'lost1': meta['lost0'], 'lost2': meta['lost1'],
     }
 
 
@@ -311,10 +367,10 @@ def _mostrar_mono(resultados):
         print('[!] Ningun archivo con condicion "reposo" en el lote — rms_diferencial se muestra como N/A')
 
     ancho = max(len(r['archivo']) for r in resultados)
-    sep   = '-' * (ancho + 68)
 
     header = (f"{'archivo':<{ancho}}  {'cond':<10}  {'chunk':>5}  "
-              f"{'dur':>5}  {'kurt':>7}  {'crest':>6}  {'fa%':>5}  {'rms_dif':>7}  {'MB':>6}  deteccion")
+              f"{'dur':>5}  {'kurt':>7}  {'crest':>6}  {'fa%':>5}  {'rms_dif':>7}  {'perd':>6}  {'MB':>6}  deteccion")
+    sep = '-' * len(header)
     print(f'\n=== MONO ({len(resultados)} archivos) ===')
     print(sep)
     print(header)
@@ -322,7 +378,8 @@ def _mostrar_mono(resultados):
 
     for r in resultados:
         det = _detectar_mono(r)
-        rd  = f"{r['rms_dif']:>7.2f}" if r['rms_dif'] is not None else f"{'N/A':>7}"
+        rd   = f"{r['rms_dif']:>7.2f}" if r['rms_dif'] is not None else f"{'N/A':>7}"
+        perd = f"{r['lost']:>6}" if r['lost'] is not None else f"{'N/A':>6}"
         print(
             f"{r['archivo']:<{ancho}}  "
             f"{r['cond']:<10}  "
@@ -332,6 +389,7 @@ def _mostrar_mono(resultados):
             f"{r['crest']:>6.1f}  "
             f"{r['fa_pct']:>4.1f}%  "
             f"{rd}  "
+            f"{perd}  "
             f"{r['size_mb']:>6.1f}  "
             f"{det}"
         )
@@ -346,6 +404,8 @@ def _mostrar_mono(resultados):
     print('  Referencia: kurtosis reposo ~3 | arena >20  |  fa% reposo 0% | arena >25%')
     print('  rms_diferencial (informativo, no afecta deteccion): sqrt(max(0,rms²-baseline²))/baseline,')
     print('  baseline = mediana RMS de "reposo" en el lote | <0.1 insignificante | 0.1-0.4 leve | >0.4 significativo')
+    print('  perd = muestras perdidas (lostCount del header, N/A en archivos pre-2026.1 sin ese campo).')
+    print('  oscRate del header se valida contra fs esperado — mismatch avisa por stderr, no aparece en la tabla.')
 
 
 def _mostrar_dual(resultados):
@@ -354,11 +414,12 @@ def _mostrar_dual(resultados):
         print('[!] Ningun archivo con condicion "reposo" en el lote — rd1/rd2 se muestran como N/A')
 
     ancho = max(len(r['archivo']) for r in resultados)
-    sep   = '-' * (ancho + 88)
 
     header = (f"{'archivo':<{ancho}}  {'cond':<10}  {'ck':>5}  {'dur':>5}  "
               f"{'k1':>7}  {'k2':>7}  {'dk':>7}  "
-              f"{'fa1%':>5}  {'fa2%':>5}  {'rms_r':>6}  {'rd1':>6}  {'rd2':>6}  {'MB':>6}  deteccion")
+              f"{'fa1%':>5}  {'fa2%':>5}  {'rms_r':>6}  {'rd1':>6}  {'rd2':>6}  "
+              f"{'perd1':>6}  {'perd2':>6}  {'MB':>6}  deteccion")
+    sep = '-' * len(header)
     print(f'\n=== DUAL ({len(resultados)} archivos) ===')
     print(sep)
     print(header)
@@ -366,8 +427,10 @@ def _mostrar_dual(resultados):
 
     for r in resultados:
         det = _detectar_dual(r)
-        rd1 = f"{r['rd1']:>6.2f}" if r['rd1'] is not None else f"{'N/A':>6}"
-        rd2 = f"{r['rd2']:>6.2f}" if r['rd2'] is not None else f"{'N/A':>6}"
+        rd1   = f"{r['rd1']:>6.2f}" if r['rd1'] is not None else f"{'N/A':>6}"
+        rd2   = f"{r['rd2']:>6.2f}" if r['rd2'] is not None else f"{'N/A':>6}"
+        perd1 = f"{r['lost1']:>6}" if r['lost1'] is not None else f"{'N/A':>6}"
+        perd2 = f"{r['lost2']:>6}" if r['lost2'] is not None else f"{'N/A':>6}"
         print(
             f"{r['archivo']:<{ancho}}  "
             f"{r['cond']:<10}  "
@@ -381,6 +444,8 @@ def _mostrar_dual(resultados):
             f"{r['rms_r']:>6.2f}  "
             f"{rd1}  "
             f"{rd2}  "
+            f"{perd1}  "
+            f"{perd2}  "
             f"{r['size_mb']:>6.1f}  "
             f"{det}"
         )
@@ -398,6 +463,8 @@ def _mostrar_dual(resultados):
     print('  rd1/rd2 (informativo, no afecta deteccion): rms_diferencial por canal,')
     print('  baseline = mediana RMS de "reposo" del mismo canal en el lote | <0.1 insignificante | 0.1-0.4 leve | >0.4 significativo')
     print('  ch1=IN1, ch2=IN2 por construccion del formato (ver _leer_canales_bin) — ya no depende de pares/impares.')
+    print('  perd1/perd2 = muestras perdidas por canal (lostCount del header, N/A en archivos pre-2026.1 sin ese campo).')
+    print('  oscRate del header se valida por canal contra fs esperado — mismatch avisa por stderr, no aparece en la tabla.')
 
 
 def main():
