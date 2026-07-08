@@ -1,0 +1,10 @@
+# Dependencias de analisis/revisar.py (corre en la PC, no en la placa).
+numpy==2.5.0
+scipy==1.18.0
+
+# Solo para correr los tests (analisis/tests/) — no hace falta en campo.
+pytest==9.1.1
+
+# El modulo `streaming` (SWIG, usado por scripts_campo/) no es un paquete de
+# PyPI — vive en la placa en /root/rpsa_client/python_lib, generado a partir
+# del ZIP de Red Pitaya. No se instala con pip.
