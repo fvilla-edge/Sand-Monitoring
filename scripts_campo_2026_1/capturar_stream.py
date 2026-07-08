@@ -24,20 +24,21 @@ para 7.8 MB/s de captura a dec=32 por canal). Cada chunk terminado se mueve
 al destino en un thread de fondo mientras ya se captura el siguiente.
 Eficiencia: ~98%.
 
-Formato de salida con 1 canal (--canales 1, default): raw int16 little-endian,
-muestras secuenciales, sin header.
+FORMATO REAL DEL .bin (corregido 2026-07-08, ver memoria del proyecto):
+NO es raw plano — es un tren de segmentos [header 112 bytes][datos canal
+IN1][datos canal IN2 si esta activo][marcador de fin, 12 bytes 0xFF],
+repetido hasta el final del archivo. Cada canal es un bloque CONTIGUO
+dentro del segmento (no hay interleaving por muestra CH_par/CH_impar como
+se penso antes — esa hipotesis, y la investigacion de "mapeo CH1/CH2
+invertido" de principios de julio, resultaron ser un efecto secundario de
+leer este formato como si fuera raw). Confirmado por un mantenedor de Red
+Pitaya en github.com/RedPitaya/RedPitaya/issues/337. IN1 es siempre el
+primer canal del segmento e IN2 el segundo, por construccion del formato —
+no depende de decimacion, cableado, ni de nada configurable.
 
-Formato de salida con 2 canales (--canales 2): raw int16 little-endian,
-INTERCALADO por muestra (CH_par, CH_impar, CH_par, CH_impar, ...) en un solo
-archivo — asi es como el streaming-server escribe cuando los dos canales
-estan activos, no es algo configurable:
-    posiciones PARES   (indices 0,2,4,...) = CH1 (IN1, sensor codo)
-    posiciones IMPARES (indices 1,3,5,...) = CH2 (IN2, sensor referencia)
-Mapeo corregido 2026-07-03: el mapeo original (golpe fisico en el cable,
-2026-07-01) estaba invertido. Se reconfirmo comparando mono (siempre IN1,
-sin ambiguedad) contra dual con el mismo cableado/decimacion. Pendiente
-reconfirmar en campo con los 2 sensores VS150-RI reales puestos (el bench
-test todavia se hizo con 1 solo sensor + 1 entrada al aire).
+`analisis/revisar.py` ya parsea el formato correcto (`_leer_canales_bin`).
+Si se escribe otro consumidor de estos .bin, reusar esa funcion en vez de
+`np.fromfile` directo.
 
 IMPORTANTE — decimacion con 2 canales: el ancho de banda se duplica.
 Medido en la placa vieja (2.07-51): dec=32 sostenido pierde ~0.42% de
@@ -87,23 +88,20 @@ def _guardar_metadata(dest_dir, condicion, decimacion, fs_ef, session_ts, canale
     """Escribe session_{condicion}_{ts}_info.json en el directorio destino."""
     if canales == 1:
         info = {
-            'formato':       'raw_int16_le',
-            'descripcion':   'Muestras ADC canal 1, int16 little-endian, sin header',
+            'formato':       'streaming_file_segmentado',
+            'descripcion':   'Segmentos [header 112B][datos IN1][marcador 12B 0xFF] repetidos. '
+                              'Parsear con analisis/revisar.py::_leer_canales_bin, no como raw plano.',
             'canales':       1,
         }
     else:
         info = {
-            'formato':      'raw_int16_le_interleaved',
-            'descripcion':  'Muestras CH1+CH2 intercaladas por muestra, int16 little-endian, sin header',
+            'formato':      'streaming_file_segmentado',
+            'descripcion':  'Segmentos [header 112B][datos IN1][datos IN2][marcador 12B 0xFF] repetidos '
+                             '(bloques contiguos por canal, no intercalado por muestra). '
+                             'Parsear con analisis/revisar.py::_leer_canales_bin, no como raw plano.',
             'canales':      2,
-            'mapeo_canales': {
-                'ch1_posiciones': 'pares (indices 0,2,4,...)',
-                'ch2_posiciones': 'impares (indices 1,3,5,...)',
-                'confirmado':     'comparacion mono vs dual, mismo cableado/decimacion, 2026-07-03 (corrige mapeo previo por golpe de cable del 2026-07-01)',
-                'advertencia':    'reconfirmar en campo con los 2 sensores VS150-RI reales puestos antes de usar para analisis final',
-            },
-            'canal_ch1':     'IN1 — sensor codo (medicion)',
-            'canal_ch2':     'IN2 — sensor referencia (ruido de linea)',
+            'canal_ch1':     'IN1 — sensor codo (medicion), siempre primer bloque del segmento',
+            'canal_ch2':     'IN2 — sensor referencia (ruido de linea), siempre segundo bloque del segmento',
         }
     info.update({
         'condicion':     condicion,

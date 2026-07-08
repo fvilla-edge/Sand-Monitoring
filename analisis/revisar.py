@@ -3,7 +3,7 @@
 revisar.py — Revision rapida de capturas de campo en PC (mono o dual).
 
 Acepta:
-  - Archivos .bin (capturar_stream.py — int16 raw, requiere session_*_info.json)
+  - Archivos .bin (capturar_stream.py, requiere session_*_info.json)
   - Directorios   (busca campo_*.bin recursivamente)
 
 La cantidad de canales se detecta por archivo leyendo "canales" (1 o 2) del
@@ -13,9 +13,9 @@ puede mezclar capturas mono y dual: se muestran en tablas separadas.
 Mono: kurtosis, crest factor, fraccion_activa y rms_diferencial sobre la
 senal filtrada (100-450 kHz).
 
-Dual (CH1 codo / CH2 referencia, mapeo leido de "mapeo_canales" en el JSON):
-mismas metricas por canal mas kurtosis_diff (k1-k2) y rms_ratio (CH1/CH2)
-para separar arena de ruido de linea comun a ambos sensores.
+Dual (CH1 codo / CH2 referencia): mismas metricas por canal mas
+kurtosis_diff (k1-k2) y rms_ratio (CH1/CH2) para separar arena de ruido de
+linea comun a ambos sensores.
 
 rms_diferencial usa como baseline la mediana del RMS de las capturas 'reposo'
 del mismo canal presentes en el lote (formula Gao 2015, ver
@@ -25,6 +25,19 @@ reposo, se muestra N/A.
 Uso:
   .venv/bin/python3 analisis/revisar.py /mnt/usb/stream_adc/
   .venv/bin/python3 analisis/revisar.py campo_reposo_*.bin campo_con_arena_*.bin
+
+NOTA DE FORMATO (2026-07-08): el .bin del streaming-server en modo FILE NO es
+raw plano — es un tren de segmentos [header][datos canal0][datos canal1]
+[marcador fin, 12 bytes 0xFF]. Confirmado por un mantenedor de Red Pitaya en
+github.com/RedPitaya/RedPitaya/issues/337 (los "picos periodicos" que se
+venian investigando como posible defecto de hardware en IN1 eran bytes del
+header leidos como si fueran muestras). El layout exacto del header (112
+bytes, sizeCh[4] en offset 4) fue reconstruido a mano contra archivos reales
+de esta placa (Ecosystem 3.00-e00665135) porque no coincide con el struct
+`CBinInfo::BinHeader` publicado en el repo de Red Pitaya (esa version da 144
+bytes) — reversear con archivos propios en vez de confiar en el struct
+publicado si esto se repite en otra placa/ecosistema. Ver `_leer_canales_bin`
+mas abajo.
 """
 import re
 import sys
@@ -42,6 +55,89 @@ FA_WINDOW_S = 0.050     # 50 ms por ventana
 FA_THRESH   = 20        # kurtosis Pearson > 20 → ventana activa
 
 V_REF = 20.0            # ±20V con jumper HV y gain A_1_20
+
+# Formato real de los .bin en modo FILE (ver nota arriba) — reconstruido
+# empiricamente, validado byte a byte (walk completo del archivo, 0
+# desajustes de marcador) contra capturas mono y dual reales.
+#
+# El tamaño de header NO es una constante unica — cambia segun el firmware:
+# los archivos de antes de la migracion a Release_2026.1 (2026-07-07, ej.
+# los del 2026-07-06) usan 112 bytes; los de 2026.1 en adelante (confirmado
+# con dos capturas frescas del 2026-07-08, mono y dual, walk limpio de punta
+# a punta en ambas) usan 144 bytes — que ademas coincide con el struct
+# `CBinInfo::BinHeader` publicado en el repo de Red Pitaya, a diferencia del
+# de 112 que no esta en ningun lado publicado. Por eso se autodetecta por
+# archivo en vez de asumir uno fijo — un mismo lote de revisar.py puede
+# mezclar capturas de antes y despues de la migracion.
+_HEADER_SIZES_CONOCIDOS = (144, 112)   # probar 144 primero (firmware vigente)
+_MARKER      = b'\xff' * 12  # fin de segmento
+_OFF_SIZE_CH = 4              # offset del array sizeCh[4] (uint32 LE) dentro del header
+
+
+def _detectar_header_size(f, tam):
+    """Prueba los tamaños de header conocidos contra el primer segmento del
+    archivo y devuelve el que hace calzar el marcador de fin de segmento."""
+    for candidato in _HEADER_SIZES_CONOCIDOS:
+        if candidato + 12 > tam:
+            continue
+        f.seek(0)
+        header = f.read(candidato)
+        size_ch = np.frombuffer(header, dtype='<u4', count=4, offset=_OFF_SIZE_CH)
+        marker_off = candidato + int(size_ch.sum())
+        if marker_off + 12 > tam:
+            continue
+        f.seek(marker_off)
+        if f.read(12) == _MARKER:
+            return candidato
+    raise ValueError(
+        f'no se pudo determinar el tamaño de header del formato FILE '
+        f'(probados: {_HEADER_SIZES_CONOCIDOS}) — ¿archivo de un firmware nuevo?')
+
+
+def _leer_canales_bin(ruta):
+    """
+    Recorre el archivo segmento por segmento (header + datos + marcador) y
+    devuelve (ch0, ch1) como arrays int16 con SOLO muestras reales — sin los
+    bytes de header/marcador mezclados adentro (ver nota de formato arriba).
+
+    ch0/ch1 corresponden a los canales tal cual los arma el streaming-server
+    (indice 0 = IN1, indice 1 = IN2, orden fijo — no hay interleaving por
+    muestra como se penso antes, cada canal es un bloque contiguo dentro del
+    segmento). En mono, ch1 queda vacio.
+
+    Si el ultimo segmento quedo truncado (sesion cortada a mitad de escritura)
+    se corta ahi y se avisa por stderr, en vez de fallar o inventar datos.
+    """
+    ch0_partes, ch1_partes = [], []
+    tam = ruta.stat().st_size
+    with open(ruta, 'rb') as f:
+        header_size = _detectar_header_size(f, tam)
+        pos = 0
+        n_seg = 0
+        while pos + header_size <= tam:
+            f.seek(pos)
+            header = f.read(header_size)
+            size_ch0, size_ch1, size_ch2, size_ch3 = np.frombuffer(
+                header, dtype='<u4', count=4, offset=_OFF_SIZE_CH)
+            fin_datos = pos + header_size + int(size_ch0) + int(size_ch1) + int(size_ch2) + int(size_ch3)
+            if fin_datos + 12 > tam:
+                print(f'[!] {ruta.name}: segmento {n_seg} truncado al final del archivo, se descarta', file=sys.stderr)
+                break
+            f.seek(pos + header_size)
+            ch0_partes.append(f.read(int(size_ch0)))
+            ch1_partes.append(f.read(int(size_ch1)))
+            f.seek(fin_datos)
+            marcador = f.read(12)
+            if marcador != _MARKER:
+                print(f'[!] {ruta.name}: marcador invalido en segmento {n_seg} (offset {fin_datos}), '
+                      f'se corta la lectura ahi', file=sys.stderr)
+                break
+            pos = fin_datos + 12
+            n_seg += 1
+
+    ch0 = np.frombuffer(b''.join(ch0_partes), dtype='<i2')
+    ch1 = np.frombuffer(b''.join(ch1_partes), dtype='<i2')
+    return ch0, ch1
 
 
 def _bandpass(signal, fs):
@@ -91,7 +187,7 @@ def _calcular_mono(ruta, info):
     cond  = str(info.get('condicion', '?'))
     chunk = _chunk_num_from_nombre(ruta.stem)
 
-    raw    = np.fromfile(ruta, dtype='<i2')
+    raw, _ = _leer_canales_bin(ruta)
     signal = raw.astype(np.float32) * (V_REF / 32767.0)
     dur_s  = len(signal) / fs
     size   = ruta.stat().st_size / 1e6
@@ -113,14 +209,8 @@ def _calcular_dual(ruta, info):
     dec  = int(info.get('decimacion', 64))
     fs   = float(info.get('fs_hz_por_canal', 125_000_000 / dec))
     cond = str(info.get('condicion', '?'))
-    mapeo = info.get('mapeo_canales', {})
-    ch1_pares = mapeo.get('ch1_posiciones', 'impares').startswith('par')
 
-    raw = np.fromfile(ruta, dtype='<i2')
-    if ch1_pares:
-        ch1_i16, ch2_i16 = raw[0::2], raw[1::2]
-    else:
-        ch1_i16, ch2_i16 = raw[1::2], raw[0::2]
+    ch1_i16, ch2_i16 = _leer_canales_bin(ruta)
 
     ch1 = ch1_i16.astype(np.float32) * (V_REF / 32767.0)
     ch2 = ch2_i16.astype(np.float32) * (V_REF / 32767.0)
@@ -307,7 +397,7 @@ def _mostrar_dual(resultados):
     print('  Referencia arena:  k1>20, k2~3, dk>>0, fa1%>25, rms_r>1')
     print('  rd1/rd2 (informativo, no afecta deteccion): rms_diferencial por canal,')
     print('  baseline = mediana RMS de "reposo" del mismo canal en el lote | <0.1 insignificante | 0.1-0.4 leve | >0.4 significativo')
-    print('  [!] Reconfirmar mapeo CH1/CH2 con el sensor VS150-RI puesto (ver session_*_info.json → mapeo_canales).')
+    print('  ch1=IN1, ch2=IN2 por construccion del formato (ver _leer_canales_bin) — ya no depende de pares/impares.')
 
 
 def main():
