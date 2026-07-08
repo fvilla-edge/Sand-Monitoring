@@ -32,9 +32,11 @@ Sand Monitoring/
 │   └── PLAN_CAMPO.md          # Guia operativa completa, mono y dual (--canales 1|2)
 ├── scripts_campo_comun/    # Codigo y supervisor compartidos (campo_common.py, relanzar_captura.sh)
 ├── analisis/               # Scripts de analisis local (corren en la PC)
-│   └── revisar.py          # Revision rapida de capturas, mono o dual (.bin)
+│   ├── revisar.py          # Revision rapida de capturas, mono o dual (.bin)
+│   └── tests/              # Tests del parser de .bin y la logica de deteccion (pytest)
 ├── datos_campo/            # Capturas de campo (gitignoreado)
 ├── docs/                   # Roadmap del proyecto y notas tecnicas
+├── requirements.txt        # Dependencias de analisis/ (PC) — numpy, scipy, pytest
 └── COMANDOS.md             # Referencia rapida de todos los scripts y sus argumentos
 ```
 
@@ -43,7 +45,7 @@ Sand Monitoring/
 ```bash
 cd "Sand Monitoring"
 python3 -m venv .venv
-.venv/bin/pip install h5py scipy matplotlib numpy
+.venv/bin/pip install -r requirements.txt
 ```
 
 ## Flujo basico

@@ -86,6 +86,17 @@ es dual). No usa `argparse` — rutas posicionales.
 |---|---|
 | rutas (posicional) | Archivos `.bin` o directorios (busca `campo_*.bin` recursivamente) |
 
+### `analisis/tests/` — tests del parser y la lógica de detección
+
+Cubre `_leer_canales_bin`, `_detectar_header_size`, `_fraccion_activa`, `_agregar_rms_diferencial_*`
+y `_detectar_mono`/`_detectar_dual` con archivos `.bin` sintéticos — no requiere placa, sensor
+ni datos de campo reales.
+
+```bash
+.venv/bin/pip install -r requirements.txt
+.venv/bin/pytest analisis/tests/ -v
+```
+
 ---
 
 ## Referencias
