@@ -13,14 +13,18 @@ puede mezclar capturas mono y dual: se muestran en tablas separadas.
 Mono: kurtosis, crest factor, fraccion_activa y rms_diferencial sobre la
 senal filtrada (100-450 kHz).
 
-Dual (CH1 codo / CH2 referencia): mismas metricas por canal mas
-kurtosis_diff (k1-k2) y rms_ratio (CH1/CH2) para separar arena de ruido de
-linea comun a ambos sensores.
+Dual (CH1 codo / CH2 referencia): mismas metricas por canal (incluye crest
+factor cf1/cf2) mas kurtosis_diff (k1-k2) y rms_ratio (CH1/CH2) para separar
+arena de ruido de linea comun a ambos sensores.
 
 rms_diferencial usa como baseline la mediana del RMS de las capturas 'reposo'
 del mismo canal presentes en el lote (formula Gao 2015, ver
-analisis/INTERPRETACION_RESULTADOS.md) — si el lote no tiene ninguna captura
-reposo, se muestra N/A.
+analisis/INTERPRETACION_RESULTADOS.md). En dual, si el lote no tiene ninguna
+captura 'reposo' (comun en pruebas de estudio que solo graban 'con_arena'),
+cae a un fallback in-session: usa el chunk de rms minimo de cada canal DENTRO
+de la misma sesion como baseline aproximado (menos solido que un reposo
+real, se marca en la salida). En mono, sin reposo en el lote se sigue
+mostrando N/A (sin fallback).
 
 Uso:
   .venv/bin/python3 analisis/revisar.py /mnt/usb/stream_adc/
@@ -215,6 +219,13 @@ def _chunk_num_from_nombre(stem):
         return 0
 
 
+def _session_key_from_nombre(stem):
+    """Identifica la sesion de origen de un chunk (mismo session_ts) para el
+    fallback in-session de rms_diferencial dual — ver _agregar_rms_diferencial_dual."""
+    m = re.match(r'campo_(?:reposo|con_arena)_(\d{8}_\d{6})_\d{4}', stem)
+    return m.group(1) if m else stem
+
+
 def _cargar_info(ruta):
     """Busca el JSON de sesion de `ruta`, con fallback para capturas viejas
     (pre session_{condicion}_{ts}_info.json, ver memoria del proyecto)."""
@@ -274,8 +285,12 @@ def _calcular_dual(ruta, info):
     f1 = _bandpass(ch1, fs)
     f2 = _bandpass(ch2, fs)
 
-    rms1 = float(np.sqrt(np.mean(f1 ** 2)))
-    rms2 = float(np.sqrt(np.mean(f2 ** 2)))
+    rms1  = float(np.sqrt(np.mean(f1 ** 2)))
+    rms2  = float(np.sqrt(np.mean(f2 ** 2)))
+    pico1 = float(np.max(np.abs(f1)))
+    pico2 = float(np.max(np.abs(f2)))
+    cf1   = float(pico1 / rms1) if rms1 > 0 else 0.0
+    cf2   = float(pico2 / rms2) if rms2 > 0 else 0.0
     k1   = float(scipy_kurtosis(f1, fisher=False))
     k2   = float(scipy_kurtosis(f2, fisher=False))
     fa1  = _fraccion_activa(f1, fs)
@@ -286,7 +301,9 @@ def _calcular_dual(ruta, info):
 
     return {
         'archivo': ruta.name, 'cond': cond, 'chunk': chunk, 'dur_min': dur_s / 60,
-        'rms1': rms1, 'rms2': rms2, 'k1': k1, 'k2': k2, 'dk': k1 - k2,
+        'session': _session_key_from_nombre(ruta.stem),
+        'rms1': rms1, 'rms2': rms2, 'cf1': cf1, 'cf2': cf2,
+        'k1': k1, 'k2': k2, 'dk': k1 - k2,
         'fa1': fa1, 'fa2': fa2, 'rms_r': rms1 / rms2 if rms2 > 0 else 0.0,
         'size_mb': size, 'lost1': meta['lost0'], 'lost2': meta['lost1'],
     }
@@ -317,20 +334,38 @@ def _agregar_rms_diferencial_mono(resultados):
 
 
 def _agregar_rms_diferencial_dual(resultados):
+    """rd1/rd2 por chunk. Baseline preferido: mediana del RMS de las capturas
+    'reposo' del mismo canal en TODO el lote (formula Gao 2015). Si el lote no
+    tiene ningun archivo 'reposo' (caso comun en pruebas de estudio que solo
+    graban 'con_arena'), cae a un fallback IN-SESSION: usa como baseline el
+    chunk de RMS minimo de cada canal DENTRO de la misma sesion (mismo
+    session_ts) — asume que el momento mas quieto observado en esa sesion es
+    una aproximacion razonable del piso de ruido del canal, no un reposo
+    dedicado. Menos solido que un reposo real: se marca 'in-session' en el
+    resultado para que quede claro en la salida."""
     reposo1 = [r['rms1'] for r in resultados if r['cond'] == 'reposo']
     reposo2 = [r['rms2'] for r in resultados if r['cond'] == 'reposo']
-    if not reposo1 or not reposo2:
+    if reposo1 and reposo2:
+        base1 = float(np.median(reposo1))
+        base2 = float(np.median(reposo2))
         for r in resultados:
-            r['rd1'] = None
-            r['rd2'] = None
-        return None, None
+            r['rd1'] = float(np.sqrt(max(0.0, r['rms1'] ** 2 - base1 ** 2)) / base1)
+            r['rd2'] = float(np.sqrt(max(0.0, r['rms2'] ** 2 - base2 ** 2)) / base2)
+            r['rd_modo'] = 'reposo'
+        return base1, base2, 'reposo'
 
-    base1 = float(np.median(reposo1))
-    base2 = float(np.median(reposo2))
+    sesiones = {}
     for r in resultados:
-        r['rd1'] = float(np.sqrt(max(0.0, r['rms1'] ** 2 - base1 ** 2)) / base1)
-        r['rd2'] = float(np.sqrt(max(0.0, r['rms2'] ** 2 - base2 ** 2)) / base2)
-    return base1, base2
+        sesiones.setdefault(r['session'], []).append(r)
+
+    for grupo in sesiones.values():
+        base1 = min(r['rms1'] for r in grupo)
+        base2 = min(r['rms2'] for r in grupo)
+        for r in grupo:
+            r['rd1'] = float(np.sqrt(max(0.0, r['rms1'] ** 2 - base1 ** 2)) / base1) if base1 > 0 else None
+            r['rd2'] = float(np.sqrt(max(0.0, r['rms2'] ** 2 - base2 ** 2)) / base2) if base2 > 0 else None
+            r['rd_modo'] = 'in-session'
+    return None, None, 'in-session'
 
 
 def _detectar_mono(r):
@@ -409,14 +444,17 @@ def _mostrar_mono(resultados):
 
 
 def _mostrar_dual(resultados):
-    base1, base2 = _agregar_rms_diferencial_dual(resultados)
-    if base1 is None:
-        print('[!] Ningun archivo con condicion "reposo" en el lote — rd1/rd2 se muestran como N/A')
+    base1, base2, modo = _agregar_rms_diferencial_dual(resultados)
+    if modo == 'in-session':
+        print('[!] Ningun archivo con condicion "reposo" en el lote — rd1/rd2 usan '
+              'fallback in-session (rms minimo por canal DENTRO de cada sesion), '
+              'menos solido que un reposo dedicado')
 
     ancho = max(len(r['archivo']) for r in resultados)
 
     header = (f"{'archivo':<{ancho}}  {'cond':<10}  {'ck':>5}  {'dur':>5}  "
               f"{'k1':>7}  {'k2':>7}  {'dk':>7}  "
+              f"{'cf1':>6}  {'cf2':>6}  "
               f"{'fa1%':>5}  {'fa2%':>5}  {'rms_r':>6}  {'rd1':>6}  {'rd2':>6}  "
               f"{'perd1':>6}  {'perd2':>6}  {'MB':>6}  deteccion")
     sep = '-' * len(header)
@@ -439,6 +477,8 @@ def _mostrar_dual(resultados):
             f"{r['k1']:>7.1f}  "
             f"{r['k2']:>7.1f}  "
             f"{r['dk']:>7.1f}  "
+            f"{r['cf1']:>6.1f}  "
+            f"{r['cf2']:>6.1f}  "
             f"{r['fa1']:>4.1f}%  "
             f"{r['fa2']:>4.1f}%  "
             f"{r['rms_r']:>6.2f}  "
@@ -458,10 +498,14 @@ def _mostrar_dual(resultados):
     print(f'\n  {len(resultados)} archivos | {dur_tot:.1f} min total | '
           f'{n_arena} con arena | {n_ruido} ruido comun | {n_reposo} en reposo')
     print()
-    print('  Referencia reposo: k1~3, k2~3, dk~0, fa1%~0, fa2%~0, rms_r~1')
-    print('  Referencia arena:  k1>20, k2~3, dk>>0, fa1%>25, rms_r>1')
+    print('  Referencia reposo: k1~3, k2~3, dk~0, fa1%~0, fa2%~0, rms_r~1, cf~5-6')
+    print('  Referencia arena:  k1>20, k2~3, dk>>0, fa1%>25, rms_r>1, cf mas alto que reposo')
+    print('  cf1/cf2 = crest factor por canal (pico/rms de la señal filtrada).')
     print('  rd1/rd2 (informativo, no afecta deteccion): rms_diferencial por canal,')
-    print('  baseline = mediana RMS de "reposo" del mismo canal en el lote | <0.1 insignificante | 0.1-0.4 leve | >0.4 significativo')
+    print('  baseline = mediana RMS de "reposo" del mismo canal en el lote si hay alguno;')
+    print('  si no hay "reposo" en el lote, fallback in-session (rms minimo por canal de la misma sesion, ver arriba)')
+    print('  | <0.1 insignificante | 0.1-0.4 leve | >0.4 significativo (escala pensada para baseline real, con el')
+    print('  fallback in-session tiende a dar numeros mas altos porque el "piso" ya incluye algo de señal).')
     print('  ch1=IN1, ch2=IN2 por construccion del formato (ver _leer_canales_bin) — ya no depende de pares/impares.')
     print('  perd1/perd2 = muestras perdidas por canal (lostCount del header, N/A en archivos pre-2026.1 sin ese campo).')
     print('  oscRate del header se valida por canal contra fs esperado — mismatch avisa por stderr, no aparece en la tabla.')
