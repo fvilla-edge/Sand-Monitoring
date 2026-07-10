@@ -17,6 +17,12 @@
 
 set -u
 
+# Habilita core dumps sin limite de tamano — se hereda por python3 mas abajo.
+# Requiere ademas que /proc/sys/kernel/core_pattern apunte a una ruta persistente
+# (ver PLAN_CAMPO.md, seccion "Core dumps"). Sin esto, un abort() de la libreria
+# C++ (ej. std::bad_alloc no atrapado) no deja rastro analizable.
+ulimit -c unlimited
+
 if [ $# -lt 1 ]; then
     echo "Uso: $0 <script.py> [args...]" >&2
     exit 1

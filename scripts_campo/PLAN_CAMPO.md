@@ -478,6 +478,47 @@ normal queda este archivo aparte con el traceback completo, el estado de
 `streaming-server` (`pgrep`), las últimas líneas de `dmesg` y el espacio libre en la SD —
 todo lo que antes había que ir a buscar a mano por SSH.
 
+**Límite conocido:** esto solo funciona si Python ve la excepción. Un crash de la
+librería C++ (`rpsa_client`, ej. `std::bad_alloc` no atrapado) dispara
+`std::terminate()` → `abort()` → el proceso muere por señal antes de que el
+`try/except` de Python se entere — no genera `crash_*.txt`, solo una línea suelta
+`terminate called after throwing an instance of '...'` en el `log_*.txt`. Para esos
+casos ver "Core dumps" más abajo.
+
+---
+
+## Core dumps (debug de crashes C++ sin traceback)
+
+Para crashes que no dejan traceback de Python (`std::bad_alloc`, `std::length_error`,
+etc. no atrapados en la librería `rpsa_client`), la placa está configurada para generar
+un core dump del proceso `python3` en el momento del abort.
+
+**Ya configurado (no repetir salvo reflasheo):**
+- `kernel.core_pattern` → `/root/logs_campo/core_%e_%p_%t` (persiste via
+  `/etc/sysctl.d/99-core-campo.conf`, sobrevive reinicios).
+- `relanzar_captura.sh` corre con `ulimit -c unlimited` — se hereda por el `python3`
+  que lanza. **Corriendo `capturar_stream.py` directo (sin el supervisor) no queda
+  core dump** salvo que se ponga `ulimit -c unlimited` a mano antes.
+
+**Si aparece un core tras un crash:**
+
+```bash
+ssh root@<IP_PLACA> "ls -la /root/logs_campo/core_*"
+```
+
+Analizarlo con gdb (armv7l, gdb ya instalado en la placa):
+
+```bash
+ssh root@<IP_PLACA>
+gdb python3 /root/logs_campo/core_python3_<pid>_<timestamp>
+(gdb) bt full        # stack trace completo, con esto se identifica donde/por que
+                      # la libreria pide la allocation que falla
+```
+
+**Espacio:** un core de un proceso con buffers de streaming cargados puede pesar
+cientos de MB — revisar espacio libre en `/` (no en el USB de campo, los cores no
+van ahí a propósito, mismo criterio que los logs).
+
 ---
 
 ## Espacio en disco y velocidades
