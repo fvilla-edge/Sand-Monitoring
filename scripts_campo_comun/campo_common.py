@@ -91,11 +91,14 @@ def log(nivel, mensaje, flush=True):
     """
     if nivel in ('INFO', 'OK') and _verbosidad == 'minimo':
         return
-    if _es_tty:
-        color = _NIVEL_COLOR.get(nivel, '')
-        print(f'{color}{mensaje}{_RESET}', flush=flush)
-    else:
-        print(mensaje, flush=flush)
+    try:
+        if _es_tty:
+            color = _NIVEL_COLOR.get(nivel, '')
+            print(f'{color}{mensaje}{_RESET}', flush=flush)
+        else:
+            print(mensaje, flush=flush)
+    except BrokenPipeError:
+        pass
 
 
 def instalar_manejador_stop():
