@@ -65,8 +65,7 @@ reintentos, mata `streaming-server` residual antes de cada reintento.
 No se ejecuta a mano: lo invoca `mnt-usb-automount@.service` (`scripts_campo_comun/udev-automount/`)
 como `ExecStart` (mount) y `ExecStop` (umount, al desconectar el dispositivo vía
 `BindsTo=dev-%i.device`), disparado por una regla udev al conectar el storage externo. Monta
-la primera partición `sd[a-z][0-9]` que aparece y no pisa un montaje existente. Instalado y
-verificado en la placa `192.168.0.55` (2026-07-13). Setup e instrucciones de prueba en
+la primera partición `sd[a-z][0-9]` que aparece y no pisa un montaje existente. Setup e instrucciones de prueba en
 `scripts_campo/PLAN_CAMPO.md` ("Setup inicial → 3"). Log propio en
 `/root/logs_campo/automount_usb.log`.
 
