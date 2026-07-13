@@ -29,7 +29,8 @@ Sand Monitoring/
 ├── scripts_campo/          # Captura en campo (corren en la Red Pitaya)
 │   ├── capturar_stream.py     # Recomendado — streaming FILE mode, ~98% eficiencia, --canales 1|2
 │   ├── probar_dual_stream.py  # Prueba de banco de solo lectura (2 canales)
-│   └── PLAN_CAMPO.md          # Guia operativa completa, mono y dual (--canales 1|2)
+│   ├── PLAN_CAMPO.md          # Indice de la guia operativa, mono y dual (--canales 1|2)
+│   └── plan_campo/            # Guias detalladas: setup, operacion, formato, troubleshooting
 ├── scripts_campo_comun/    # Codigo y supervisor compartidos (campo_common.py, relanzar_captura.sh)
 ├── analisis/               # Scripts de analisis local (corren en la PC)
 │   ├── revisar.py          # Revision rapida de capturas, mono o dual (.bin)

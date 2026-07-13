@@ -44,7 +44,7 @@ mount)
     if mount "$DEV" "$MONTAJE" 2>>"$LOG"; then
         log "$DEV ($TIPO) montado en $MONTAJE."
     else
-        log "$DEV ($TIPO) fallo al montar en $MONTAJE — ver linea anterior para el error de mount. Si el filesystem quedo sucio por una desconexion abrupta, correr fsck a mano (ver PLAN_CAMPO.md)."
+        log "$DEV ($TIPO) fallo al montar en $MONTAJE — ver linea anterior para el error de mount. Si el filesystem quedo sucio por una desconexion abrupta, correr fsck a mano (ver scripts_campo/plan_campo/troubleshooting.md)."
         exit 1
     fi
     ;;

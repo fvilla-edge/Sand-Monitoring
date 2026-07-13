@@ -66,7 +66,7 @@ No se ejecuta a mano: lo invoca `mnt-usb-automount@.service` (`scripts_campo_com
 como `ExecStart` (mount) y `ExecStop` (umount, al desconectar el dispositivo vía
 `BindsTo=dev-%i.device`), disparado por una regla udev al conectar el storage externo. Monta
 la primera partición `sd[a-z][0-9]` que aparece y no pisa un montaje existente. Setup e instrucciones de prueba en
-`scripts_campo/PLAN_CAMPO.md` ("Setup inicial → 3"). Log propio en
+`scripts_campo/plan_campo/setup_placa.md` ("3. Montaje automático del USB"). Log propio en
 `/root/logs_campo/automount_usb.log`.
 
 ### `scripts_campo/repro_in1_file_bug.py` — referencia
