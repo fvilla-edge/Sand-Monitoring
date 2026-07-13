@@ -180,9 +180,7 @@ systemctl daemon-reload && systemctl enable rpsa-lib.service"
 Evita tener que hacer `lsblk` + `mount` a mano cada vez que se reconecta la placa o el
 storage — apenas el kernel detecta la partición (`sd[a-z][0-9]`), una unidad systemd
 dispara el montaje en `/mnt/usb`; al desconectarla, la misma unidad se para sola
-(`BindsTo=dev-%i.device`) y su `ExecStop` libera el punto de montaje. **Instalado y
-verificado en la placa `192.168.0.55` el 2026-07-13** (ciclo completo conectar/desconectar
-probado con `udevadm trigger`, sin desconexión física).
+(`BindsTo=dev-%i.device`) y su `ExecStop` libera el punto de montaje.
 
 ```bash
 scp scripts_campo_comun/automount_usb.sh root@<IP_PLACA>:/root/scripts_campo_comun/
