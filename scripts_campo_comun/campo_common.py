@@ -385,10 +385,10 @@ def mover_a_red(archivo_sd, pc_host, pc_ruta, chunk_num, log_evento):
     excepthook default del thread, invisible para el operador y para el
     loop principal. Si falla, el archivo original NO se borra de la SD.
     """
-    nombre  = os.path.basename(archivo_sd)
-    size_mb = os.path.getsize(archivo_sd) / 1e6
+    nombre = os.path.basename(archivo_sd)
     t0 = time.perf_counter()
     try:
+        size_mb = os.path.getsize(archivo_sd) / 1e6
         subprocess.run(
             ['scp', '-q', archivo_sd, f'{pc_host}:{pc_ruta}/'],
             check=True,
