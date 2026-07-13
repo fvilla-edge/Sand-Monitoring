@@ -122,6 +122,8 @@ Sand Monitoring/
   scripts_campo_comun/
     campo_common.py         ← funciones compartidas (arranque servidor, logs, USB/red)
     relanzar_captura.sh     ← supervisor para sesiones largas desatendidas
+    automount_usb.sh        ← monta/desmonta /mnt/usb automaticamente (invocado por systemd, no a mano)
+    udev-automount/         ← regla udev + unidad systemd que dispara automount_usb.sh
   analisis/
     revisar.py              ← revision rapida en PC (lee .bin, mono o dual)
 ```
@@ -173,7 +175,54 @@ EOF
 systemctl daemon-reload && systemctl enable rpsa-lib.service"
 ```
 
-### 3. Setup para modo RED (solo si se usa `--destino red`)
+### 3. Montaje automático del USB (una sola vez)
+
+Evita tener que hacer `lsblk` + `mount` a mano cada vez que se reconecta la placa o el
+storage — apenas el kernel detecta la partición (`sd[a-z][0-9]`), una unidad systemd
+dispara el montaje en `/mnt/usb`; al desconectarla, la misma unidad se para sola
+(`BindsTo=dev-%i.device`) y su `ExecStop` libera el punto de montaje. **Instalado y
+verificado en la placa `192.168.0.55` el 2026-07-13** (ciclo completo conectar/desconectar
+probado con `udevadm trigger`, sin desconexión física).
+
+```bash
+scp scripts_campo_comun/automount_usb.sh root@<IP_PLACA>:/root/scripts_campo_comun/
+scp scripts_campo_comun/udev-automount/99-automount-campo.rules root@<IP_PLACA>:/etc/udev/rules.d/
+scp scripts_campo_comun/udev-automount/mnt-usb-automount@.service root@<IP_PLACA>:/etc/systemd/system/
+
+ssh root@<IP_PLACA> "
+chmod +x /root/scripts_campo_comun/automount_usb.sh
+udevadm control --reload-rules
+systemctl daemon-reload
+"
+```
+
+**Probar sin desconectar nada** (dispara el mismo evento que un hotplug real —
+ajustar `sda1` según lo que muestre `lsblk`):
+
+```bash
+ssh root@<IP_PLACA> "udevadm trigger --action=add /sys/class/block/sda1 && sleep 2 && df -h /mnt/usb"
+```
+
+**Si algo no monta:** revisar el log dedicado (separado de `logs_campo/log_*.txt` de
+captura, mismo directorio):
+
+```bash
+ssh root@<IP_PLACA> "cat /root/logs_campo/automount_usb.log"
+```
+
+Si el filesystem es exFAT, `exfatprogs` tiene que estar instalado en la placa (ver
+"El USB no aparece con lsblk, o aparece pero no monta" en troubleshooting) — sin eso
+`mount` falla silenciosamente para ese tipo de filesystem y queda registrado en el log.
+Solo monta un dispositivo a la vez: si `/mnt/usb` ya está ocupado, el script lo deja
+así y no pisa nada (ver el log para confirmarlo).
+
+**Por qué no hay una unidad separada de desmontaje:** `systemd` ignora
+`ENV{SYSTEMD_WANTS}` en eventos `remove` (solo lo procesa en `add`/`change` — limitación
+documentada, no un bug de la regla). Por eso el desmontaje no se dispara con una segunda
+regla udev sino con `BindsTo=` + `ExecStop=` en la misma unidad de montaje: cuando el
+device unit desaparece, `systemd` para la unidad automáticamente y corre el `ExecStop`.
+
+### 4. Setup para modo RED (solo si se usa `--destino red`)
 
 La placa necesita poder conectarse a la PC por SSH sin password.
 Hacer esto desde la PC:
@@ -224,7 +273,17 @@ La placa obtiene su IP del router o de la PC según cómo esté conectada:
 ssh root@<IP_PLACA>
 ```
 
-### 2. Montar el USB (solo para modo `usb`)
+### 2. Verificar que el USB está montado (solo para modo `usb`)
+
+Con el automontaje instalado (ver "Setup inicial → 3") no hace falta montar a mano —
+alcanza con verificar que ya está listo:
+
+```bash
+df -h /mnt/usb
+```
+
+**Si no aparece montado** (automontaje no instalado en esta placa, o falló — ver su log
+en `/root/logs_campo/automount_usb.log`), montar a mano como antes:
 
 ```bash
 lsblk

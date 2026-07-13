@@ -1,0 +1,11 @@
+[Unit]
+Description=Montar automaticamente storage de campo (/dev/%i) en /mnt/usb
+DefaultDependencies=no
+BindsTo=dev-%i.device
+After=dev-%i.device
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/root/scripts_campo_comun/automount_usb.sh mount %i
+ExecStop=/root/scripts_campo_comun/automount_usb.sh umount %i

@@ -1,0 +1,14 @@
+# Montaje automático del storage de campo (USB/SSD) en /mnt/usb.
+#
+# Al conectar una partición sd[a-z][0-9] (el storage externo siempre aparece como
+# sd*, nunca como mmcblk* — eso es la SD interna de la placa, nunca se toca acá),
+# dispara la unidad systemd de montaje correspondiente. RUN+= directo (bloqueante en
+# el worker de udev) evitado a propósito — mount puede tardar o colgarse con un
+# filesystem sucio, y eso no debe frenar el resto del procesamiento de udev.
+#
+# No hay regla ACTION=="remove": systemd ignora ENV{SYSTEMD_WANTS} en eventos remove
+# (solo lo procesa en add/change, es una limitación documentada de udev, no un bug de
+# esta regla). El desmontaje al desconectar el dispositivo lo maneja en cambio
+# BindsTo=dev-%i.device + ExecStop en mnt-usb-automount@.service — cuando el device
+# unit desaparece, systemd para el servicio solo y corre el ExecStop (umount).
+ACTION=="add", SUBSYSTEM=="block", KERNEL=="sd[a-z][0-9]", TAG+="systemd", ENV{SYSTEMD_WANTS}+="mnt-usb-automount@%k.service"
