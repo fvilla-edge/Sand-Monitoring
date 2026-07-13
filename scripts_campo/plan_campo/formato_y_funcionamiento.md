@@ -49,6 +49,12 @@ al USB o red no cuenta en esa métrica — ocurre fuera del loop de captura.
 de transiciones de chunk dentro de una sesión, no solo con el tiempo total capturado — menos
 chunks para la misma duración total captura con menos pérdida.
 
+**Tope acordado: 2 min/chunk en campo.** Un chunk más largo pierde menos muestras, pero un
+crash a mitad de chunk pierde el chunk entero (ver `guardar_contexto_crash` en
+`campo_common.py`) — con datos de arena real irremplazables, ese riesgo pesa más que la
+mejora marginal en `perd`. No subir `--duracion_chunk` por encima de 2 min sin repetir esa
+cuenta.
+
 ---
 
 ## Estructura de archivos

@@ -18,7 +18,10 @@ directo.
 Con 2 canales el ancho de banda se duplica — usar `--decimacion 64` para
 dual (unico valor validado sin perdida sostenida). Para minimizar perdida
 de muestras en sesiones largas, usar `--duracion_chunk` lo mas grande que
-el caso de uso permita (menos transiciones de chunk = menos perdida total).
+el caso de uso permita (menos transiciones de chunk = menos perdida total),
+pero NO por encima de 2 min en campo: un crash a mitad de chunk pierde el
+chunk entero, y con datos de arena real ese riesgo pesa mas que la mejora
+marginal en perdida (ver formato_y_funcionamiento.md).
 
 Metadata en session_{condicion}_{ts}_info.json en el directorio destino
 (campo "canales": 1 o 2).
@@ -145,6 +148,9 @@ def _capturar_chunk(confObj, adcObj, n_muestras, fs_ef, chunk_num, condicion, se
     t_total = time.perf_counter() - t0
 
     if not completado:
+        log_evento(f'TIMEOUT esperando fin de chunk {chunk_num} (t={timeout_total:.0f}s) — '
+                    f'ningun evento de fin llego a tiempo, se fuerza stopStreaming()',
+                   nivel='WARNING')
         try:
             adcObj.stopStreaming()
         except Exception:
