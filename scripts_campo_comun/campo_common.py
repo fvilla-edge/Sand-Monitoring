@@ -235,12 +235,27 @@ def verificar_usb(directorio, dev_id_esperado):
     return None
 
 
-def mover_a_usb(archivo_sd, dest_usb, chunk_num):
-    """Copia archivo de SD a USB y elimina el original (corre en thread)."""
+def mover_a_usb(archivo_sd, dest_usb, chunk_num, log_evento):
+    """
+    Copia archivo de SD a USB y elimina el original (corre en thread).
+
+    Si falla (USB desconectado, remontado read-only, etc.) se registra con
+    `log_evento(nivel='ERROR')` en vez de perderse en el excepthook default
+    del thread — sin esto, una falla de move quedaba invisible para el
+    operador y para el loop principal, que seguia capturando el siguiente
+    chunk sin saber que el anterior no llego a destino. El archivo original
+    queda intacto en la SD (shutil.move no llega a borrarlo si la copia
+    falla a mitad de camino).
+    """
     nombre  = os.path.basename(archivo_sd)
     destino = os.path.join(dest_usb, nombre)
     t0 = time.perf_counter()
-    shutil.move(archivo_sd, destino)
+    try:
+        shutil.move(archivo_sd, destino)
+    except Exception as e:
+        log_evento(f'[!] Move a USB del chunk {chunk_num:04d} ({nombre}) fallo: {e} '
+                    f'— el archivo original queda en la SD ({archivo_sd})', nivel='ERROR')
+        return
     t = time.perf_counter() - t0
     size_mb = os.path.getsize(destino) / 1e6
     log('OK', f'  [USB] chunk {chunk_num:04d} → {nombre}'
@@ -362,16 +377,27 @@ def guardar_contexto_crash(prefix, condicion, session_ts, chunk_num, excepcion):
     return crash_path
 
 
-def mover_a_red(archivo_sd, pc_host, pc_ruta, chunk_num):
-    """Envia archivo de SD a la PC via scp SSH y elimina el original."""
+def mover_a_red(archivo_sd, pc_host, pc_ruta, chunk_num, log_evento):
+    """
+    Envia archivo de SD a la PC via scp SSH y elimina el original (corre en
+    thread). Mismo motivo que en `mover_a_usb` para el try/except: sin el,
+    un scp que falla (red caida, host inalcanzable) desaparece en el
+    excepthook default del thread, invisible para el operador y para el
+    loop principal. Si falla, el archivo original NO se borra de la SD.
+    """
     nombre  = os.path.basename(archivo_sd)
     size_mb = os.path.getsize(archivo_sd) / 1e6
     t0 = time.perf_counter()
-    subprocess.run(
-        ['scp', '-q', archivo_sd, f'{pc_host}:{pc_ruta}/'],
-        check=True,
-    )
-    os.remove(archivo_sd)
+    try:
+        subprocess.run(
+            ['scp', '-q', archivo_sd, f'{pc_host}:{pc_ruta}/'],
+            check=True,
+        )
+        os.remove(archivo_sd)
+    except Exception as e:
+        log_evento(f'[!] Move a red del chunk {chunk_num:04d} ({nombre}) fallo: {e} '
+                    f'— el archivo original queda en la SD ({archivo_sd})', nivel='ERROR')
+        return
     t = time.perf_counter() - t0
     log('OK', f'  [RED] chunk {chunk_num:04d} → {pc_host}:{pc_ruta}/{nombre}'
               f'  ({size_mb:.0f} MB en {t:.0f}s | {size_mb/t:.1f} MB/s)')

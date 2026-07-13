@@ -280,10 +280,10 @@ def main():
     usb_dev_id = cc.id_dispositivo(args.directorio)
 
     if args.destino == 'usb':
-        mover_fn      = lambda archivo, num: cc.mover_a_usb(archivo, dest_usb, num)
+        mover_fn      = lambda archivo, num: cc.mover_a_usb(archivo, dest_usb, num, log_evento)
         destino_label = dest_usb
     else:
-        mover_fn      = lambda archivo, num: cc.mover_a_red(archivo, args.pc_host, args.pc_ruta, num)
+        mover_fn      = lambda archivo, num: cc.mover_a_red(archivo, args.pc_host, args.pc_ruta, num, log_evento)
         destino_label = f'{args.pc_host}:{args.pc_ruta}'
 
     try:
