@@ -1,0 +1,13 @@
+# Desactiva el autosuspend USB en todo hub (bDeviceClass==09), tanto el root hub
+# (usb1) como el hub externo alimentado (1-1) donde cuelga el storage de campo.
+#
+# Sin esto, el kernel puede autosuspender el hub a mitad de una escritura pesada
+# (dos discos detras, journaling ext4) y el reset posterior no siempre se recupera
+# limpio — visto en vivo como "cannot reset (err=-110)" / "Cannot enable. Maybe the
+# USB cable is bad?" en ambos puertos casi al mismo tiempo, journal de ext4 abortado,
+# y en el peor caso el hub quedando sin re-enumerar hasta un reboot fisico.
+#
+# Se matchea por bDeviceClass en vez de por nombre de dispositivo (usb1, 1-1) porque
+# el devpath puede cambiar entre boots; bDeviceClass==09 (hub) es estable y cubre
+# tanto el root hub como cualquier hub externo que se conecte.
+ACTION=="add", SUBSYSTEM=="usb", ATTR{bDeviceClass}=="09", ATTR{power/control}="on"

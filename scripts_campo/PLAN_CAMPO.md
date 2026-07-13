@@ -220,6 +220,29 @@ documentada, no un bug de la regla). Por eso el desmontaje no se dispara con una
 regla udev sino con `BindsTo=` + `ExecStop=` en la misma unidad de montaje: cuando el
 device unit desaparece, `systemd` para la unidad automáticamente y corre el `ExecStop`.
 
+### 3b. Desactivar autosuspend en los hubs USB (una sola vez)
+
+Sin esto, el kernel puede autosuspender el root hub o el hub externo alimentado a mitad
+de una escritura pesada — visto en campo como `cannot reset (err=-110)` / "Maybe the USB
+cable is bad?" en los puertos, journal de ext4 abortado, y en el peor caso el hub sin
+volver a enumerar hasta un reboot físico de la placa (ver "El USB/SSD se desconecta solo"
+más abajo).
+
+```bash
+scp scripts_campo_comun/udev-automount/90-usb-autosuspend-hubs.rules root@<IP_PLACA>:/etc/udev/rules.d/
+
+ssh root@<IP_PLACA> "
+udevadm control --reload
+udevadm trigger --action=add --subsystem-match=usb
+cat /sys/bus/usb/devices/1-1/power/control /sys/bus/usb/devices/usb1/power/control
+"
+```
+
+Ambos deben quedar en `on`. La regla matchea por `bDeviceClass==09` (clase hub) en vez
+de por nombre de dispositivo (`usb1`, `1-1`), porque el devpath puede cambiar entre
+boots — cubre el root hub y cualquier hub externo que se conecte, y se re-aplica sola en
+cada `add` (incluido el boot), sin necesitar `echo on` a mano.
+
 ### 4. Setup para modo RED (solo si se usa `--destino red`)
 
 La placa necesita poder conectarse a la PC por SSH sin password.
@@ -747,6 +770,15 @@ mount /dev/sda1 /mnt/usb
 Revisar `bMaxPower` del dispositivo con `lsusb -v` — 500 mA (el máximo del estándar USB)
 es señal de que el puerto de la placa puede no sostenerlo. Usar un hub USB alimentado en
 vez de conectar directo a la placa.
+
+Si además `dmesg` muestra `cannot reset (err=-110)` en más de un puerto del hub casi al
+mismo tiempo, y `/sys/bus/usb/devices/1-1/power/control` (o `usb1`) está en `auto`, es el
+autosuspend cortando el hub entero a mitad de una escritura — ver "3b. Desactivar
+autosuspend en los hubs USB" más arriba (se instala una sola vez, no hace falta
+reaplicarlo a mano en cada sesión). Si el hub ya quedó sin re-enumerar (no aparece en
+`lsusb -t` ni con `udevadm trigger`), un `unbind`/`bind` por software puede no alcanzar
+(`can't set config #1, error -22`) — en ese caso hace falta reboot de la placa (o
+desconectar/reconectar el hub físicamente) antes de `fsck` y remontar.
 
 ---
 
