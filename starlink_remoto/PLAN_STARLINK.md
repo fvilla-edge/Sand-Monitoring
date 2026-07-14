@@ -62,6 +62,10 @@ ssh root@<IP_PLACA> "
   systemctl daemon-reload
   systemctl enable --now starlink-rele-on.timer starlink-rele-off.timer
 "
+
+# alias para prender/apagar a mano por SSH (opcional, comodidad)
+scp aliases.sh root@<IP_PLACA>:/root/starlink_remoto/
+ssh root@<IP_PLACA> "grep -q 'prender-starlink' /root/.bashrc || cat /root/starlink_remoto/aliases.sh >> /root/.bashrc"
 ```
 
 ## Operación día a día
@@ -70,8 +74,9 @@ ssh root@<IP_PLACA> "
 # ver cuándo dispara cada timer a continuación
 ssh root@<IP_PLACA> "systemctl list-timers 'starlink*' --all"
 
-# probar a mano ahora mismo, sin esperar el horario
-ssh root@<IP_PLACA> "systemctl start starlink-rele@on.service"   # o @off.service
+# prender/apagar a mano, sin esperar el horario — una vez logueado por SSH en la placa
+prender-starlink   # = systemctl start starlink-rele@on.service
+apagar-starlink    # = systemctl start starlink-rele@off.service
 
 # ver si corrió bien y cuándo (incluye errores si los hay)
 ssh root@<IP_PLACA> "journalctl -u starlink-rele@on.service"
@@ -79,6 +84,12 @@ ssh root@<IP_PLACA> "journalctl -u starlink-rele@on.service"
 # ver el estado actual simulado (1 = "prendido", 0 = "apagado")
 ssh root@<IP_PLACA> "/opt/redpitaya/bin/monitor 0x40000030"
 ```
+
+`apagar-starlink` es la forma prevista para cortar antes de la hora fija (ej. si el
+usuario termina la jornada más temprano) — al apagarlo, la propia sesión SSH se corta
+en el acto (depende del Starlink que se está apagando), es lo esperado. El `off`
+programado a las 17:00 igual va a disparar después, pero no hace nada si ya estaba
+apagado (idempotente).
 
 Para cambiar el horario: editar la línea `OnCalendar=` del `.timer` correspondiente
 (local y en la placa), y en la placa correr `systemctl daemon-reload && systemctl
