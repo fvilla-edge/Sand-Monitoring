@@ -44,7 +44,7 @@ esperar el ciclo de sincronización normal, que puede tardar minutos. Esto impor
 porque la placa no tiene RTC: el reloj sigue corriendo solo con el oscilador local
 durante las ~16 hs sin red, así que puede llegar levemente desviado a cada ventana.
 
-## Instalación (ya hecha en la placa 192.168.0.55, dejar acá para reflashear o replicar)
+## Instalación
 
 ```bash
 cd starlink_remoto
