@@ -1,0 +1,6 @@
+[Unit]
+Description=Control del rele de Starlink (%i)
+
+[Service]
+Type=oneshot
+ExecStart=/root/starlink_remoto/control_starlink.sh %i

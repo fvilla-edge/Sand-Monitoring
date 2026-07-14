@@ -1,0 +1,10 @@
+[Unit]
+Description=Apaga el rele de Starlink todos los dias a las 17:00
+
+[Timer]
+OnCalendar=*-*-* 17:00:00 America/Argentina/Buenos_Aires
+Persistent=true
+Unit=starlink-rele@off.service
+
+[Install]
+WantedBy=timers.target

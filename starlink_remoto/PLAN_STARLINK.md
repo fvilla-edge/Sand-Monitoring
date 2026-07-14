@@ -1,81 +1,120 @@
-# Plan de acceso remoto vía Starlink con relé
+# Acceso remoto vía Starlink con relé
 
 ## Contexto
 
 Fase 1: equipo en campo con el usuario presente, haciendo pruebas y validando datos.
-Fase 2: equipo queda solo en el sitio. Acceso por SSH a la Red Pitaya vía Starlink.
+Fase 2: equipo queda solo en el sitio. La Red Pitaya no captura todo el tiempo — arranca
+y para las capturas a demanda (orden del usuario, ej. para actualizar scripts). El
+acceso remoto es por SSH a la Red Pitaya vía Starlink.
+
 Para ahorrar energía, el kit Starlink (dish + router) se energiza solo durante una
-ventana horaria fija, controlada por un relé.
+ventana horaria fija, controlada por un relé. **Hoy el relé todavía no existe** — se
+simula prendiendo/apagando el LED0 de la propia Red Pitaya, para poder probar toda la
+lógica de horarios y de sincronización de reloj sin depender del hardware.
 
 ## Arquitectura
 
 | Componente | Rol | Alimentación |
 |---|---|---|
-| Red Pitaya (la misma que corre `scripts_campo/`) | Corre el cron, controla el relé por GPIO, captura datos | Siempre encendida, fuente propia del sitio |
-| Relé | Corta/habilita alimentación del kit Starlink | Controlado por GPIO desde la Red Pitaya |
+| Red Pitaya (la misma que corre `scripts_campo/`) | Corre los timers, controla el relé, corre las capturas cuando se le pide | Siempre encendida, fuente propia del sitio |
+| Relé (simulado hoy con LED0) | Corta/habilita alimentación del kit Starlink | Controlado por escritura directa de registro desde la Red Pitaya |
 | Starlink (dish + router) | Da conectividad para el SSH entrante | Detrás del relé — apagado por default |
 
 Asunción a reconfirmar en sitio: el plan de Starlink da IP pública/gestionable, así que
 el SSH entrante llega directo sin túnel intermedio (Tailscale, WireGuard, etc.). Si en
 la práctica resulta ser CGNAT, este plan no alcanza y hace falta agregar esa capa.
 
-## Horario
+## Cómo funciona
 
-- **ON:** 08:55 (5 min de margen antes de las 09:00 para que el dish termine de
-  bootear y enganchar satélite antes de que el usuario intente conectarse)
-- **OFF:** 17:00
+No hay `cron` instalado en esta placa (Ubuntu 24.04 mínimo, sin el paquete). Se usa
+**systemd timers**, el reemplazo nativo — mismo concepto que cron, pero como parte del
+propio systemd (que ya está siempre corriendo), sin instalar nada extra.
 
-Ambos horarios como variables al principio del script de control, no hardcodeados en
-el medio de la lógica — se tienen que poder cambiar sin tocar el resto del código.
+Son 3 archivos, todos en `starlink_remoto/`:
 
-El OFF es idempotente: si el relé ya estaba apagado (porque el usuario lo cortó antes,
-o porque nunca se activó ese día), no hace nada.
+| Archivo | Qué es |
+|---|---|
+| `control_starlink.sh` | El script que realmente prende/apaga (hoy: el LED0; el día del relé real, cambia acá adentro nomás) |
+| `systemd/starlink-rele@.service` | La "tarjeta" que dice qué hacer: correr `control_starlink.sh on` o `control_starlink.sh off` |
+| `systemd/starlink-rele-on.timer` / `-off.timer` | Las "tarjetas" que dicen cuándo: 08:55 y 17:00 hora Argentina, todos los días |
 
-## Sincronización de reloj (sin RTC)
+El `on` además reintenta forzar la hora: reinicia `ntpsec` (que ya viene instalado en
+esta placa), lo que dispara un `STEP` — corrección inmediata del reloj — en vez de
+esperar el ciclo de sincronización normal, que puede tardar minutos. Esto importa
+porque la placa no tiene RTC: el reloj sigue corriendo solo con el oscilador local
+durante las ~16 hs sin red, así que puede llegar levemente desviado a cada ventana.
 
-La placa no tiene RTC ni cliente NTP instalado hoy. Sin red la mayor parte del día, el
-reloj del sistema puede driftear entre ventanas.
+## Instalación (ya hecha en la placa 192.168.0.55, dejar acá para reflashear o replicar)
 
-Plan:
-1. Instalar `chrony`.
-2. Configurarlo en modo sync puntual, no polling continuo (no tiene sentido con red
-   intermitente).
-3. Dentro del script de ON, después de habilitar el relé y esperar a que la interfaz
-   de red tenga link/IP, disparar una sincronización one-shot (`chronyd -q` o
-   equivalente).
+```bash
+cd starlink_remoto
 
-Esto corrige el drift acumulado cada ventana, pero el propio disparo del cron a las
-08:55 puede llegar corrido si el drift diario es grande — a confirmar en la práctica
-cuánto driftea esta placa en 24 hs sin corrección.
+# copiar el script de control
+scp control_starlink.sh root@<IP_PLACA>:/root/starlink_remoto/
 
-## Riesgos identificados
+# copiar las unidades systemd
+scp systemd/starlink-rele@.service systemd/starlink-rele-on.timer systemd/starlink-rele-off.timer \
+    root@<IP_PLACA>:/etc/systemd/system/
 
-| Riesgo | Mitigación |
+# instalar y activar
+ssh root@<IP_PLACA> "
+  chmod +x /root/starlink_remoto/control_starlink.sh
+  systemctl daemon-reload
+  systemctl enable --now starlink-rele-on.timer starlink-rele-off.timer
+"
+```
+
+## Operación día a día
+
+```bash
+# ver cuándo dispara cada timer a continuación
+ssh root@<IP_PLACA> "systemctl list-timers 'starlink*' --all"
+
+# probar a mano ahora mismo, sin esperar el horario
+ssh root@<IP_PLACA> "systemctl start starlink-rele@on.service"   # o @off.service
+
+# ver si corrió bien y cuándo (incluye errores si los hay)
+ssh root@<IP_PLACA> "journalctl -u starlink-rele@on.service"
+
+# ver el estado actual simulado (1 = "prendido", 0 = "apagado")
+ssh root@<IP_PLACA> "/opt/redpitaya/bin/monitor 0x40000030"
+```
+
+Para cambiar el horario: editar la línea `OnCalendar=` del `.timer` correspondiente
+(local y en la placa), y en la placa correr `systemctl daemon-reload && systemctl
+restart starlink-rele-on.timer` (o `-off.timer`). No hay que tocar el script.
+
+## Validado en banco (placa real, sin Starlink conectado)
+
+- `rp.rp_LEDSetState()` (propuesta inicial) **falla**: `rp_Init()` inicializa también
+  el osciloscopio y choca (`Bus error`) con el `streaming-server` corriendo, que tiene
+  el UIO del osciloscopio tomado en exclusiva. Por eso el control se hace con
+  `/opt/redpitaya/bin/monitor 0x40000030 <valor>` — accede a la región de housekeeping,
+  no a la del ADC, y no interfiere con una captura en curso.
+- Ciclo completo `on`→`off`→`off` (idempotencia) probado disparando los `.service` a
+  mano, LED y registro confirmados en cada paso, `streaming-server` sin interrupciones.
+- Reloj desfasado a propósito (+30s, +45s) y corregido con `STEP` en menos de 10s tras
+  el restart de `ntpsec` disparado por el propio `on`.
+- Bug de zona horaria encontrado y corregido: la placa corre en UTC, así que
+  `OnCalendar` sin zona explícita disparaba 3 hs antes de lo esperado. Se fijó con el
+  sufijo `America/Argentina/Buenos_Aires` en cada `OnCalendar=`, sin tocar el reloj del
+  sistema.
+
+## Riesgos abiertos
+
+| Riesgo | Estado |
 |---|---|
 | Starlink no queda usable al instante (boot + actualización de firmware) | Margen de 5 min antes de la hora "oficial"; el firmware update puede igual comerse parte de la ventana, sin mitigación total posible |
-| Red Pitaya se cuelga/reinicia a mitad de ventana y el relé queda en un estado no controlado | Definir y probar el estado *fail-safe* del relé (recomendado: sin señal de control = Starlink apagado, para no drenar batería del sitio si algo falla) |
-| Drift de reloj sin NTP entre ventanas | Sync forzado al levantar la red (ver arriba); medir drift real en campo |
-| Asunción de IP pública resulta incorrecta (CGNAT) | Reconfirmar con Starlink activo en sitio antes de dar el diseño por cerrado |
+| Red Pitaya se cuelga/reinicia a mitad de ventana | `Persistent=true` en ambos timers dispara el que se perdió al volver a bootear, pero el estado *fail-safe* del relé físico (qué pasa sin señal de control) todavía no está definido — depende del modelo de relé |
+| Drift real de reloj en 16 hs sin red | Mitigado con el restart de `ntpsec` en el `on`, pero no medido en campo real todavía |
+| Asunción de IP pública resulta ser CGNAT | Reconfirmar con Starlink activo en sitio |
 
-## Pendientes / decisiones abiertas
+## Pendientes
 
 - Modelo de relé y cableado físico: qué pin del conector de expansión de la Red
-  Pitaya se usa, aislación, etc. — no definido todavía.
-- Confirmar en banco/campo que 5 min de margen alcanzan para que el dish esté
-  realmente utilizable.
-- Confirmar el comportamiento fail-safe deseado del relé.
-- Decidir si el script vive en `scripts_campo_comun/` (junto a `automount_usb.sh` y
-  `relanzar_captura.sh`) dado que es infraestructura compartida, no captura en sí.
-
-## Plan de implementación (borrador)
-
-1. Instalar y configurar `chrony` en la Red Pitaya (sync one-shot, sin polling
-   continuo).
-2. Escribir script de control del relé con funciones ON/OFF sobre GPIO, horarios
-   como variables editables al inicio.
-3. Dos entradas de cron: 08:55 (ON) y 17:00 (OFF), llamando al script.
-4. Dentro de ON: activar relé → esperar link de red → disparar sync NTP one-shot.
-5. Probar en banco el ciclo completo (ON, verificar conectividad, sync, OFF) antes
-   de llevarlo a campo.
-6. Probar el caso de falla: cortar alimentación a la Red Pitaya a mitad de ventana
-   y verificar en qué estado queda el relé al recuperarse.
+  Pitaya se usa, aislación, etc. — no definido todavía. Cuando esté, el cambio es
+  únicamente en `control_starlink.sh` (reemplazar las dos líneas de `monitor
+  0x40000030`).
+- Confirmar el comportamiento fail-safe deseado del relé real.
+- Decidir si esta carpeta se fusiona con `scripts_campo_comun/` (infraestructura
+  compartida) una vez que el relé esté instalado, o queda separada.
