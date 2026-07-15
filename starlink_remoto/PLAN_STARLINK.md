@@ -92,7 +92,7 @@ apagar-starlink    # = systemctl start starlink-rele@off.service
 ssh root@<IP_PLACA> "journalctl -u starlink-rele@on.service"
 
 # ver el estado actual simulado (1 = "prendido", 0 = "apagado")
-ssh root@<IP_PLACA> "/opt/redpitaya/bin/monitor 0x40000030"
+ssh root@<IP_PLACA> "/opt/redpitaya/bin/monitor 0x40000018"
 ```
 
 `apagar-starlink` es la forma prevista para cortar antes de la hora fija (ej. si el
