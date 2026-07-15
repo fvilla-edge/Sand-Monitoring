@@ -115,7 +115,13 @@ restart starlink-rele-on.timer` (o `-off.timer`). No hay que tocar el script.
 - Ciclo completo `on`→`off`→`off` (idempotencia) probado disparando los `.service` a
   mano, registro confirmado en cada paso, `streaming-server` sin interrupciones. (El
   LED en sí nunca se vio prender — ver nota de 2026-07-15 más arriba, esta prueba
-  validaba el ciclo de los timers, no el LED físico.)
+  validaba el ciclo de los timers, no el LED físico.) **Desactualizado:** esa prueba
+  fue antes de agregar el `overlay.sh v0.94` incondicional al script (necesario tras el
+  hallazgo de que el registro solo existe en el bitstream default). Con analizador
+  lógico se confirmó que, sin un chequeo de estado previo, pedir `on`/`off` ya estando
+  en ese estado igual reprograma la FPGA y genera el mismo pulso espurio de tri-state
+  (~800ms) que un cambio de estado real — se agregó un archivo de estado local
+  (`/root/starlink_remoto/estado`) para saltar la reprogramación cuando no hace falta.
 - Reloj desfasado a propósito (+30s, +45s) y corregido con `STEP` en menos de 10s tras
   el restart de `ntpsec` disparado por el propio `on`.
 - Bug de zona horaria encontrado y corregido: la placa corre en UTC, así que
