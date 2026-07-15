@@ -9,8 +9,9 @@ acceso remoto es por SSH a la Red Pitaya vía Starlink.
 
 Para ahorrar energía, el kit Starlink (dish + router) se energiza solo durante una
 ventana horaria fija, controlada por un relé. **Hoy el relé todavía no existe** — se
-simula prendiendo/apagando el LED0 de la propia Red Pitaya, para poder probar toda la
-lógica de horarios y de sincronización de reloj sin depender del hardware.
+simula escribiendo un registro de LED de la propia Red Pitaya, para poder probar toda la
+lógica de horarios y de sincronización de reloj sin depender del hardware (ver nota en
+"Cómo funciona" — esa escritura no prende nada mientras corre una captura).
 
 ## Arquitectura
 
@@ -34,7 +35,7 @@ Son 3 archivos, todos en `starlink_remoto/`:
 
 | Archivo | Qué es |
 |---|---|
-| `control_starlink.sh` | El script que realmente prende/apaga (hoy: el LED0; el día del relé real, cambia acá adentro nomás) |
+| `control_starlink.sh` | El script que prende/apaga — **hoy escribe un registro que no es el relé real, ver nota abajo** |
 | `systemd/starlink-rele@.service` | La "tarjeta" que dice qué hacer: correr `control_starlink.sh on` o `control_starlink.sh off` |
 | `systemd/starlink-rele-on.timer` / `-off.timer` | Las "tarjetas" que dicen cuándo: 08:55 y 17:00 hora Argentina, todos los días |
 
@@ -43,6 +44,15 @@ esta placa), lo que dispara un `STEP` — corrección inmediata del reloj — en
 esperar el ciclo de sincronización normal, que puede tardar minutos. Esto importa
 porque la placa no tiene RTC: el reloj sigue corriendo solo con el oscilador local
 durante las ~16 hs sin red, así que puede llegar levemente desviado a cada ventana.
+
+**Nota importante (2026-07-15):** `control_starlink.sh` escribe hoy en `0x40000030`
+pensando que es el registro del LED0. Confirmado con los regsets oficiales de FPGA que
+esa dirección solo es "LED" en el bitstream **default** (`v0.94`) — mientras
+`streaming-server` corre (bitstream `stream_app`), esa misma dirección es en realidad
+el **factor de decimación del ADC en vivo**. O sea: hoy esta escritura no prende nada
+durante una captura, y en el peor caso puede pisar la decimación de una captura activa.
+El diseño real del relé necesita reprogramar la FPGA a `v0.94` para tocar ese registro
+(ver siguiente sección) — no alcanza con "cambiar dos líneas" como se pensaba original.
 
 ## Instalación
 
@@ -103,7 +113,9 @@ restart starlink-rele-on.timer` (o `-off.timer`). No hay que tocar el script.
   `/opt/redpitaya/bin/monitor 0x40000030 <valor>` — accede a la región de housekeeping,
   no a la del ADC, y no interfiere con una captura en curso.
 - Ciclo completo `on`→`off`→`off` (idempotencia) probado disparando los `.service` a
-  mano, LED y registro confirmados en cada paso, `streaming-server` sin interrupciones.
+  mano, registro confirmado en cada paso, `streaming-server` sin interrupciones. (El
+  LED en sí nunca se vio prender — ver nota de 2026-07-15 más arriba, esta prueba
+  validaba el ciclo de los timers, no el LED físico.)
 - Reloj desfasado a propósito (+30s, +45s) y corregido con `STEP` en menos de 10s tras
   el restart de `ntpsec` disparado por el propio `on`.
 - Bug de zona horaria encontrado y corregido: la placa corre en UTC, así que
@@ -119,13 +131,19 @@ restart starlink-rele-on.timer` (o `-off.timer`). No hay que tocar el script.
 | Red Pitaya se cuelga/reinicia a mitad de ventana | `Persistent=true` en ambos timers dispara el que se perdió al volver a bootear, pero el estado *fail-safe* del relé físico (qué pasa sin señal de control) todavía no está definido — depende del modelo de relé |
 | Drift real de reloj en 16 hs sin red | Mitigado con el restart de `ntpsec` en el `on`, pero no medido en campo real todavía |
 | Asunción de IP pública resulta ser CGNAT | Reconfirmar con Starlink activo en sitio |
+| El pin del relé no sostiene el nivel al cambiar de bitstream | **Confirmado con analizador lógico (2026-07-15):** al pasar de `v0.94` a `stream_app`, el pin cae limpio, siempre, ~800ms. Un relé normal se desenergizaría en cada cambio → **decidido usar relé biestable/latching** (mantiene su estado solo, sin señal sostenida) |
 
 ## Pendientes
 
-- Modelo de relé y cableado físico: qué pin del conector de expansión de la Red
-  Pitaya se usa, aislación, etc. — no definido todavía. Cuando esté, el cambio es
-  únicamente en `control_starlink.sh` (reemplazar las dos líneas de `monitor
-  0x40000030`).
+- **Comprar el relé biestable y conseguir su datasheet.** Define lo que falta para
+  terminar el diseño: si es de 2 bobinas (SET/RESET, un pin por bobina) o de 1 bobina
+  con polaridad invertida (necesita driver tipo puente H), y la duración mínima de
+  pulso que necesita.
+- Reescribir `control_starlink.sh`: ya no es "cambiar dos líneas" — necesita (1) parar
+  `streaming-server` si está corriendo, (2) `overlay.sh v0.94`, (3) pulso corto (no
+  nivel sostenido) en el/los pin(es) del relé, (4) volver a `stream_app` y reiniciar
+  `streaming-server` si hace falta. Una vez pulsado, el relé ya no depende del bitstream.
+- Cableado físico: qué pin del conector de expansión se usa, aislación.
 - Confirmar el comportamiento fail-safe deseado del relé real.
 - Decidir si esta carpeta se fusiona con `scripts_campo_comun/` (infraestructura
   compartida) una vez que el relé esté instalado, o queda separada.
