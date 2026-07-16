@@ -69,12 +69,56 @@ Sand Monitoring/
     plan_campo/             ← guías detalladas (setup, operación, este documento, troubleshooting)
   scripts_campo_comun/
     campo_common.py         ← funciones compartidas (arranque servidor, logs, USB/red)
+    cfg.py                  ← lee config_campo.json (modulo Python o CLI desde Bash)
+    config_campo.json       ← parametros operativos centralizados, ver seccion de abajo
     relanzar_captura.sh     ← supervisor para sesiones largas desatendidas
     automount_usb.sh        ← monta/desmonta /mnt/usb automaticamente (invocado por systemd, no a mano)
     udev-automount/         ← reglas udev + unidad systemd que dispara automount_usb.sh
   analisis/
     revisar.py              ← revision rapida en PC (lee .bin, mono o dual)
 ```
+
+---
+
+## Configuración centralizada (`config_campo.json`)
+
+Los parámetros operativos que tiene sentido ajustar sin tocar código viven en
+`scripts_campo_comun/config_campo.json`, y se leen a través de
+`scripts_campo_comun/cfg.py`:
+
+```json
+{
+  "espacio":           { "minimo_mb_por_canal": 500 },
+  "eficiencia":        { "umbral_bajo_pct": 80 },
+  "reintentos":        { "max": 10, "espera_s": 5 },
+  "starlink":          { "timeout_stop_s": 150 },
+  "captura_defaults":  { "decimacion": 32, "duracion_chunk_min": 1.0, "directorio": "/mnt/usb" },
+  "rutas":             { "log_dir": "/root/logs_campo", "stream_dir": "...", "state_file": "..." }
+}
+```
+
+**Cómo cambiar un valor:** editar `config_campo.json` directamente en la placa
+(`/root/scripts_campo_comun/config_campo.json`) y volver a correr — no hace falta
+tocar ni redesplegar código Python/Bash. Los defaults de `--decimacion`,
+`--duracion_chunk` y `--directorio` siguen siendo overrideables por argumento de
+línea de comandos como siempre; lo que cambió es de dónde sale el valor por defecto.
+
+**Cómo lo consume cada lado:**
+- Python (`capturar_stream.py`, `campo_common.py`): `import cfg; cfg.obtener('espacio.minimo_mb_por_canal')`.
+- Bash (`relanzar_captura.sh`, `control_starlink.sh`): `python3 /root/scripts_campo_comun/cfg.py reintentos.max`.
+
+**Qué NO está en el JSON, a propósito** — invariantes de hardware/firmware, no
+parámetros operativos: `FS_BASE` (frecuencia base del ADC), `DEC_VALIDOS`/
+`DEC_SEGURAS_DUAL` (factores de decimación válidos/validados), y en
+`control_starlink.sh` las direcciones de registro FPGA (`DIR_REG`/`OUT_REG`) y la
+versión de bitstream (`v0.94`) — cambiarlos sin cambiar el hardware/bitstream
+correspondiente rompe la captura o el control del relé, así que quedan
+hardcodeados en el código con el motivo comentado ahí mismo.
+
+**Acoplamiento a tener en cuenta:** `starlink.timeout_stop_s` debe seguir siendo
+mayor que el `--duracion_chunk` más largo que se use en campo (el corte limpio de
+`control_starlink.sh` espera a que termine el chunk en curso) — son dos valores
+en el mismo archivo, pero la relación entre ellos sigue siendo manual.
 
 ---
 

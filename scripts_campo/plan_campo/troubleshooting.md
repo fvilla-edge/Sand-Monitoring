@@ -73,9 +73,12 @@ Si el servicio no existe (placa reflasheada), reinstalar siguiendo `setup_placa.
 
 ## Espacio insuficiente en USB
 
-El script para automáticamente cuando quedan menos de 500 MB × `--canales` libres e
-imprime un mensaje (1 GB con `--canales 2`). Montar un storage más grande o borrar
-capturas ya copiadas a la PC.
+El script frena automáticamente (corte limpio, guarda el último chunk, sesión
+termina con exit 0, no se relanza) cuando quedan menos de 500 MB × `--canales`
+libres (1 GB con `--canales 2`). Umbral configurable en
+`config_campo.json` → `espacio.minimo_mb_por_canal` (ver
+`formato_y_funcionamiento.md`). Montar un storage más grande o borrar capturas ya
+copiadas a la PC.
 
 ## El USB no aparece con lsblk, o aparece pero no monta
 

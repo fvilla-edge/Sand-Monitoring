@@ -200,8 +200,10 @@ distintos) — una noche con 2 crashes deja 3 sesiones separadas en el
 directorio, cada una válida y legible por separado con `revisar.py`.
 Máximo 10 reintentos con 5s de espera entre cada uno (mata el
 `streaming-server` residual antes de reintentar, para forzar arranque en
-frío). Si se supera el máximo, el wrapper termina con error — revisar
-`/root/logs_campo/` para diagnosticar antes de relanzar a mano.
+frío) — configurable en `config_campo.json` → `reintentos.max`/`espera_s`
+(ver `formato_y_funcionamiento.md`). Si se supera el máximo, el wrapper
+termina con error — revisar `/root/logs_campo/` para diagnosticar antes de
+relanzar a mano.
 
 ### Lo que se ve mientras corre
 

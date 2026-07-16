@@ -151,8 +151,11 @@ recarga `v0.94` salvo la próxima vez que corra este mismo script.
 
 `control_starlink.sh` ahora, antes de tocar el bitstream: si detecta
 `capturar_stream.py` corriendo, le manda SIGTERM (mismo handler que Ctrl+C) y
-espera a que corte solo (hasta 150s, más que el tope de `duracion_chunk` de
-2 min) — así `capturar_stream.py` termina el chunk en curso, hace su propio
+espera a que corte solo (hasta `TIMEOUT_STOP`, configurable en
+`config_campo.json` → `starlink.timeout_stop_s`, default 150s — más que el
+tope de `duracion_chunk` de 2 min; si se sube el tope de chunk hay que subir
+este valor a mano, no hay validación cruzada entre los dos) — así
+`capturar_stream.py` termina el chunk en curso, hace su propio
 `finally` (incluye esperar el move a USB), y sale con exit 0. Con eso,
 `relanzar_captura.sh` decide por su cuenta no relanzar (su propio chequeo de
 exit code), en vez de que el corte se lo imponga desde afuera. Si no corta a
