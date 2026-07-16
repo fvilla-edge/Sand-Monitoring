@@ -17,12 +17,18 @@
 
 set -euo pipefail
 
+CFG=/root/scripts_campo_comun/cfg.py
+
+# Invariantes de hardware/firmware, acopladas al bitstream v0.94 — quedan
+# hardcodeadas a proposito, no en config_campo.json (ver comentario arriba).
 MONITOR=/opt/redpitaya/bin/monitor
 OVERLAY=/opt/redpitaya/sbin/overlay.sh
 DIR_REG=0x40000010   # direccion P (bit0 = DIO0_P)
 OUT_REG=0x40000018   # salida P (bit0 = DIO0_P)
-STATE_FILE=/root/starlink_remoto/estado
-TIMEOUT_STOP=150      # seg de margen para el corte limpio, mayor al chunk mas largo que se use en campo
+
+# Parametros operativos — ver scripts_campo_comun/config_campo.json
+STATE_FILE=$(python3 "$CFG" rutas.state_file)
+TIMEOUT_STOP=$(python3 "$CFG" starlink.timeout_stop_s)   # seg de margen para el corte limpio, mayor al chunk mas largo que se use en campo
 
 ACCION="${1:-}"
 case "$ACCION" in

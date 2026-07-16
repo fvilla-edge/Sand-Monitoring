@@ -23,13 +23,18 @@ import datetime
 import traceback
 import subprocess
 
+import cfg
+
+# Invariantes de hardware/firmware — quedan hardcodeados a proposito, no en
+# config_campo.json (cambiarlos sin cambiar el ADC/bitstream rompe la captura).
 FS_BASE     = 125_000_000
-STREAM_DIR  = '/home/redpitaya/streaming_files/adc'   # siempre en SD
 SERVER_BIN  = '/opt/redpitaya/bin/streaming-server'
 DEC_VALIDOS = {1, 2, 4, 8, 16, 32, 64}
-LOG_DIR     = '/root/logs_campo'   # SD interna, no el USB/SSD de campo (ver Why abajo)
 
-UMBRAL_EFICIENCIA_BAJA = 80   # %, por debajo de esto se loguea (operacion normal: 90-98%)
+# Parametros operativos — ver scripts_campo_comun/config_campo.json
+STREAM_DIR             = cfg.obtener('rutas.stream_dir')    # siempre en SD
+LOG_DIR                = cfg.obtener('rutas.log_dir')       # SD interna, no el USB/SSD de campo (ver Why abajo)
+UMBRAL_EFICIENCIA_BAJA = cfg.obtener('eficiencia.umbral_bajo_pct')   # %, por debajo de esto se loguea (operacion normal: 90-98%)
 
 _NIVEL_COLOR = {
     'INFO':    '\033[34m',   # azul   — configuracion/setup, no es una confirmacion de resultado

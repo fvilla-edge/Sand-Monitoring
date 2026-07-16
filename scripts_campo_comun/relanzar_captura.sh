@@ -28,8 +28,9 @@ if [ $# -lt 1 ]; then
     exit 1
 fi
 
-MAX_REINTENTOS=10
-ESPERA_ENTRE_REINTENTOS=5
+CFG=/root/scripts_campo_comun/cfg.py
+MAX_REINTENTOS=$(python3 "$CFG" reintentos.max)
+ESPERA_ENTRE_REINTENTOS=$(python3 "$CFG" reintentos.espera_s)
 
 intento=0
 while [ "$intento" -lt "$MAX_REINTENTOS" ]; do

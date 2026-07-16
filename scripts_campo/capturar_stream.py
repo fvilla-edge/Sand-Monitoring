@@ -51,9 +51,10 @@ sys.path.insert(0, '/root/rpsa_client/python_lib')
 sys.path.insert(0, '/root/scripts_campo_comun')
 import streaming
 import campo_common as cc
+import cfg
 
 FS_BASE          = cc.FS_BASE
-ESPACIO_MIN_BASE = 500 * 1024 * 1024   # 500 MB minimo libre en USB, por canal
+ESPACIO_MIN_BASE = cfg.obtener('espacio.minimo_mb_por_canal') * 1024 * 1024
 STREAM_DIR       = cc.STREAM_DIR
 SERVER_BIN       = cc.SERVER_BIN
 DEC_SEGURAS_DUAL = {64}   # unica probada sin perdida sostenida con 2 canales; ver docstring
@@ -234,13 +235,13 @@ def main():
     p.add_argument('--condicion',      required=True, choices=['reposo', 'con_arena'])
     p.add_argument('--canales',        type=int, default=1, choices=[1, 2],
                    help='Cantidad de canales activos: 1 = mono/IN1 (default), 2 = dual IN1+IN2')
-    p.add_argument('--decimacion',     type=int, default=32,
+    p.add_argument('--decimacion',     type=int, default=cfg.obtener('captura_defaults.decimacion'),
                    help='Factor de decimacion, por canal (default 32 → 3.906 MHz/canal)')
-    p.add_argument('--duracion_chunk', type=float, default=1.0,
+    p.add_argument('--duracion_chunk', type=float, default=cfg.obtener('captura_defaults.duracion_chunk_min'),
                    help='Minutos por chunk (default 1)')
     p.add_argument('--duracion_total', type=float, default=None,
                    help='Minutos totales (sin limite si no se especifica)')
-    p.add_argument('--directorio',     default='/mnt/usb',
+    p.add_argument('--directorio',     default=cfg.obtener('captura_defaults.directorio'),
                    help='Storage externo montado (default /mnt/usb)')
     p.add_argument('--destino',        choices=['usb', 'red'], default='usb',
                    help='Destino de los chunks: usb (default) o red (scp SSH a PC)')

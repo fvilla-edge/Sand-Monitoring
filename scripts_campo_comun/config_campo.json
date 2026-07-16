@@ -1,0 +1,25 @@
+{
+  "espacio": {
+    "minimo_mb_por_canal": 500
+  },
+  "eficiencia": {
+    "umbral_bajo_pct": 80
+  },
+  "reintentos": {
+    "max": 10,
+    "espera_s": 5
+  },
+  "starlink": {
+    "timeout_stop_s": 150
+  },
+  "captura_defaults": {
+    "decimacion": 32,
+    "duracion_chunk_min": 1.0,
+    "directorio": "/mnt/usb"
+  },
+  "rutas": {
+    "log_dir": "/root/logs_campo",
+    "stream_dir": "/home/redpitaya/streaming_files/adc",
+    "state_file": "/root/starlink_remoto/estado"
+  }
+}
