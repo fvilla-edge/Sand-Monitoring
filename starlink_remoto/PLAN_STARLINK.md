@@ -175,12 +175,40 @@ se relanza.`.
 
 Probado en banco con captura real de 1 min/chunk, toggle disparado a mitad de
 chunk, en ambas direcciones (`on` y `off`): corte limpio, sin relanzamiento
-del supervisor, registro y `estado` correctos al final.
+del supervisor, registro y `estado` correctos al final. También probado
+disparando `on`/`off` a través de los `.service` reales (no llamando al
+script a mano) — `TimeoutStartUSec=infinity` en este unit, systemd no mata el
+script aunque la espera del corte tarde >90s (el default de
+`DefaultTimeoutStartUSec`).
+
+**Segundo hallazgo, más importante que el primero porque es el caso de uso
+real (2026-07-16):** el chequeo de arriba solo mataba `streaming-server`
+dentro del `if` de "hay captura corriendo". Si la captura ya había terminado
+sola (lo más común: `prender-starlink` → correr una captura → esperar que
+termine → `apagar-starlink`), `capturar_stream.py` ya no estaba, la función
+retornaba antes de llegar al `pkill` de `streaming-server`, y el toggle hacía
+`overlay.sh v0.94` con `streaming-server` todavía vivo y huérfano —
+confirmado en placa real con una captura de 10s: `streaming-server` seguía
+corriendo después de un `apagar-starlink` "exitoso" (`Result=success`),
+ahora completamente desincronizado del bitstream. Eso rompe la próxima
+captura: `asegurar_servidor()` en `campo_common.py` hace `pgrep
+streaming-server`, encuentra ese proceso viejo, asume que el servidor ya
+está listo, y no recarga nada. Se corrigió sacando el chequeo/`pkill` de
+`streaming-server` del `if` — ahora corre siempre, haya o no captura activa.
+Reproducido el bug y verificada la corrección con el mismo escenario (captura
+de 10s terminando sola + `apagar-starlink` real vía `.service`).
 
 No se implementó todavía "volver a `stream_app` y reiniciar
 `streaming-server`" después del toggle — eso depende del pulso del relé
 biestable (ver pendiente de abajo), que corta la dependencia del bitstream
 apenas se pulsa, así que puede no hacer falta reiniciar nada automáticamente.
+
+Anomalía sin explicar: 2 de las pruebas en placa (ambas veces que el fix
+efectivamente mataba un huérfano + recargaba el bitstream) cortaron la
+sesión SSH a mitad de comando (exit 255), con la placa siempre arriba después
+y el resultado final correcto. No hay evidencia de que sea el script — puede
+ser el link directo por USB-Ethernet. Si se repite en campo con Starlink real,
+ahí sí ameritaría investigarse.
 
 ## Pendientes
 

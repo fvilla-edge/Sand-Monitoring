@@ -66,25 +66,30 @@ esac
 PATRON_CAPTURA='python3.*capturar_stream\.py'
 
 parar_captura_si_corre() {
-  if ! pgrep -f "$PATRON_CAPTURA" >/dev/null 2>&1; then
-    return
+  if pgrep -f "$PATRON_CAPTURA" >/dev/null 2>&1; then
+    echo "captura en curso, pidiendo corte limpio (SIGTERM, como Ctrl+C)..."
+    pkill -TERM -f "$PATRON_CAPTURA" 2>/dev/null || true
+
+    esperado=0
+    while pgrep -f "$PATRON_CAPTURA" >/dev/null 2>&1; do
+      if [ "$esperado" -ge "$TIMEOUT_STOP" ]; then
+        echo "ADVERTENCIA: capturar_stream.py no cortó en ${TIMEOUT_STOP}s, forzando" >&2
+        pkill -9 -f "$PATRON_CAPTURA" 2>/dev/null || true
+        break
+      fi
+      sleep 2
+      esperado=$((esperado + 2))
+    done
   fi
 
-  echo "captura en curso, pidiendo corte limpio (SIGTERM, como Ctrl+C)..."
-  pkill -TERM -f "$PATRON_CAPTURA" 2>/dev/null || true
-
-  esperado=0
-  while pgrep -f "$PATRON_CAPTURA" >/dev/null 2>&1; do
-    if [ "$esperado" -ge "$TIMEOUT_STOP" ]; then
-      echo "ADVERTENCIA: capturar_stream.py no cortó en ${TIMEOUT_STOP}s, forzando" >&2
-      pkill -9 -f "$PATRON_CAPTURA" 2>/dev/null || true
-      break
-    fi
-    sleep 2
-    esperado=$((esperado + 2))
-  done
-
-  # streaming-server queda huerfano: no se cae solo al terminar capturar_stream.py
+  # streaming-server puede quedar corriendo aunque NINGUNA captura este activa:
+  # no se cae solo cuando capturar_stream.py termina (ni limpio ni cortado
+  # arriba), asi que una sesion que ya termino sola deja este proceso
+  # huerfano en stream_app indefinidamente. Confirmado en prueba real
+  # (2026-07-16): sin este chequeo incondicional, overlay v0.94 se aplicaba
+  # con el huerfano todavia vivo, y quedaba corriendo desincronizado del
+  # bitstream — la proxima captura lo encuentra via pgrep en
+  # asegurar_servidor() y asume que ya esta listo, sin recargar nada.
   if pgrep -f streaming-server >/dev/null 2>&1; then
     pkill -TERM -f streaming-server 2>/dev/null || true
     sleep 2
