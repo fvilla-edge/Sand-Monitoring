@@ -139,16 +139,61 @@ restart starlink-rele-on.timer` (o `-off.timer`). No hay que tocar el script.
 | Asunción de IP pública resulta ser CGNAT | Reconfirmar con Starlink activo en sitio |
 | El pin del relé no sostiene el nivel al cambiar de bitstream | **Confirmado con analizador lógico (2026-07-15):** al pasar de `v0.94` a `stream_app`, el pin cae limpio, siempre, ~800ms. Un relé normal se desenergizaría en cada cambio → **decidido usar relé biestable/latching** (mantiene su estado solo, sin señal sostenida) |
 
+## Corte limpio de captura antes de tocar el bitstream (2026-07-16)
+
+Hasta ahora, si el toggle del relé caía mientras `capturar_stream.py` estaba
+corriendo, el script solo avisaba (`ADVERTENCIA: ...`) y cambiaba el bitstream
+igual — cortando la captura en curso a la fuerza, sin coordinarse con
+`relanzar_captura.sh` (que la iba a relanzar a los 5s, peleando contra el
+cambio de bitstream). Eso además dejaba la placa colgada en `stream_app`
+indefinidamente después de que una sesión de captura terminara sola: nada
+recarga `v0.94` salvo la próxima vez que corra este mismo script.
+
+`control_starlink.sh` ahora, antes de tocar el bitstream: si detecta
+`capturar_stream.py` corriendo, le manda SIGTERM (mismo handler que Ctrl+C) y
+espera a que corte solo (hasta 150s, más que el tope de `duracion_chunk` de
+2 min) — así `capturar_stream.py` termina el chunk en curso, hace su propio
+`finally` (incluye esperar el move a USB), y sale con exit 0. Con eso,
+`relanzar_captura.sh` decide por su cuenta no relanzar (su propio chequeo de
+exit code), en vez de que el corte se lo imponga desde afuera. Si no corta a
+tiempo, recién ahí se fuerza (`pkill -9`). `streaming-server` queda huérfano
+tras el corte limpio (no se cae solo con el proceso padre) y se mata aparte.
+
+**Detalle importante encontrado en la prueba real (placa 10.42.0.180):** el
+patrón de `pgrep`/`pkill` NO puede ser `-f capturar_stream.py` a secas —
+`relanzar_captura.sh` invoca el script pasándole la ruta completa como
+argumento, así que su propia línea de comando (`bash relanzar_captura.sh
+/root/scripts_campo/capturar_stream.py ...`) también contiene ese string. Un
+`pkill -f capturar_stream.py` mata al supervisor bash junto con el proceso
+python — el corte "funciona" (no se relanza) pero por accidente, no porque
+`relanzar_captura.sh` haya visto un exit 0. El patrón correcto es
+`python3.*capturar_stream\.py` (ver `PATRON_CAPTURA` en el script), que solo
+matchea el proceso python real. Verificado en placa real: con el patrón
+amplio el log de la sesión no tenía la línea final del supervisor; con el
+patrón corregido sí aparece `[supervisor] sesion termino limpio (exit 0). No
+se relanza.`.
+
+Probado en banco con captura real de 1 min/chunk, toggle disparado a mitad de
+chunk, en ambas direcciones (`on` y `off`): corte limpio, sin relanzamiento
+del supervisor, registro y `estado` correctos al final.
+
+No se implementó todavía "volver a `stream_app` y reiniciar
+`streaming-server`" después del toggle — eso depende del pulso del relé
+biestable (ver pendiente de abajo), que corta la dependencia del bitstream
+apenas se pulsa, así que puede no hacer falta reiniciar nada automáticamente.
+
 ## Pendientes
 
 - **Comprar el relé biestable y conseguir su datasheet.** Define lo que falta para
   terminar el diseño: si es de 2 bobinas (SET/RESET, un pin por bobina) o de 1 bobina
   con polaridad invertida (necesita driver tipo puente H), y la duración mínima de
   pulso que necesita.
-- Reescribir `control_starlink.sh`: ya no es "cambiar dos líneas" — necesita (1) parar
-  `streaming-server` si está corriendo, (2) `overlay.sh v0.94`, (3) pulso corto (no
-  nivel sostenido) en el/los pin(es) del relé, (4) volver a `stream_app` y reiniciar
-  `streaming-server` si hace falta. Una vez pulsado, el relé ya no depende del bitstream.
+- Reescribir `control_starlink.sh` con el pulso real: (1) parar `streaming-server` si
+  está corriendo — **ya implementado y probado, ver sección arriba** —, (2)
+  `overlay.sh v0.94` — ya estaba —, (3) pulso corto (no nivel sostenido) en el/los
+  pin(es) del relé — pendiente de hardware —, (4) decidir si hace falta volver a
+  `stream_app`/reiniciar `streaming-server` después del pulso, o si alcanza con dejar
+  que la próxima captura lo haga sola (comportamiento actual).
 - Cableado físico: qué pin del conector de expansión se usa, aislación.
 - Confirmar el comportamiento fail-safe deseado del relé real.
 - Decidir si esta carpeta se fusiona con `scripts_campo_comun/` (infraestructura
