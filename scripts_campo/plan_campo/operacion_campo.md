@@ -122,10 +122,11 @@ python3 /root/scripts_campo/capturar_stream.py \
   --pc_ruta /home/facu-edge/datos_campo
 ```
 
-**Parar:** matar el proceso (`Ctrl+C` no corta una sesión con streaming activo, ver
-`troubleshooting.md` → "Ctrl+C no corta la sesión"). El chunk en curso se pierde si se mata
-a mitad — para un corte limpio, esperar a que termine el chunk actual antes de matar el
-proceso, o usar `--duracion_total` para que la sesión termine sola.
+**Parar:** `Ctrl+C` corta la sesión de forma limpia, pero recién al terminar el chunk en
+curso — con `--duracion_chunk` grande esto puede tardar hasta esos minutos (ver
+`troubleshooting.md` → "Ctrl+C tarda en cortar la sesión"). No matar el proceso a la
+fuerza salvo que sea necesario: eso sí pierde el chunk en curso. Alternativa: usar
+`--duracion_total` para que la sesión termine sola.
 
 ### Parámetros
 

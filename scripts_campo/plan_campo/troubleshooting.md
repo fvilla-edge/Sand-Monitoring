@@ -40,12 +40,15 @@ sleep 2
 /opt/redpitaya/bin/streaming-server -v &
 ```
 
-## Ctrl+C no corta la sesión
+## Ctrl+C tarda en cortar la sesión
 
-Con streaming activo, la señal queda pendiente y nunca se procesa hasta que termina el
-chunk en curso — con `--duracion_chunk` largo esto puede tardar minutos. Hoy no hay forma
-prolija de cortar una sesión activa: matar el proceso (`kill`, `pkill -f capturar_stream`)
-es la única opción real. El chunk en curso se pierde si se corta así.
+Con streaming activo, Ctrl+C sí corta la sesión de forma limpia (no hay que matar el
+proceso), pero no es inmediato: el loop principal solo revisa la señal una vez por chunk,
+así que el corte real llega recién cuando termina el chunk en curso — con
+`--duracion_chunk` grande (hasta 2 min, ver `formato_y_funcionamiento.md`) esto puede
+tardar hasta esos minutos. Es esperable, no un cuelgue: si tarda, esperar a que termine
+el chunk en vez de matar el proceso a la fuerza (matarlo a mitad de chunk sí pierde ese
+chunk).
 
 ## Modo RED: "Permission denied" o cuelga en scp
 
