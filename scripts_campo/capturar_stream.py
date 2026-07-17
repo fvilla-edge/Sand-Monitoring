@@ -327,6 +327,7 @@ def main():
     chunk_num        = 1
     tiempo_capturado = 0.0
     move_thread      = None
+    bytes_pendientes = 0  # tamano del chunk que el move en curso todavia no aterrizo en destino
 
     try:
         while not _stop.activo:
@@ -341,8 +342,14 @@ def main():
                 break
 
             libre_usb = shutil.disk_usage(args.directorio).free
-            if libre_usb < ESPACIO_MIN:
-                cc.log('ERROR', f'[!] USB sin espacio ({libre_usb/1e6:.0f} MB libres). Deteniendo.')
+            # Se descuenta el chunk que el move de fondo todavia no aterrizo
+            # en destino — sin esto, este chequeo ve espacio que va a
+            # desaparecer apenas ese move termine (ver bytes_pendientes mas
+            # abajo).
+            libre_usb_efectivo = libre_usb - bytes_pendientes
+            if libre_usb_efectivo < ESPACIO_MIN:
+                cc.log('ERROR', f'[!] USB sin espacio ({libre_usb_efectivo/1e6:.0f} MB libres '
+                                 f'una vez que aterrice el move en curso). Deteniendo.')
                 break
 
             if total_s:
@@ -355,7 +362,7 @@ def main():
                 n = n_muestras
 
             if args.destino == 'usb':
-                espacio_label = f'USB {libre_usb/1e9:.2f} GB libres'
+                espacio_label = f'USB {libre_usb_efectivo/1e9:.2f} GB libres'
             else:
                 libre_sd = shutil.disk_usage(STREAM_DIR).free
                 espacio_label = f'SD {libre_sd/1e9:.2f} GB libres'
@@ -377,7 +384,11 @@ def main():
                 cc.log('INFO', '  [esperando move anterior...]')
                 move_thread.join()
 
-            # Mover este chunk en background (mientras captura el siguiente)
+            # Mover este chunk en background (mientras captura el siguiente).
+            # El join() de arriba ya garantizo que el move previo aterrizo,
+            # asi que bytes_pendientes pasa a reflejar solo este chunk nuevo.
+            if args.destino == 'usb':
+                bytes_pendientes = os.path.getsize(archivo_sd)
             move_thread = threading.Thread(
                 target=mover_fn,
                 args=(archivo_sd, chunk_num),
