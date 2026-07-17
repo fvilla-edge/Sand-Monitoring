@@ -244,22 +244,31 @@ def mover_a_usb(archivo_sd, dest_usb, chunk_num, log_evento):
     """
     Copia archivo de SD a USB y elimina el original (corre en thread).
 
+    Se copia primero a un nombre temporal (`.tmp`) y se renombra al nombre
+    final recien cuando la copia termino entera. SD y USB son filesystems
+    distintos, asi que `shutil.move` entre ellos copia y despues borra (no
+    es un rename atomico) — una copia interrumpida a mitad de camino dejaba
+    un chunk truncado con el nombre final ya en destino. El rename final,
+    en cambio, es entre dos archivos ya en el mismo filesystem (USB), asi
+    que es atomico: nunca queda un chunk truncado con el nombre final.
+
     Si falla (USB desconectado, remontado read-only, etc.) se registra con
     `log_evento(nivel='ERROR')` en vez de perderse en el excepthook default
     del thread — sin esto, una falla de move quedaba invisible para el
     operador y para el loop principal, que seguia capturando el siguiente
-    chunk sin saber que el anterior no llego a destino. El archivo original
-    queda intacto en la SD (shutil.move no llega a borrarlo si la copia
-    falla a mitad de camino).
+    chunk sin saber que el anterior no llego a destino.
     """
-    nombre  = os.path.basename(archivo_sd)
-    destino = os.path.join(dest_usb, nombre)
+    nombre      = os.path.basename(archivo_sd)
+    destino     = os.path.join(dest_usb, nombre)
+    destino_tmp = destino + '.tmp'
     t0 = time.perf_counter()
     try:
-        shutil.move(archivo_sd, destino)
+        shutil.move(archivo_sd, destino_tmp)
+        os.rename(destino_tmp, destino)
     except Exception as e:
         log_evento(f'[!] Move a USB del chunk {chunk_num:04d} ({nombre}) fallo: {e} '
-                    f'— el archivo original queda en la SD ({archivo_sd})', nivel='ERROR')
+                    f'— revisar SD ({archivo_sd}) y {destino_tmp} en el USB, el archivo '
+                    f'puede haber quedado a medio copiar en cualquiera de los dos', nivel='ERROR')
         return
     t = time.perf_counter() - t0
     size_mb = os.path.getsize(destino) / 1e6
@@ -388,14 +397,25 @@ def mover_a_red(archivo_sd, pc_host, pc_ruta, chunk_num, log_evento):
     thread). Mismo motivo que en `mover_a_usb` para el try/except: sin el,
     un scp que falla (red caida, host inalcanzable) desaparece en el
     excepthook default del thread, invisible para el operador y para el
-    loop principal. Si falla, el archivo original NO se borra de la SD.
+    loop principal.
+
+    Igual que en `mover_a_usb`, el scp copia a un nombre temporal (`.tmp`)
+    en el destino y el rename al nombre final se hace aparte, por SSH, ya
+    en la PC — un scp interrumpido a mitad de camino deja el `.tmp` a medio
+    escribir, nunca un chunk truncado con el nombre final. Si falla
+    cualquiera de los dos pasos, el archivo original NO se borra de la SD.
     """
-    nombre = os.path.basename(archivo_sd)
+    nombre     = os.path.basename(archivo_sd)
+    nombre_tmp = nombre + '.tmp'
     t0 = time.perf_counter()
     try:
         size_mb = os.path.getsize(archivo_sd) / 1e6
         subprocess.run(
-            ['scp', '-q', archivo_sd, f'{pc_host}:{pc_ruta}/'],
+            ['scp', '-q', archivo_sd, f'{pc_host}:{pc_ruta}/{nombre_tmp}'],
+            check=True,
+        )
+        subprocess.run(
+            ['ssh', pc_host, 'mv', f'{pc_ruta}/{nombre_tmp}', f'{pc_ruta}/{nombre}'],
             check=True,
         )
         os.remove(archivo_sd)
