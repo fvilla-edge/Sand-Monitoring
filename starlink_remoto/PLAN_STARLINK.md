@@ -105,6 +105,25 @@ Para cambiar el horario: editar la línea `OnCalendar=` del `.timer` correspondi
 (local y en la placa), y en la placa correr `systemctl daemon-reload && systemctl
 restart starlink-rele-on.timer` (o `-off.timer`). No hay que tocar el script.
 
+## Desactivar/activar la programación automática (ej. durante pruebas de campo)
+
+```bash
+# desactivar los dos horarios (08:55 / 17:00) sin perder la instalación
+ssh root@<IP_PLACA> "systemctl disable --now starlink-rele-on.timer starlink-rele-off.timer"
+
+# reactivarlos cuando se quiera volver al horario fijo
+ssh root@<IP_PLACA> "systemctl enable --now starlink-rele-on.timer starlink-rele-off.timer"
+
+# confirmar el estado (0 timers listados = desactivados)
+ssh root@<IP_PLACA> "systemctl list-timers 'starlink*' --all"
+```
+
+`disable` evita que el timer se reactive solo si la placa reinicia; `--now` además lo
+corta ya. Los alias `prender-starlink` / `apagar-starlink` **no dependen del timer**:
+llaman directo a `systemctl start starlink-rele@on.service` / `@off.service`, así que
+siguen funcionando igual (a mano) esté el timer activado o no. Desactivado el
+2026-07-17 en la placa 10.42.0.180 para no interferir con pruebas en curso.
+
 ## Validado en banco (placa real, sin Starlink conectado)
 
 - `rp.rp_LEDSetState()` (propuesta inicial) **falla**: `rp_Init()` inicializa también
