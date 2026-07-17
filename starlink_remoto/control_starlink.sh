@@ -13,7 +13,11 @@
 # no tiene RTC, asi que llega a cada ventana con reloj desviado).
 #
 # STATE_FILE evita reprogramar la FPGA (y su pulso espurio de tri-state) si
-# ya estamos en el estado pedido.
+# ya estamos en el estado pedido — pero SOLO evita eso. El corte de captura
+# activa corre siempre, sin importar STATE_FILE: si alguien arranca una
+# captura por fuera de este script (a mano, o systemd que la relanza), el
+# archivo puede decir "off" mientras el bitstream sigue en stream_app, y ese
+# desacople no se detecta salvo que se chequee de verdad si hay algo corriendo.
 
 set -euo pipefail
 
@@ -46,11 +50,17 @@ esac
 # relanzar o no.
 PATRON_CAPTURA='python3.*capturar_stream\.py'
 
+# Se pone en 1 si parar_captura_si_corre encontro algo activo — invalida el
+# atajo de STATE_FILE de mas abajo, porque prueba que el bitstream no estaba
+# donde STATE_FILE decia que estaba.
+HABIA_ACTIVO=0
+
 parar_captura_si_corre() {
   # SIGTERM = mismo handler que Ctrl+C: corta el chunk en curso y sale con
   # exit 0, para que relanzar_captura.sh no la relance. Si no corta a
   # tiempo, se fuerza.
   if pgrep -f "$PATRON_CAPTURA" >/dev/null 2>&1; then
+    HABIA_ACTIVO=1
     echo "captura en curso, pidiendo corte limpio (SIGTERM, como Ctrl+C)..."
     pkill -TERM -f "$PATRON_CAPTURA" 2>/dev/null || true
 
@@ -71,20 +81,24 @@ parar_captura_si_corre() {
   # captura activa. Por eso este chequeo es incondicional, no solo dentro
   # del if de arriba.
   if pgrep -f streaming-server >/dev/null 2>&1; then
+    HABIA_ACTIVO=1
     pkill -TERM -f streaming-server 2>/dev/null || true
     sleep 2
     pkill -9 -f streaming-server 2>/dev/null || true
   fi
 }
 
+# Corre siempre, antes de mirar STATE_FILE — ver comentario arriba.
+parar_captura_si_corre
+
 # Evita reprogramar la FPGA si ya estamos en el estado pedido (y con eso, el
-# pulso espurio de tri-state que genera cada reprogramacion).
-if [ "$(cat "$STATE_FILE" 2>/dev/null || true)" = "$ACCION" ]; then
+# pulso espurio de tri-state que genera cada reprogramacion) — pero solo si
+# ademas no habia nada activo, porque si habia algo, el estado real no era
+# el que STATE_FILE decia.
+if [ "$HABIA_ACTIVO" -eq 0 ] && [ "$(cat "$STATE_FILE" 2>/dev/null || true)" = "$ACCION" ]; then
   echo "ya esta en '$ACCION', no hago nada"
   exit 0
 fi
-
-parar_captura_si_corre
 
 "$OVERLAY" v0.94
 "$MONITOR" "$DIR_REG" 0x1
