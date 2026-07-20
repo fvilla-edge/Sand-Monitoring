@@ -196,7 +196,7 @@ def _capturar_chunk(confObj, adcObj, n_muestras, fs_ef, chunk_num, condicion, se
     size_mb    = bytes_totales / 1e6
     cc.log('OK', f'  [SD] campo_{condicion}_{session_ts}_{chunk_num:04d}.bin'
                  f'  ({senal_s:.1f}s | {t_total:.1f}s reloj | '
-                 f'{eficiencia:.0f}% efic | {size_mb:.0f} MB)')
+                 f'{eficiencia:.0f}% efic~ (aprox) | {size_mb:.0f} MB)')
     if eficiencia < cc.UMBRAL_EFICIENCIA_BAJA:
         log_evento(f'EFICIENCIA BAJA en chunk {chunk_num}: {eficiencia:.0f}% '
                     f'(esperado ~90-98%)', nivel='WARNING')
