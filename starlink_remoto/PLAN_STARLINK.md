@@ -232,19 +232,47 @@ y el resultado final correcto. No hay evidencia de que sea el script — puede
 ser el link directo por USB-Ethernet. Si se repite en campo con Starlink real,
 ahí sí ameritaría investigarse.
 
-## Pendientes
+## Migración del pulso de control a PS_MIO10 (2026-07-23)
 
-- **Comprar el relé biestable y conseguir su datasheet.** Define lo que falta para
-  terminar el diseño: si es de 2 bobinas (SET/RESET, un pin por bobina) o de 1 bobina
-  con polaridad invertida (necesita driver tipo puente H), y la duración mínima de
-  pulso que necesita.
-- Reescribir `control_starlink.sh` con el pulso real: (1) parar `streaming-server` si
-  está corriendo — **ya implementado y probado, ver sección arriba** —, (2)
-  `overlay.sh v0.94` — ya estaba —, (3) pulso corto (no nivel sostenido) en el/los
-  pin(es) del relé — pendiente de hardware —, (4) decidir si hace falta volver a
-  `stream_app`/reiniciar `streaming-server` después del pulso, o si alcanza con dejar
-  que la próxima captura lo haga sola (comportamiento actual).
-- Cableado físico: qué pin del conector de expansión se usa, aislación.
+Relé y `control_starlink.sh` con pulso real ya funcionando desde el 22/07 (pin
+`DIO1_P`, PL) — pero se encontró que **cualquier reprogramado de FPGA
+(arrancar o cortar una captura) puede togglear el relé solo**, sin pasar por
+el script y sin aviso (glitch de ~12-19ms en el cambio de bitstream). Filtro
+de hardware (RC+Schmitt) evaluado y descartado.
+
+Solución encontrada y validada en banco: mover el pulso de control de
+`DIO1_P` (PL, housekeeping de la FPGA) a `PS_MIO10` (lado PS del Zynq, pin 3
+del conector E2, "SPI MOSI" de fábrica) — un GPIO del lado PS no se resetea
+con un reprogramado de PL. Requiere reconfigurar el multiplexor del pin
+(registro `MIO_PIN_10` del SLCR, `0xf8000728`, escribir `0x1600` para
+seleccionar función GPIO) antes de poder usarlo como salida — ver
+`asegurar_mux_gpio()`/`asegurar_salida_ps()`/`pulsar_ps()` en
+`control_starlink.sh`.
+
+Validado con analizador lógico y con round-trip real de bitstream
+(`v0.94` → `stream_app` → `v0.94`, arrancando y cortando una captura de
+prueba): el registro del mux y el estado del pin quedaron intactos durante
+todo el ciclo — el relé ya no se ve afectado por el reprogramado de FPGA.
+
+**Pendiente para la próxima sesión, antes de llevarlo a producción:**
+
+1. **El mux no persiste un reboot** — al reiniciar la placa, `PS_MIO10`
+   vuelve a su función de fábrica (`SPI1_MOSI`) hasta que algo vuelva a
+   escribir `MIO_PIN_10`. Decidir dónde reaplicarlo de forma confiable (una
+   unit de systemd al boot, o alcanza con que lo haga
+   `control_starlink.sh` en su primer `on`/`off` después de bootear).
+2. **Cableado directo a la Red Pitaya, no a través de la Click Shield** —
+   la prueba de esta sesión conectó el cable directo al pin 3 del conector
+   E2. Falta decidir si el pulso final pasa de nuevo por la shield (y su
+   traductor de nivel) o se deja cableado directo a la placa.
+3. **El propio cambio de mux genera un pulso único en el pin** — pasa una
+   sola vez por reboot (cuando se reconfigura por primera vez), no en cada
+   `on`/`off` dentro del mismo boot. Confirmado con analizador: sin la
+   reconfiguración de mux de por medio, la secuencia de pulso sale limpia
+   (un solo flanco). Tener en cuenta al decidir cuándo dispara el punto 1.
+
+## Pendientes (histórico, hardware ya resuelto)
+
 - Confirmar el comportamiento fail-safe deseado del relé real.
 - Decidir si esta carpeta se fusiona con `scripts_campo_comun/` (infraestructura
   compartida) una vez que el relé esté instalado, o queda separada.
