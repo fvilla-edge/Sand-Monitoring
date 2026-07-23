@@ -279,8 +279,22 @@ todo el ciclo — el relé ya no se ve afectado por el reprogramado de FPGA.
    medio), y después `control_starlink.sh off`/`on` corridos a mano
    funcionaron correctos: `off` tomó el atajo (ya estaba en ese estado),
    `on` pulsó una sola vez sin `ADVERTENCIA` y quedó confirmado por HW
-   (LED). Falta probar con los timers reales (`starlink-rele-on/off.timer`)
-   disparando solos, no invocando el script a mano.
+   (LED). **Timers reales probados y OK (2026-07-23), las dos direcciones:**
+   se forzó un disparo de `starlink-rele-on.timer` y, por separado, de
+   `starlink-rele-off.timer` (horario temporal + reactivación en cada uno),
+   confirmando en ambos los dos caminos posibles — catch-up de
+   `Persistent=true` (dispara al reactivar, pulsa de verdad) y disparo
+   natural al horario programado (toma el atajo, sin error, porque ya
+   había quedado en el estado correcto por el catch-up). Horario y estado
+   deshabilitado restaurados en los dos timers como estaban antes de la
+   prueba; relé quedó en `off`. **Pendiente de migración a `PS_MIO10`
+   cerrado por completo.**
+
+   **Pendiente nuevo, a futuro:** lo probado hasta acá fue con horarios
+   forzados (unos minutos adelante) para no esperar. Falta hacer más
+   pruebas con los timers en su horario real (`08:55`/`17:00`, sin forzar
+   nada), en más de un ciclo, antes de confiar del todo en que anda bien en
+   uso normal de varios días seguidos.
 2. **[RESUELTO/CORREGIDO 2026-07-23] Cableado directo a la Red Pitaya, no a
    través de la Click Shield** — esta nota estaba mal desde que se escribió:
    el cableado siempre fue a través de la Click Shield (con su traductor de
