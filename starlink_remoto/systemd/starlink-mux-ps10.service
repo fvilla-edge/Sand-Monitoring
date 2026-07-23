@@ -1,0 +1,10 @@
+[Unit]
+Description=Configura PS_MIO10 como GPIO de salida para el rele de Starlink (una vez por boot, aislado de cualquier pulso)
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/root/starlink_remoto/asegurar_mux_ps10.sh
+
+[Install]
+WantedBy=multi-user.target

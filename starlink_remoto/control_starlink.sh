@@ -3,9 +3,18 @@
 #
 # El rele es biestable por flanco (modulo "boton externo" en paralelo con su
 # boton de a bordo): un pulso lo cambia de estado sin importar cual era antes.
-# Control por PS_MIO10 (ver bloque PRUEBA mas abajo), reposo LOW, pulso a
-# HIGH y vuelta a LOW togglea. El "pad indicador externo" (LED de estado)
-# esta cableado a DIO2_P via un transistor NPN en emisor comun (el pad solo
+# Control por PS_MIO10 (mux_ps10_common.sh), reposo LOW, pulso a HIGH y
+# vuelta a LOW togglea. El mux de PS_MIO10 no persiste un reboot (vuelve a
+# SPI1_MOSI) y ademas habilitar su salida por primera vez togglea el rele
+# solo (glitch real, no solo de analizador) — por eso ese reconfigurado
+# corre aislado, una sola vez al boot, via starlink-mux-ps10.service, nunca
+# junto con un pulso intencional en la misma corrida (si se mezclan, los dos
+# toggles se cancelan y el pedido de on/off termina sin efecto). Las
+# llamadas a asegurar_mux_gpio/asegurar_salida_ps mas abajo son una red de
+# seguridad idempotente por si esa unit no corrio.
+#
+# El "pad indicador externo" (LED de estado) esta cableado a DIO2_P via un
+# transistor NPN en emisor comun (el pad solo
 # da 0.15V/1.8V, insuficiente para logica limpia); la lectura sale invertida
 # (transistor saturado con LED prendido = colector en LOW): bit en alto =
 # rele en "off".
@@ -27,27 +36,17 @@ set -euo pipefail
 
 CFG=/root/scripts_campo_comun/cfg.py
 
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$DIR/mux_ps10_common.sh"   # MONITOR, MUX_REG/MUX_GPIO, DATA/DIRM/OEN_REG, PS_BIT, asegurar_mux_gpio(), asegurar_salida_ps()
+
 # Invariantes de hardware/firmware, acopladas al bitstream v0.94 — quedan
 # hardcodeadas a proposito, no en config_campo.json (ver comentario arriba).
-MONITOR=/opt/redpitaya/bin/monitor
 OVERLAY=/opt/redpitaya/sbin/overlay.sh
 LOADED_INF=/tmp/loaded_fpga.inf
 FPGA_NAME=v0.94
 IN_REG=0x40000020    # entrada P (bit2 = DIO2_P, feedback del rele)
 DIO2_BIT=0x4
 PULSO_S=0.2   # ancho del pulso — 19ms ya alcanzo a togglear en la placa real, esto deja margen
-
-# PRUEBA: pulso de control movido de DIO1_P (PL) a PS_MIO10 (pin 3 del
-# conector E2, "SPI MOSI" de fabrica) — no depende del bitstream de la FPGA,
-# pero recablear su multiplexor genera un pulso propio, por eso
-# asegurar_mux_gpio() solo escribe si no esta ya en GPIO. No persiste un
-# reboot (vuelve a SPI1_MOSI), hay que resolver eso antes de dejarlo en campo.
-MUX_REG=0xf8000728    # SLCR MIO_PIN_10
-MUX_GPIO=0x1600       # L3_SEL=000 (GPIO), resto igual al valor de fabrica
-DATA_REG=0xe000a040   # GPIO banco0 (MIO0-31), dato de salida
-DIRM_REG=0xe000a204   # GPIO banco0, direccion
-OEN_REG=0xe000a208    # GPIO banco0, habilitacion de salida
-PS_BIT=0x400          # bit10 = MIO10
 
 # Parametros operativos — ver scripts_campo_comun/config_campo.json
 STATE_FILE=$(python3 "$CFG" rutas.state_file)
@@ -77,19 +76,6 @@ leer_estado_real() {
   else
     echo on
   fi
-}
-
-asegurar_mux_gpio() {
-  if [ "$("$MONITOR" "$MUX_REG")" != "$(printf '0x%08x' "$MUX_GPIO")" ]; then
-    "$MONITOR" "$MUX_REG" "$MUX_GPIO"
-  fi
-}
-
-asegurar_salida_ps() {
-  local dirm=$("$MONITOR" "$DIRM_REG")
-  "$MONITOR" "$DIRM_REG" "$(printf '0x%x' $((dirm | PS_BIT)))"
-  local oen=$("$MONITOR" "$OEN_REG")
-  "$MONITOR" "$OEN_REG" "$(printf '0x%x' $((oen | PS_BIT)))"
 }
 
 pulsar_ps() {
@@ -150,8 +136,8 @@ if [ "$ESTADO_REAL" = "$ACCION" ]; then
   exit 0
 fi
 
-asegurar_mux_gpio
-asegurar_salida_ps
+asegurar_mux_gpio   # no-op normalmente (ver header) — starlink-mux-ps10.service ya lo hizo al boot
+asegurar_salida_ps  # idem
 pulsar_ps
 
 # Se re-lee (no se asume que el pulso funciono) para que STATE_FILE quede

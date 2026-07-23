@@ -59,17 +59,19 @@ El diseño real del relé necesita reprogramar la FPGA a `v0.94` para tocar ese 
 ```bash
 cd starlink_remoto
 
-# copiar el script de control
-scp control_starlink.sh root@<IP_PLACA>:/root/starlink_remoto/
+# copiar los scripts (control + configuracion de mux compartida + boot)
+scp control_starlink.sh mux_ps10_common.sh asegurar_mux_ps10.sh root@<IP_PLACA>:/root/starlink_remoto/
 
 # copiar las unidades systemd
-scp systemd/starlink-rele@.service systemd/starlink-rele-on.timer systemd/starlink-rele-off.timer \
+scp systemd/starlink-mux-ps10.service systemd/starlink-rele@.service \
+    systemd/starlink-rele-on.timer systemd/starlink-rele-off.timer \
     root@<IP_PLACA>:/etc/systemd/system/
 
-# instalar y activar
+# instalar y activar (starlink-mux-ps10 primero, corre al boot y de una vez)
 ssh root@<IP_PLACA> "
-  chmod +x /root/starlink_remoto/control_starlink.sh
+  chmod +x /root/starlink_remoto/control_starlink.sh /root/starlink_remoto/asegurar_mux_ps10.sh
   systemctl daemon-reload
+  systemctl enable --now starlink-mux-ps10.service
   systemctl enable --now starlink-rele-on.timer starlink-rele-off.timer
 "
 
@@ -256,20 +258,41 @@ todo el ciclo — el relé ya no se ve afectado por el reprogramado de FPGA.
 
 **Pendiente para la próxima sesión, antes de llevarlo a producción:**
 
-1. **El mux no persiste un reboot** — al reiniciar la placa, `PS_MIO10`
-   vuelve a su función de fábrica (`SPI1_MOSI`) hasta que algo vuelva a
-   escribir `MIO_PIN_10`. Decidir dónde reaplicarlo de forma confiable (una
-   unit de systemd al boot, o alcanza con que lo haga
-   `control_starlink.sh` en su primer `on`/`off` después de bootear).
+1. **[RESUELTO 2026-07-23] El mux no persiste un reboot** — al reiniciar la
+   placa, `PS_MIO10` vuelve a su función de fábrica (`SPI1_MOSI`) hasta que
+   algo vuelva a escribir `MIO_PIN_10`. Se confirmó en banco (placa
+   recién reiniciada) que aplicar mux+salida **sin pulso** igual togglea el
+   relé (no es solo un evento de analizador, es un toggle real) — por eso
+   no alcanza con resolverlo dentro del primer `on`/`off` de
+   `control_starlink.sh` (ese toggle accidental se sumaría al intencional
+   en la misma corrida y se cancelarían entre sí, dejando el pedido sin
+   efecto real). Se separó la configuración de mux en
+   `mux_ps10_common.sh` (compartido) + `asegurar_mux_ps10.sh`, aplicado una
+   sola vez al boot por `systemd/starlink-mux-ps10.service`, del que
+   `starlink-rele@.service` depende (`Requires=`/`After=`) para garantizar
+   el orden sin importar qué dispare el `on`/`off` (timer, alias manual).
+   `control_starlink.sh` sigue llamando a las mismas funciones como red de
+   seguridad idempotente. **Validado en placa real (10.42.0.180) con reboot
+   real:** la unit corrió sola al boot (`systemctl status` → `Finished`,
+   exit 0), togglé el relé una sola vez de forma aislada (confirmado con
+   analizador — un solo pulso limpio, sin pedido de `on`/`off` de por
+   medio), y después `control_starlink.sh off`/`on` corridos a mano
+   funcionaron correctos: `off` tomó el atajo (ya estaba en ese estado),
+   `on` pulsó una sola vez sin `ADVERTENCIA` y quedó confirmado por HW
+   (LED). Falta probar con los timers reales (`starlink-rele-on/off.timer`)
+   disparando solos, no invocando el script a mano.
 2. **Cableado directo a la Red Pitaya, no a través de la Click Shield** —
    la prueba de esta sesión conectó el cable directo al pin 3 del conector
    E2. Falta decidir si el pulso final pasa de nuevo por la shield (y su
    traductor de nivel) o se deja cableado directo a la placa.
-3. **El propio cambio de mux genera un pulso único en el pin** — pasa una
-   sola vez por reboot (cuando se reconfigura por primera vez), no en cada
-   `on`/`off` dentro del mismo boot. Confirmado con analizador: sin la
-   reconfiguración de mux de por medio, la secuencia de pulso sale limpia
-   (un solo flanco). Tener en cuenta al decidir cuándo dispara el punto 1.
+3. **[Atendido por el diseño del punto 1] El propio cambio de mux genera un
+   pulso único en el pin** — pasa una sola vez por reboot (cuando se
+   reconfigura por primera vez), no en cada `on`/`off` dentro del mismo
+   boot. Con el reconfigurado aislado en `starlink-mux-ps10.service`, ese
+   toggle único queda absorbido antes de cualquier pedido real de
+   `on`/`off` (que decide según el feedback real, no según lo que se pidió) —
+   no debería volver a mezclarse con un pulso intencional salvo que la
+   unit de boot falle.
 
 ## PS_MIO50 (I2C SCL) evaluado como alternativa y descartado (2026-07-23)
 
