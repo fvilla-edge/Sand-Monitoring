@@ -271,6 +271,18 @@ todo el ciclo — el relé ya no se ve afectado por el reprogramado de FPGA.
    reconfiguración de mux de por medio, la secuencia de pulso sale limpia
    (un solo flanco). Tener en cuenta al decidir cuándo dispara el punto 1.
 
+## PS_MIO50 (I2C SCL) evaluado como alternativa y descartado (2026-07-23)
+
+Se probó usar `PS_MIO50` (I2C SCL, pin 9 de E2) en vez de `PS_MIO10` para
+dejar el bus SPI libre a futuro (`starlink_remoto/test_pulso_ps_mio50.sh`,
+script aparte, no integrado a `control_starlink.sh`). El pulso funcionó en
+ambas direcciones, pero **el intento de round-trip de bitstream reveló que
+convertir ese pin a GPIO corta el I2C que usa `profiles -f` para leer la
+EEPROM de modelo de la placa** — con eso `overlay.sh` falla (`profiles -f`
+devuelve `undefined`), rompiendo toda captura y todo `control_starlink.sh`.
+Descartado con evidencia directa, no solo por el riesgo teórico de pin
+compartido. Producción sigue con `PS_MIO10`.
+
 ## Pendientes (histórico, hardware ya resuelto)
 
 - Confirmar el comportamiento fail-safe deseado del relé real.
