@@ -281,10 +281,15 @@ todo el ciclo — el relé ya no se ve afectado por el reprogramado de FPGA.
    `on` pulsó una sola vez sin `ADVERTENCIA` y quedó confirmado por HW
    (LED). Falta probar con los timers reales (`starlink-rele-on/off.timer`)
    disparando solos, no invocando el script a mano.
-2. **Cableado directo a la Red Pitaya, no a través de la Click Shield** —
-   la prueba de esta sesión conectó el cable directo al pin 3 del conector
-   E2. Falta decidir si el pulso final pasa de nuevo por la shield (y su
-   traductor de nivel) o se deja cableado directo a la placa.
+2. **[RESUELTO/CORREGIDO 2026-07-23] Cableado directo a la Red Pitaya, no a
+   través de la Click Shield** — esta nota estaba mal desde que se escribió:
+   el cableado siempre fue a través de la Click Shield (con su traductor de
+   nivel), nunca directo al pin 3 del conector E2 sin pasar por la shield.
+   Confirmado por el usuario: apenas se identificó que `PS_MIO10` andaba
+   como se buscaba, se cableó directo *desde la shield* hacia el módulo del
+   relé — todas las pruebas de esta sesión (round-trip de bitstream,
+   persistencia de mux, auto-corrección al boot) fueron con ese cableado,
+   no con uno que bypasee la shield. No hay pendiente real acá.
 3. **[Atendido por el diseño del punto 1] El propio cambio de mux genera un
    pulso único en el pin** — pasa una sola vez por reboot (cuando se
    reconfigura por primera vez), no en cada `on`/`off` dentro del mismo
