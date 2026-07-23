@@ -2,19 +2,16 @@
 # control_starlink.sh — togglea el rele biestable que corta/da paso a Starlink.
 #
 # El rele es biestable por flanco (modulo "boton externo" en paralelo con su
-# boton de a bordo): un pulso lo cambia de estado sin importar cual era antes,
-# no hay nivel a sostener. DIO1_P queda en reposo LOW; un pulso a HIGH y de
-# vuelta a LOW es lo que togglea. El "pad indicador externo" del modulo (LED
-# de estado) esta cableado a DIO2_P a traves de un transistor NPN en emisor
-# comun (el pad solo, sin acondicionar, da 0.15V/1.8V, insuficiente para un
-# nivel logico limpio) — por eso el script lee el estado real del rele en vez
-# de confiar ciegamente en STATE_FILE. La lectura sale invertida (transistor
-# saturado con LED prendido = colector en LOW): bit en alto = rele en "off".
+# boton de a bordo): un pulso lo cambia de estado sin importar cual era antes.
+# DIO1_P en reposo LOW; pulso a HIGH y vuelta a LOW togglea. El "pad indicador
+# externo" (LED de estado) esta cableado a DIO2_P via un transistor NPN en
+# emisor comun (el pad solo da 0.15V/1.8V, insuficiente para logica limpia);
+# la lectura sale invertida (transistor saturado con LED prendido = colector
+# en LOW): bit en alto = rele en "off".
 #
 # El registro de DIO1_P solo existe en el bitstream default (v0.94); con
-# streaming-server corriendo (bitstream stream_app) esa misma direccion es
-# otra cosa, y el nivel no sobrevive el cambio de bitstream. Por eso hace
-# falta forzar v0.94 siempre, y por eso una captura activa se corta primero.
+# streaming-server (stream_app) es otra cosa y el nivel no sobrevive el
+# cambio — por eso se fuerza v0.94 siempre, cortando la captura activa antes.
 #
 # En "on" reinicia ntpsec para forzar un STEP inmediato del reloj (la placa
 # no tiene RTC, asi que llega a cada ventana con reloj desviado).
@@ -61,7 +58,7 @@ esac
 # relanzar o no.
 PATRON_CAPTURA='python3.*capturar_stream\.py'
 
-# Requiere el bitstream v0.94 ya cargado (ver comentario de IN_REG arriba).
+# Precondicion: bitstream v0.94 ya cargado (ver header).
 leer_estado_real() {
   local val=$("$MONITOR" "$IN_REG")
   if (( (val & DIO2_BIT) != 0 )); then
@@ -105,18 +102,14 @@ parar_captura_si_corre() {
 # Corre siempre, antes de reprogramar/leer nada.
 parar_captura_si_corre
 
-# Reprogramar la FPGA resetea los registros de la logica programable
-# (incluido el housekeeping donde viven DIR_REG/OUT_REG/IN_REG), lo que
-# genera un pulso real en el pin. Si v0.94 ya esta cargado, no reprogramar
-# de nuevo. Hace falta ANTES de leer el estado real, porque DIO2_P solo es
-# feedback valido del rele con este bitstream cargado.
+# Reprogramar resetea los registros de logica programable (incluye
+# DIR_REG/OUT_REG/IN_REG) y genera un pulso real en el pin — por eso se
+# evita si v0.94 ya esta cargado (ver header).
 if [ "$(cat "$LOADED_INF" 2>/dev/null)" != "$FPGA_NAME" ]; then
   "$OVERLAY" "$FPGA_NAME"
 fi
 
-# Pulsar aca si ya esta en el estado pedido volteria el rele al estado
-# CONTRARIO (es biestable por flanco) — por eso el atajo es necesario, no
-# solo una optimizacion.
+# Atajo obligatorio, no optimizacion (ver header).
 ESTADO_REAL=$(leer_estado_real)
 if [ "$ESTADO_REAL" = "$ACCION" ]; then
   echo "el rele ya esta en '$ACCION' (verificado por HW), no hago nada"
