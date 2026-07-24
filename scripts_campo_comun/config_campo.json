@@ -10,7 +10,9 @@
     "espera_s": 5
   },
   "starlink": {
-    "timeout_stop_s": 150
+    "timeout_stop_s": 150,
+    "hora_on": "08:55",
+    "hora_off": "17:00"
   },
   "captura_defaults": {
     "decimacion": 32,
