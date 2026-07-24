@@ -153,3 +153,4 @@ fi
 
 mkdir -p "$(dirname "$STATE_FILE")"
 echo "$ESTADO_REAL" > "$STATE_FILE"
+sync   # sin esto un corte de luz justo despues del pulso puede perder este cambio (probado: ext4 tarda hasta 5s en confirmarlo solo)
