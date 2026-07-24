@@ -2,7 +2,7 @@
 # mux_ps10_common.sh — constantes y funciones para dejar PS_MIO10 configurado
 # como GPIO de salida. Compartido por dos consumidores:
 #   - starlink-mux-ps10.service: lo aplica una sola vez al boot, aislado de
-#     cualquier pulso (ver PLAN_STARLINK.md — mezclar mux+pulso en la misma
+#     cualquier pulso (ver HISTORIAL_STARLINK.md — mezclar mux+pulso en la misma
 #     corrida generaba un toggle accidental del rele, ademas del intencional).
 #   - control_starlink.sh: lo vuelve a llamar como red de seguridad
 #     idempotente (no hace nada si ya esta configurado), por si la unit de

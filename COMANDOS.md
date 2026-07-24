@@ -108,8 +108,91 @@ ni datos de campo reales.
 
 ---
 
+## Starlink / control remoto del relé (`starlink_remoto/`)
+
+Arquitectura, hallazgos de hardware y decisiones: `starlink_remoto/HISTORIAL_STARLINK.md`.
+
+### Instalación (una vez por placa)
+
+```bash
+cd starlink_remoto
+
+# scripts + configuracion de mux compartida + boot + horario
+scp control_starlink.sh mux_ps10_common.sh asegurar_mux_ps10.sh aplicar_horario.sh \
+    root@<IP_PLACA>:/root/starlink_remoto/
+
+# unidades systemd
+scp systemd/starlink-mux-ps10.service systemd/starlink-rele@.service \
+    systemd/starlink-rele-on.timer systemd/starlink-rele-off.timer \
+    root@<IP_PLACA>:/etc/systemd/system/
+
+ssh root@<IP_PLACA> "
+  chmod +x /root/starlink_remoto/control_starlink.sh /root/starlink_remoto/asegurar_mux_ps10.sh /root/starlink_remoto/aplicar_horario.sh
+  systemctl daemon-reload
+  systemctl enable --now starlink-mux-ps10.service
+  systemctl enable --now starlink-rele-on.timer starlink-rele-off.timer
+"
+
+# alias para prender/apagar a mano por SSH (opcional, comodidad)
+scp aliases.sh root@<IP_PLACA>:/root/starlink_remoto/
+ssh root@<IP_PLACA> "grep -q 'prender-starlink' /root/.bashrc || cat /root/starlink_remoto/aliases.sh >> /root/.bashrc"
+```
+
+### Operación día a día
+
+```bash
+# ver cuando dispara cada timer
+ssh root@<IP_PLACA> "systemctl list-timers 'starlink*' --all"
+
+# prender/apagar a mano, sin esperar el horario (logueado por SSH en la placa)
+prender-starlink   # = systemctl start starlink-rele@on.service
+apagar-starlink    # = systemctl start starlink-rele@off.service
+
+# ver si corrio bien (ADVERTENCIA si el pulso no coincidio con el feedback real)
+ssh root@<IP_PLACA> "journalctl -u starlink-rele@on.service"
+
+# estado real del rele, leido por hardware — idempotente, no pulsa si ya esta en ese estado
+ssh root@<IP_PLACA> "/root/starlink_remoto/control_starlink.sh on"   # o "off"
+```
+
+`apagar-starlink` corta la sesión SSH en el acto si depende del mismo Starlink que se
+está apagando — es lo esperado.
+
+### Cambiar el horario (`hora_on`/`hora_off`)
+
+El horario NO se edita en los `.timer` directamente — vive en
+`scripts_campo_comun/config_campo.json` → `starlink.hora_on`/`starlink.hora_off`
+(formato `HH:MM`, hora Argentina). Después de cambiarlos, aplicar con:
+
+```bash
+ssh root@<IP_PLACA> "/root/starlink_remoto/aplicar_horario.sh"
+```
+
+Reescribe el `OnCalendar=` de los dos `.timer` y hace `systemctl daemon-reload` — no
+hace falta reiniciar ni tocar nada más.
+
+### Activar/desactivar la programación automática (ej. pruebas de campo)
+
+```bash
+# desactivar los dos horarios sin perder la instalacion
+ssh root@<IP_PLACA> "systemctl disable --now starlink-rele-on.timer starlink-rele-off.timer"
+
+# reactivarlos
+ssh root@<IP_PLACA> "systemctl enable --now starlink-rele-on.timer starlink-rele-off.timer"
+
+# confirmar (0 timers listados = desactivados)
+ssh root@<IP_PLACA> "systemctl list-timers 'starlink*' --all"
+```
+
+`disable` evita que el timer se reactive solo si la placa reinicia; `--now` además lo
+corta ya. Los alias `prender-starlink`/`apagar-starlink` no dependen de que el timer
+esté activo.
+
+---
+
 ## Referencias
 
 - Guía operativa completa (setup, topologías de red, troubleshooting): `scripts_campo/PLAN_CAMPO.md`
 - Interpretación de métricas con valores reales medidos: `analisis/INTERPRETACION_RESULTADOS.md`
+- Historial y arquitectura del relé de Starlink: `starlink_remoto/HISTORIAL_STARLINK.md`
 - Plan de proyecto vigente: `docs/roadmap_deteccion_arena.md`
