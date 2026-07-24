@@ -114,6 +114,17 @@ comando de umount manual. Conectarlo a la PC y copiar la carpeta directo.
 PC durante la captura — no hace falta ninguno de estos pasos, ver "Otros casos de uso"
 abajo.)
 
+**Liberar espacio en el USB para la próxima captura**, una vez confirmado que los datos
+ya están copiados y a salvo en la PC (este comando no tiene vuelta atrás):
+
+```bash
+df -h /mnt/usb                        # confirmar que es el USB real antes de borrar
+rm -rf /mnt/usb/stream_adc/           # borra la carpeta entera y su contenido
+```
+
+No hace falta volver a crear la carpeta a mano — `capturar_stream.py` la recrea sola en
+la próxima corrida.
+
 ### 7. Revisar los datos (en la PC)
 
 ```bash
