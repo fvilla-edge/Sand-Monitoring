@@ -44,36 +44,37 @@ a mano).
 
 ### 4. Lanzar la captura
 
-**Mono (1 canal, caso más común):**
+**Mono (1 canal, captura corta de prueba — 4 chunks de 30s, 2 minutos total):**
 
 ```bash
-python3 /root/scripts_campo/capturar_stream.py --condicion reposo --directorio /mnt/usb
+python3 /root/scripts_campo/capturar_stream.py \
+  --condicion reposo --duracion_chunk 0.5 --duracion_total 2 --directorio /mnt/usb
 ```
 
 **Dual (2 canales, sensor de referencia en IN2):**
 
 ```bash
 python3 /root/scripts_campo/capturar_stream.py \
-  --condicion reposo --canales 2 --decimacion 64 --directorio /mnt/usb
+  --condicion reposo --canales 2 --decimacion 64 \
+  --duracion_chunk 0.5 --duracion_total 2 --directorio /mnt/usb
 ```
 
-`--condicion` es `reposo` o `con_arena` según lo que se esté probando. Corre indefinido
-hasta `Ctrl+C` (corta al terminar el chunk en curso) salvo que se use `--duracion_total`.
-Para sesiones largas o sin supervisión (de noche), usar el supervisor en vez del script
-solo — ver "Otros casos de uso" abajo.
+`--condicion` es `reposo` o `con_arena` según lo que se esté probando. `--duracion_total`
+hace que la sesión termine sola (acá, 2 minutos) — sin esto corre indefinido hasta
+`Ctrl+C` (corta al terminar el chunk en curso). Para sesiones largas o sin supervisión
+(de noche), usar el supervisor en vez del script solo — ver "Otros casos de uso" abajo.
 
 Detalle completo de parámetros y qué se ve en pantalla:
 `scripts_campo/plan_campo/operacion_campo.md`.
 
 ### 5. Terminar la captura
 
-`Ctrl+C` y esperar a que cierre el chunk en curso (no matar el proceso a la fuerza).
+Con `--duracion_total` (como arriba) termina sola. Si se lanzó sin ese límite, `Ctrl+C` y
+esperar a que cierre el chunk en curso (no matar el proceso a la fuerza).
 
-### 6. Sacar los datos del pendrive
+### 6. Sacar los datos
 
-Con la captura ya cortada, desconectar el pendrive de la placa — el automontaje se encarga
-de desmontarlo solo al detectar la desconexión, no hace falta un comando de umount manual.
-Conectarlo a la PC y copiar la carpeta:
+Quedan en:
 
 ```
 /mnt/usb/stream_adc/
@@ -83,8 +84,35 @@ Conectarlo a la PC y copiar la carpeta:
   ...
 ```
 
-(Si se capturó con `--destino red` en vez de `usb`, los archivos ya están en la PC — no
-hay pendrive que sacar, ver "Otros casos de uso" abajo.)
+**Si estás en el sitio, con acceso físico a la placa:** desconectar el pendrive — el
+automontaje se encarga de desmontarlo solo al detectar la desconexión, no hace falta un
+comando de umount manual. Conectarlo a la PC y copiar la carpeta directo.
+
+**Si el equipo no está al alcance (remoto, vía Starlink):**
+
+- **Por SSH/scp**, cuando la placa se puede alcanzar directo por IP (misma red, o IP
+  pública del Starlink sin CGNAT):
+
+  ```bash
+  scp -r root@<IP_PLACA>:/mnt/usb/stream_adc/ /home/facu-edge/datos_campo/
+  ```
+
+- **Por "agujero de gusano" (`magic-wormhole`)**, cuando no hay forma de alcanzar la
+  placa directo (sin IP pública, detrás de CGNAT) — no necesita puertos abiertos ni IP
+  fija en ninguno de los dos lados, solo que ambos tengan salida a internet (instalar una
+  vez con `apt install magic-wormhole` o `pip install magic-wormhole`):
+
+  ```bash
+  # en la placa (root@<IP_PLACA>)
+  wormhole send /mnt/usb/stream_adc/
+
+  # en la PC, con el código que imprime el comando anterior
+  wormhole receive <codigo>
+  ```
+
+(Si se capturó con `--destino red` en vez de `usb`, los archivos ya llegaron solos a la
+PC durante la captura — no hace falta ninguno de estos pasos, ver "Otros casos de uso"
+abajo.)
 
 ### 7. Revisar los datos (en la PC)
 
