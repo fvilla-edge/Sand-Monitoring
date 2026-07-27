@@ -61,6 +61,18 @@ case "$ACCION" in
     ;;
 esac
 
+# Serializa instancias concurrentes de este script (ej. los timers on/off
+# disparando juntos tras un salto de reloj, ver HISTORIAL_STARLINK.md) — sin
+# esto, dos procesos pueden hacer un read-modify-write concurrente sobre el
+# mismo registro de HW y pisarse entre si, ademas de competir por cual pulso
+# queda como estado final.
+LOCKFILE=/run/lock/starlink_rele.lock
+exec 9>"$LOCKFILE"
+if ! flock -w 180 9; then
+  echo "ADVERTENCIA: no se pudo tomar el lock del rele en 180s (¿otra instancia colgada?)" >&2
+  exit 1
+fi
+
 # El patron exige el prefijo "python3" para no matchear tambien la linea de
 # comando de relanzar_captura.sh (que incluye la ruta a capturar_stream.py
 # como argumento) — si lo matchea, un pkill -f mata al supervisor junto con
@@ -131,7 +143,7 @@ fi
 # Atajo obligatorio, no optimizacion (ver header).
 ESTADO_REAL=$(leer_estado_real)
 if [ "$ESTADO_REAL" = "$ACCION" ]; then
-  echo "el rele ya esta en '$ACCION' (verificado por HW), no hago nada"
+  echo "OK: el rele ya esta en '$ACCION' (verificado por HW), no hago nada"
   echo "$ESTADO_REAL" > "$STATE_FILE"
   exit 0
 fi
@@ -143,8 +155,12 @@ pulsar_ps
 # Se re-lee (no se asume que el pulso funciono) para que STATE_FILE quede
 # con el estado real del rele, no con lo que se pidio.
 ESTADO_REAL=$(leer_estado_real)
+FALLO=0
 if [ "$ESTADO_REAL" != "$ACCION" ]; then
   echo "ADVERTENCIA: se pidio '$ACCION' pero el feedback del rele sigue en '$ESTADO_REAL' despues del pulso" >&2
+  FALLO=1
+else
+  echo "OK: rele ahora en '$ESTADO_REAL' (confirmado por HW)"
 fi
 
 if [ "$ACCION" = "on" ]; then
@@ -154,3 +170,5 @@ fi
 mkdir -p "$(dirname "$STATE_FILE")"
 echo "$ESTADO_REAL" > "$STATE_FILE"
 sync   # sin esto un corte de luz justo despues del pulso puede perder este cambio (probado: ext4 tarda hasta 5s en confirmarlo solo)
+
+exit "$FALLO"

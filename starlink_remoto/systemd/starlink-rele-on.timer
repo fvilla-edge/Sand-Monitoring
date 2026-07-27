@@ -4,7 +4,7 @@ Description=Enciende el rele de Starlink todos los dias a las 08:55
 [Timer]
 OnCalendar=*-*-* 08:55:00 America/Argentina/Buenos_Aires
 Persistent=true
-Unit=starlink-rele@on.service
+Unit=starlink-aplicar-objetivo.service
 
 [Install]
 WantedBy=timers.target

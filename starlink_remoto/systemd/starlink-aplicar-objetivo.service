@@ -1,0 +1,8 @@
+[Unit]
+Description=Calcula y aplica el objetivo del rele de Starlink (manual > reloj > horario)
+Requires=starlink-mux-ps10.service
+After=starlink-mux-ps10.service
+
+[Service]
+Type=oneshot
+ExecStart=/root/starlink_remoto/aplicar_objetivo.sh

@@ -1,0 +1,10 @@
+[Unit]
+Description=Reevalua cada 5 min si el rele deberia estar on/off (manual/reloj/horario)
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+Unit=starlink-aplicar-objetivo.service
+
+[Install]
+WantedBy=timers.target

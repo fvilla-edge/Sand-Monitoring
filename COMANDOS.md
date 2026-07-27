@@ -117,42 +117,57 @@ Arquitectura, hallazgos de hardware y decisiones: `starlink_remoto/HISTORIAL_STA
 ```bash
 cd starlink_remoto
 
-# scripts + configuracion de mux compartida + boot + horario
+# scripts + configuracion de mux compartida + boot + horario + decision/aplicacion + estado
 scp control_starlink.sh mux_ps10_common.sh asegurar_mux_ps10.sh aplicar_horario.sh \
+    decidir_objetivo.sh aplicar_objetivo.sh starlink_manual.sh estado_starlink.sh \
     root@<IP_PLACA>:/root/starlink_remoto/
 
 # unidades systemd
-scp systemd/starlink-mux-ps10.service systemd/starlink-rele@.service \
+scp systemd/starlink-mux-ps10.service systemd/starlink-aplicar-objetivo.service \
     systemd/starlink-rele-on.timer systemd/starlink-rele-off.timer \
+    systemd/starlink-reconciliador.timer \
     root@<IP_PLACA>:/etc/systemd/system/
 
 ssh root@<IP_PLACA> "
-  chmod +x /root/starlink_remoto/control_starlink.sh /root/starlink_remoto/asegurar_mux_ps10.sh /root/starlink_remoto/aplicar_horario.sh
+  chmod +x /root/starlink_remoto/*.sh
   systemctl daemon-reload
   systemctl enable --now starlink-mux-ps10.service
   systemctl enable --now starlink-rele-on.timer starlink-rele-off.timer
+  systemctl enable --now starlink-reconciliador.timer
 "
 
-# alias para prender/apagar a mano por SSH (opcional, comodidad)
+# alias para prender/apagar/consultar a mano por SSH (opcional, comodidad)
 scp aliases.sh root@<IP_PLACA>:/root/starlink_remoto/
 ssh root@<IP_PLACA> "grep -q 'prender-starlink' /root/.bashrc || cat /root/starlink_remoto/aliases.sh >> /root/.bashrc"
 ```
 
 ### Operación día a día
 
+El rele ya no responde a "quien lo llamo" sino a una unica decision
+(`decidir_objetivo.sh`, prioridad manual > reloj no confiable > horario —
+ver `HISTORIAL_STARLINK.md`). Todo lo de abajo termina llamando a esa misma
+logica, asi que no hay forma de que dos caminos se pisen entre si.
+
 ```bash
+# ver estado sin tocar hardware ni cortar una captura activa
+estado-starlink
+# = Rele: ON — ultima confirmacion real por HW: 2026-07-27 13:05:38
+#   Modo: automatico (reloj + horario)
+#   Reloj sincronizado: si
+
+# prender/apagar a mano — entra en modo MANUAL, no se lo pisa el horario ni el
+# rescate por reloj hasta que corras "auto-starlink" (no expira solo)
+prender-starlink
+apagar-starlink
+
+# volver a control automatico (horario + rescate por reloj)
+auto-starlink
+
 # ver cuando dispara cada timer
 ssh root@<IP_PLACA> "systemctl list-timers 'starlink*' --all"
 
-# prender/apagar a mano, sin esperar el horario (logueado por SSH en la placa)
-prender-starlink   # = systemctl start starlink-rele@on.service
-apagar-starlink    # = systemctl start starlink-rele@off.service
-
-# ver si corrio bien (ADVERTENCIA si el pulso no coincidio con el feedback real)
-ssh root@<IP_PLACA> "journalctl -u starlink-rele@on.service"
-
-# estado real del rele, leido por hardware — idempotente, no pulsa si ya esta en ese estado
-ssh root@<IP_PLACA> "/root/starlink_remoto/control_starlink.sh on"   # o "off"
+# ver si corrio bien (ADVERTENCIA + exit code != 0 si el pulso no coincidio con el feedback real)
+ssh root@<IP_PLACA> "journalctl -u starlink-aplicar-objetivo.service"
 ```
 
 `apagar-starlink` corta la sesión SSH en el acto si depende del mismo Starlink que se
@@ -173,20 +188,26 @@ hace falta reiniciar ni tocar nada más.
 
 ### Activar/desactivar la programación automática (ej. pruebas de campo)
 
+Para dejar el rele quieto en un valor fijo durante una prueba, alcanza con
+`prender-starlink`/`apagar-starlink` (modo manual, ver arriba) — ni el
+horario ni el reconciliador de 5 min lo van a tocar mientras el flag manual
+este puesto. Desactivar los timers solo hace falta si ademas queres que la
+placa no reevalue nada:
+
 ```bash
-# desactivar los dos horarios sin perder la instalacion
-ssh root@<IP_PLACA> "systemctl disable --now starlink-rele-on.timer starlink-rele-off.timer"
+# desactivar horario + reconciliador sin perder la instalacion
+ssh root@<IP_PLACA> "systemctl disable --now starlink-rele-on.timer starlink-rele-off.timer starlink-reconciliador.timer"
 
 # reactivarlos
-ssh root@<IP_PLACA> "systemctl enable --now starlink-rele-on.timer starlink-rele-off.timer"
+ssh root@<IP_PLACA> "systemctl enable --now starlink-rele-on.timer starlink-rele-off.timer starlink-reconciliador.timer"
 
-# confirmar (0 timers listados = desactivados)
+# confirmar (0 timers listados = todo desactivado)
 ssh root@<IP_PLACA> "systemctl list-timers 'starlink*' --all"
 ```
 
 `disable` evita que el timer se reactive solo si la placa reinicia; `--now` además lo
-corta ya. Los alias `prender-starlink`/`apagar-starlink` no dependen de que el timer
-esté activo.
+corta ya. Los alias `prender-starlink`/`apagar-starlink` no dependen de que ningun
+timer esté activo.
 
 ---
 

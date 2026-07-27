@@ -246,6 +246,97 @@ Probado en banco con horarios forzados a pocos minutos: los dos disparos
 Horario devuelto a `08:55`/`17:00` y timers deshabilitados al cerrar la
 prueba (mismo estado que tenían antes).
 
+## Reloj sin RTC + `Persistent=true` + carrera on/off — hallazgo y rediseño (2026-07-27)
+
+**Problema planteado:** la placa corre a batería+panel solar (sin RTC — ver
+comentario en `control_starlink.sh`). Si se queda sin batería muchas horas o
+un día entero, al volver a arrancar el reloj queda atrasado esa misma
+cantidad de tiempo. Duda: ¿qué pasa con los timers `starlink-rele-on`/`off`
+si el horario configurado (`08:55`/`17:00`) ya "pasó" según el reloj real
+pero la placa recién está arrancando con un reloj que todavía no lo sabe?
+
+**Reproducido en placa real (banco, `10.42.0.180`), no solo en teoría:**
+
+1. Se confirmó en el journal que esto ya le había pasado a esta placa antes
+   de tocar nada: `fake-hwclock` (mecanismo estándar sin RTC, guardado
+   periódico cada ~20 min vía `fake-hwclock-save.timer`) restauró al bootear
+   un reloj 3 días atrasado; al llegar la red, `ntpsec` corrigió con un
+   `CLOCK: time stepped by 232775s` — un salto atómico, no gradual.
+2. Se reprodujo a mano: reloj atrasado 2 días + `fake-hwclock save` +
+   reboot real. Al arrancar, el journal mostró textualmente:
+   `starlink-rele-off.timer: Not using persistent file timestamp ... as it
+   is in the future.` — **`Persistent=true` no sirve de red de seguridad
+   acá**: systemd descarta la marca de "última vez que corrió" porque, vista
+   desde el reloj recién restaurado (atrasado), esa marca es "del futuro".
+   No hay catch-up al bootear. El relé se queda en lo que decía `STATE_FILE`
+   hasta que el reloj (atrasado pero corriendo a velocidad normal) llegue
+   solo al próximo horario programado — confirmado que eso pasa, acotado a
+   como mucho ~24h de "reloj falso", pero no es inmediato ni predecible
+   desde afuera sin conocer el desfasaje exacto.
+3. **Hallazgo nuevo, no buscado:** al forzar el salto de reloj hacia
+   adelante (simulando la corrección de `ntpsec` una vez que hay red), si
+   ese salto cruza tanto un horario de encendido como uno de apagado
+   pendientes (típico tras un corte de varios días), **`starlink-rele@on.
+   service` y `starlink-rele@off.service` arrancan al mismo instante y
+   corren en paralelo sobre el mismo relé** — reproducido dos veces, el
+   estado final quedó determinado por el orden de ejecución, no por ninguna
+   regla (una vez ganó "off", otra vez "on").
+
+**Placa restaurada al estado original al cerrar las pruebas** (reloj
+resincronizado, timers vueltos a `disabled`/`inactive`, `STATE_FILE`/HW
+confirmado en `on` como estaba antes de empezar).
+
+**Diseño de la solución — una sola decisión, no tres independientes:**
+
+Antes había tres puntos de decisión que no se hablaban entre sí (boot
+restaura `STATE_FILE` a ciegas, timer on pulsa "on" a ciegas, timer off
+pulsa "off" a ciegas). Se reemplazan por una única función,
+`decidir_objetivo.sh` (no toca hardware, solo calcula "on"/"off"), con
+prioridad fija:
+
+1. **Modo manual** (`starlink_manual.sh {on|off|auto}`, flag en
+   `modo_manual_file` de `config_campo.json`) — gana siempre, sin excepción,
+   y no expira solo. Es la respuesta a "qué pasa si nosotros apagamos a
+   propósito": ninguna lógica automática lo toca hasta que alguien corra
+   `auto-starlink` a mano.
+2. **Reloj no confiable** (`timedatectl show -p NTPSynchronized` = no,
+   señal ya existente y confirmada confiable en las pruebas de arriba) →
+   fuerza "on" (rescate), ignorando el horario. Esto es lo que reemplaza a
+   la idea original de "franja horaria de encendido de emergencia" — no
+   hacía falta una franja nueva, hacía falta una señal de si el reloj vale
+   la pena mirarlo.
+3. **Horario normal** (`config_campo.json` → `hora_on`/`hora_off`), solo si
+   ninguna de las dos anteriores aplica.
+
+`aplicar_objetivo.sh` decide y aplica (vía `control_starlink.sh`, ya
+idempotente). Boot (`asegurar_mux_ps10.sh`), los dos timers diarios y un
+timer nuevo (`starlink-reconciliador.timer`, cada 5 min) llaman todos a este
+mismo script — así, si dos disparan juntos (el caso de arriba), **calculan
+el mismo objetivo y ya no compiten por imponer valores distintos**. La
+carrera de HW residual (dos procesos tocando el registro a la vez) se cierra
+aparte con un `flock` en `control_starlink.sh`.
+
+El reconciliador de 5 min tiene un cuidado explícito para no repetir un
+error ya evitado antes en este proyecto (ver "Horario configurable vía
+`config_campo.json`", arriba): `control_starlink.sh` corta cualquier
+captura activa en cada invocación, así que un chequeo de alta frecuencia sin
+filtro mataría capturas constantemente. Por eso `aplicar_objetivo.sh` sin
+`--forzar` compara el objetivo contra `STATE_FILE` (la última lectura real
+conocida) *antes* de llamar a `control_starlink.sh`, y solo lo invoca si de
+verdad hay que cambiar algo. El boot es la única excepción (`--forzar`,
+siempre verifica por HW real) porque ahí sí puede haber un mismatch real
+entre `STATE_FILE` y el HW (el mux de `PS_MIO10` puede togglear el relé solo
+al habilitarse, ver más arriba) que la comparación liviana no detectaría.
+
+Se agregó también `estado_starlink.sh` (lectura pasiva de `STATE_FILE`, sin
+tocar FPGA/captura) y, en `control_starlink.sh`, un mensaje explícito de
+éxito al pulsar (antes el caso exitoso quedaba en silencio total) y
+`exit 1` real cuando el feedback no coincide con lo pedido (antes salía con
+éxito igual en ese caso, silencioso incluso para quien scriptee alrededor).
+
+`starlink-rele@.service` (el template que usaban los timers antes) quedó
+retirado — los timers ahora apuntan a `starlink-aplicar-objetivo.service`.
+
 ## Pendientes reales
 
 - Confirmar el comportamiento fail-safe deseado del relé real (qué pasa sin señal de control — depende del modelo, nunca definido).

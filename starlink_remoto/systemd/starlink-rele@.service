@@ -1,8 +1,0 @@
-[Unit]
-Description=Control del rele de Starlink (%i)
-Requires=starlink-mux-ps10.service
-After=starlink-mux-ps10.service
-
-[Service]
-Type=oneshot
-ExecStart=/root/starlink_remoto/control_starlink.sh %i

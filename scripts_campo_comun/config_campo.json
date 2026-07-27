@@ -22,6 +22,7 @@
   "rutas": {
     "log_dir": "/root/logs_campo",
     "stream_dir": "/home/redpitaya/streaming_files/adc",
-    "state_file": "/root/starlink_remoto/estado"
+    "state_file": "/root/starlink_remoto/estado",
+    "modo_manual_file": "/root/starlink_remoto/modo_manual"
   }
 }
