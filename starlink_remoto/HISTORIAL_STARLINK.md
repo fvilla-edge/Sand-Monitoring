@@ -295,10 +295,12 @@ pulsa "off" a ciegas). Se reemplazan por una única función,
 prioridad fija:
 
 1. **Modo manual** (`starlink_manual.sh {on|off|auto}`, flag en
-   `modo_manual_file` de `config_campo.json`) — gana siempre, sin excepción,
-   y no expira solo. Es la respuesta a "qué pasa si nosotros apagamos a
-   propósito": ninguna lógica automática lo toca hasta que alguien corra
-   `auto-starlink` a mano.
+   `modo_manual_file` de `config_campo.json`) — gana siempre, con una
+   excepción (ver "Modo manual con autolimpieza" más abajo): se borra solo
+   en cuanto el cálculo de 2+3 coincide por su cuenta con lo que el manual
+   ya venía forzando. Es la respuesta a "qué pasa si nosotros apagamos a
+   propósito": ninguna lógica automática lo toca hasta que coincida solo o
+   hasta que alguien corra `auto-starlink` a mano.
 2. **Reloj no confiable** (`timedatectl show -p NTPSynchronized` = no,
    señal ya existente y confirmada confiable en las pruebas de arriba) →
    fuerza "on" (rescate), ignorando el horario. Esto es lo que reemplaza a
@@ -337,9 +339,41 @@ tocar FPGA/captura) y, en `control_starlink.sh`, un mensaje explícito de
 `starlink-rele@.service` (el template que usaban los timers antes) quedó
 retirado — los timers ahora apuntan a `starlink-aplicar-objetivo.service`.
 
+## Modo manual con autolimpieza (2026-07-27, misma sesión)
+
+**Motivo:** el usuario quería poder cortar el relé a mano antes de horario
+(ej. apagarlo a las 15:00 en vez de esperar a las 17:00, para no gastar
+batería al pedo) sin quedar pegado en modo manual para siempre — el modo
+manual original (arriba) no expira solo, así que si después de apagarlo a
+mano pasa un corte de energía largo, se queda apagado indefinidamente sin
+que ninguna lógica automática lo rescate (agrava el riesgo de fail-safe ya
+anotado en "Riesgos abiertos": el único camino de acceso remoto es el propio
+Starlink que este relé corta).
+
+**Diseño:** `decidir_objetivo.sh` ahora calcula siempre el valor de
+reloj-no-confiable/horario (prioridad 2+3), incluso cuando hay modo manual
+activo. Si el manual coincide con ese valor calculado, se borra el archivo
+de modo manual solo (sin tocar HW) antes de devolver el resultado — así
+"apagar antes de horario" se autolimpia en cuanto el horario real llega a
+ese mismo valor por su cuenta, sin que nadie tenga que acordarse de correr
+`auto-starlink` después.
+
+**Validado en placa real (192.168.0.55) con 3 casos:**
+1. Manual coincidía de entrada con el horario natural → se autolimpió sin pedirlo.
+2. Manual="off" en medio de la ventana de "on" (el caso real de uso) → se mantuvo forzado, archivo intacto (no coincide, no se autolimpia).
+3. Se forzó `hora_off` a un horario ya pasado (simulando llegar al corte real) con manual="off" puesto → coincidió y se autolimpió, quedando en automático.
+
+**Qué NO resuelve:** si el corte de energía largo ocurre mientras el manual
+está en un valor que nunca va a coincidir con el rescate por reloj (ej.
+manual="off" durante todo un apagón largo, donde el rescate diría "on"), el
+manual sigue ganando sin límite de tiempo — el riesgo de fail-safe de
+"Riesgos abiertos" sigue exactamente igual, esto solo resuelve el caso de
+uso cotidiano (cortar antes de horario), no el escenario de emergencia.
+
 ## Pendientes reales
 
-- Confirmar el comportamiento fail-safe deseado del relé real (qué pasa sin señal de control — depende del modelo, nunca definido).
+- Confirmar el comportamiento fail-safe deseado del relé real (qué pasa sin señal de control — depende del modelo, nunca definido). Sigue sin resolverse pese a la autolimpieza del modo manual (ver arriba) — casos donde el manual nunca coincide con el rescate por reloj siguen bloqueados indefinidamente.
 - Decidir si esta carpeta se fusiona con `scripts_campo_comun/` (infraestructura compartida) una vez que el relé esté instalado en campo, o queda separada.
 - Asunción de IP pública de Starlink sin CGNAT, a reconfirmar en sitio con el kit real conectado — nada de esto se probó todavía con Starlink real, todo el trabajo hasta ahora fue en banco.
 - Probar los timers en su horario real (sin forzar horarios cercanos) en más de un ciclo, antes de confiar del todo en uso normal de varios días seguidos.
+- Confirmar con multímetro si `DIO2_P` (feedback) realmente queda flotante — y en qué nivel — cuando se desconecta el cable del módulo de relé. Probado una vez en placa real (cable desconectado a propósito): `control_starlink.sh on` disparó la `ADVERTENCIA` + `exit 1` esperada, pero una lectura estable por registro no prueba que el pin esté al aire ni que un flotante vaya a leer siempre del mismo lado — podría, por casualidad, coincidir con el valor pedido y confirmar en falso.

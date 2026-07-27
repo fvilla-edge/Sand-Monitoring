@@ -27,7 +27,7 @@ fi
 # echo "ultima confirmacion real por HW: ${MTIME}"
 #
 # if [ -s "$MODO_MANUAL_FILE" ]; then
-#   echo "Modo: MANUAL ($(cat "$MODO_MANUAL_FILE")) — automatico desactivado hasta 'starlink_manual.sh auto'"
+#   echo "Modo: MANUAL ($(cat "$MODO_MANUAL_FILE")) — se autolimpia cuando reloj/horario coincidan solos, o 'starlink_manual.sh auto' fuerza la vuelta ya"
 # else
 #   echo "Modo: automatico (reloj + horario)"
 # fi

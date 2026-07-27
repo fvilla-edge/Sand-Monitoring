@@ -3,8 +3,9 @@
 #
 # Mientras el modo manual este activo, decidir_objetivo.sh lo respeta siempre
 # (ver ese script) — ni el rescate por reloj no confiable ni el horario lo
-# van a pisar. No expira solo: para volver a automatico hay que correr
-# "auto" a mano.
+# van a pisar, salvo que ya coincidan solos con lo forzado, en cuyo caso
+# decidir_objetivo.sh lo autolimpia. Para forzar la vuelta a automatico ya
+# mismo (sin esperar a que coincida), correr "auto" a mano.
 
 set -euo pipefail
 

@@ -156,7 +156,9 @@ estado-starlink
 #   Reloj sincronizado: si
 
 # prender/apagar a mano — entra en modo MANUAL, no se lo pisa el horario ni el
-# rescate por reloj hasta que corras "auto-starlink" (no expira solo)
+# rescate por reloj; se autolimpia solo en cuanto el horario real llegue a
+# coincidir con lo forzado (ej. "apagar-starlink" antes de horario no hace
+# falta revertirlo despues), o "auto-starlink" fuerza la vuelta ya mismo
 prender-starlink
 apagar-starlink
 
