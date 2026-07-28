@@ -26,6 +26,26 @@ Asunción a reconfirmar en sitio: el plan de Starlink da IP pública/gestionable
 el SSH entrante llega directo sin túnel intermedio (Tailscale, WireGuard, etc.). Si en
 la práctica resulta ser CGNAT, este plan no alcanza y hace falta agregar esa capa.
 
+## Riesgos abiertos
+
+| Riesgo | Estado |
+|---|---|
+| Starlink no queda usable al instante (boot + actualización de firmware) | Margen de 5 min antes de la hora "oficial"; el firmware update puede igual comerse parte de la ventana, sin mitigación total posible |
+| Red Pitaya se cuelga/reinicia a mitad de ventana | `Persistent=true` en ambos timers dispara el que se perdió al volver a bootear. **Resuelto:** el fail-safe del relé físico ante ausencia total de señal de control quedó definido por el modelo elegido — relé biestable/latching, mantiene el último estado mecánicamente sin necesitar señal sostenida ni alimentación en el circuito de control, así que un cuelgue o corte de la Red Pitaya no lo mueve solo. |
+| Drift real de reloj en 16 hs sin red | Mitigado con el restart de `ntpsec` en el `on`, pero no medido en campo real todavía |
+| Asunción de IP pública resulta ser CGNAT | Reconfirmar con Starlink activo en sitio |
+| El pin del relé no sostiene el nivel al cambiar de bitstream | **Confirmado con analizador lógico (2026-07-15):** al pasar de `v0.94` a `stream_app`, el pin cae limpio, siempre, ~800ms. Un relé normal se desenergizaría en cada cambio → **decidido usar relé biestable/latching** (mantiene su estado solo, sin señal sostenida) |
+
+## Pendientes reales
+
+- Probar el rescate por modo manual vencido con los timers/reconciliador reales disparando solos (no solo invocación manual de `decidir_objetivo.sh`), y con un reboot en el medio — todo lo de arriba se probó invocando el script a mano y simulando el timestamp, no con el paso real de 24hs ni con timers reales.
+- Validar en la placa real el fix de "NTP no sincronizado → rescate vencido de entrada" (2026-07-28, commit `54338ec`) — probado solo con dry-run local (`cfg.py`/`timedatectl` mockeados), falta reproducir con un reboot real y reloj atrasado de verdad, como se hizo para el resto del rediseño de reloj.
+- ~~Confirmar el comportamiento fail-safe deseado del relé real (qué pasa sin señal de control)~~ — **cerrado (2026-07-28):** era una redacción vieja sin cruzar contra la decisión de relé biestable/latching, ver "Riesgos abiertos" arriba. Lo que sigue sin cubrir es un cuelgue de *software* (no del relé) — para eso ya hay un watchdog de hardware de systemd activo en la placa, `RuntimeWatchdogSec=5s` vía `cdns-wdt`/`/dev/watchdog0`, confirmado por SSH — resetea si systemd se cuelga, no decide nada sobre el estado del relé.
+- Decidir si esta carpeta se fusiona con `scripts_campo_comun/` (infraestructura compartida) una vez que el relé esté instalado en campo, o queda separada.
+- Asunción de IP pública de Starlink sin CGNAT, a reconfirmar en sitio con el kit real conectado — nada de esto se probó todavía con Starlink real, todo el trabajo hasta ahora fue en banco.
+- Probar los timers en su horario real (sin forzar horarios cercanos) en más de un ciclo, antes de confiar del todo en uso normal de varios días seguidos.
+- ~~Confirmar con multímetro si `DIO2_P` (feedback) realmente queda flotante al desconectar el cable~~ — **cerrado (2026-07-28):** medido físicamente con multímetro por el usuario, confirma el comportamiento que ya se había visto por registro (`control_starlink.sh on` con cable desconectado disparaba `ADVERTENCIA` + `exit 1`). Ya no es una lectura de registro sin verificar contra el hardware real.
+
 ## Por qué systemd timers
 
 No hay `cron` instalado en esta placa (Ubuntu 24.04 mínimo, sin el paquete). Se usa
@@ -47,8 +67,7 @@ regsets oficiales de FPGA que esa dirección solo es "LED" en el bitstream **def
 dirección es en realidad el **factor de decimación del ADC en vivo**. Esta escritura no
 prendía nada durante una captura, y en el peor caso podía pisar la decimación de una
 captura activa. Esto llevó al diseño real (reprogramar a `v0.94` antes de tocar el
-registro, y más adelante mover el pulso de control a `PS_MIO10`, ver sección de
-migración más abajo).
+registro, y más adelante mover el pulso de control a `PS_MIO10`, ver historial más abajo).
 
 ## Validado en banco (placa real, sin Starlink conectado)
 
@@ -68,374 +87,248 @@ migración más abajo).
   sufijo `America/Argentina/Buenos_Aires` en cada `OnCalendar=`, sin tocar el reloj del
   sistema.
 
-## Riesgos abiertos
+## Historial de cambios
 
-| Riesgo | Estado |
-|---|---|
-| Starlink no queda usable al instante (boot + actualización de firmware) | Margen de 5 min antes de la hora "oficial"; el firmware update puede igual comerse parte de la ventana, sin mitigación total posible |
-| Red Pitaya se cuelga/reinicia a mitad de ventana | `Persistent=true` en ambos timers dispara el que se perdió al volver a bootear. **Resuelto (fila de abajo, misma sesión de origen de esta tabla):** el fail-safe del relé físico ante ausencia total de señal de control SÍ quedó definido por el modelo elegido — relé biestable/latching, mantiene el último estado mecánicamente sin necesitar señal sostenida ni alimentación en el circuito de control, así que un cuelgue o corte de la Red Pitaya no lo mueve solo. Esta fila quedó redactada como pendiente en el mismo commit que registraba esa decisión más abajo, sin cruzarlas — corregido el 2026-07-28. |
-| Drift real de reloj en 16 hs sin red | Mitigado con el restart de `ntpsec` en el `on`, pero no medido en campo real todavía |
-| Asunción de IP pública resulta ser CGNAT | Reconfirmar con Starlink activo en sitio |
-| El pin del relé no sostiene el nivel al cambiar de bitstream | **Confirmado con analizador lógico (2026-07-15):** al pasar de `v0.94` a `stream_app`, el pin cae limpio, siempre, ~800ms. Un relé normal se desenergizaría en cada cambio → **decidido usar relé biestable/latching** (mantiene su estado solo, sin señal sostenida) |
+Bitácora cronológica de decisiones y hallazgos de hardware. Para el estado actual del
+diseño y lo que falta, ver las secciones de arriba ("Riesgos abiertos", "Pendientes
+reales") — no hace falta leer todo esto para saber dónde está parado el proyecto hoy.
 
-## Corte limpio de captura antes de tocar el bitstream (2026-07-16)
+### Corte limpio de captura antes de tocar el bitstream (2026-07-16)
 
-Hasta ahora, si el toggle del relé caía mientras `capturar_stream.py` estaba
-corriendo, el script solo avisaba (`ADVERTENCIA: ...`) y cambiaba el bitstream
-igual — cortando la captura en curso a la fuerza, sin coordinarse con
-`relanzar_captura.sh` (que la iba a relanzar a los 5s, peleando contra el
-cambio de bitstream). Eso además dejaba la placa colgada en `stream_app`
-indefinidamente después de que una sesión de captura terminara sola: nada
-recarga `v0.94` salvo la próxima vez que corra este mismo script.
+Antes, un toggle de relé a mitad de `capturar_stream.py` solo avisaba (`ADVERTENCIA`)
+y cambiaba el bitstream igual — cortaba la captura a la fuerza sin coordinarse con
+`relanzar_captura.sh` (que la relanzaba a los 5s, peleando contra el cambio de
+bitstream) y dejaba `streaming-server` huérfano en `stream_app` indefinidamente.
 
-`control_starlink.sh` ahora, antes de tocar el bitstream: si detecta
-`capturar_stream.py` corriendo, le manda SIGTERM (mismo handler que Ctrl+C) y
-espera a que corte solo (hasta `TIMEOUT_STOP`, configurable en
-`config_campo.json` → `starlink.timeout_stop_s`, default 150s — más que el
-tope de `duracion_chunk` de 2 min; si se sube el tope de chunk hay que subir
-este valor a mano, no hay validación cruzada entre los dos) — así
-`capturar_stream.py` termina el chunk en curso, hace su propio
-`finally` (incluye esperar el move a USB), y sale con exit 0. Con eso,
-`relanzar_captura.sh` decide por su cuenta no relanzar (su propio chequeo de
-exit code), en vez de que el corte se lo imponga desde afuera. Si no corta a
-tiempo, recién ahí se fuerza (`pkill -9`). `streaming-server` queda huérfano
-tras el corte limpio (no se cae solo con el proceso padre) y se mata aparte.
+Fix: `control_starlink.sh`, antes de tocar el bitstream, manda SIGTERM a
+`capturar_stream.py` (mismo handler que Ctrl+C) y espera hasta `TIMEOUT_STOP`
+(`config_campo.json` → `starlink.timeout_stop_s`, default 150s) a que corte solo y
+salga con exit 0 — así `relanzar_captura.sh` decide por su propio chequeo de exit code
+no relanzar, en vez de que el corte se le imponga desde afuera. Si no corta a tiempo,
+se fuerza (`pkill -9`).
 
-**Detalle importante encontrado en la prueba real (placa 10.42.0.180):** el
-patrón de `pgrep`/`pkill` NO puede ser `-f capturar_stream.py` a secas —
-`relanzar_captura.sh` invoca el script pasándole la ruta completa como
-argumento, así que su propia línea de comando (`bash relanzar_captura.sh
-/root/scripts_campo/capturar_stream.py ...`) también contiene ese string. Un
-`pkill -f capturar_stream.py` mata al supervisor bash junto con el proceso
-python — el corte "funciona" (no se relanza) pero por accidente, no porque
-`relanzar_captura.sh` haya visto un exit 0. El patrón correcto es
-`python3.*capturar_stream\.py` (ver `PATRON_CAPTURA` en el script), que solo
-matchea el proceso python real. Verificado en placa real: con el patrón
-amplio el log de la sesión no tenía la línea final del supervisor; con el
-patrón corregido sí aparece `[supervisor] sesion termino limpio (exit 0). No
-se relanza.`.
+**Bug real encontrado (placa `10.42.0.180`):** el patrón de `pgrep`/`pkill` no puede
+ser `capturar_stream.py` a secas — `relanzar_captura.sh` invoca el script pasándole la
+ruta completa como argumento, así que su propia línea de comando también contiene ese
+string, y un `pkill -f` amplio mata al supervisor junto con el proceso python (el corte
+"funciona" mucho por accidente, no porque `relanzar_captura.sh` haya visto el exit 0).
+Patrón correcto: `python3.*capturar_stream\.py` (`PATRON_CAPTURA` en el script) — solo
+matchea el proceso real. Confirmado en placa real comparando el log del supervisor con
+cada patrón.
 
-Probado en banco con captura real de 1 min/chunk, toggle disparado a mitad de
-chunk, en ambas direcciones (`on` y `off`): corte limpio, sin relanzamiento
-del supervisor, registro y `estado` correctos al final. También probado
-disparando `on`/`off` a través de los `.service` reales (no llamando al
-script a mano) — `TimeoutStartUSec=infinity` en este unit, systemd no mata el
-script aunque la espera del corte tarde >90s (el default de
-`DefaultTimeoutStartUSec`).
+**Segundo bug, más importante por ser el caso de uso real:** el kill de
+`streaming-server` estaba anidado dentro del `if` de "hay captura corriendo" — si la
+captura ya había terminado sola (el caso típico: `prender-starlink` → captura →
+`apagar-starlink`), el toggle reprogramaba a `v0.94` con `streaming-server` todavía
+vivo y huérfano, desincronizado del bitstream. Eso rompe la próxima captura
+(`asegurar_servidor()` ve el proceso viejo y no recarga nada). Fix: el kill de
+`streaming-server` corre siempre, no solo dentro de ese `if`. Reproducido y verificado
+en placa real con una captura de 10s terminando sola.
 
-**Segundo hallazgo, más importante que el primero porque es el caso de uso
-real (2026-07-16):** el chequeo de arriba solo mataba `streaming-server`
-dentro del `if` de "hay captura corriendo". Si la captura ya había terminado
-sola (lo más común: `prender-starlink` → correr una captura → esperar que
-termine → `apagar-starlink`), `capturar_stream.py` ya no estaba, la función
-retornaba antes de llegar al `pkill` de `streaming-server`, y el toggle hacía
-`overlay.sh v0.94` con `streaming-server` todavía vivo y huérfano —
-confirmado en placa real con una captura de 10s: `streaming-server` seguía
-corriendo después de un `apagar-starlink` "exitoso" (`Result=success`),
-ahora completamente desincronizado del bitstream. Eso rompe la próxima
-captura: `asegurar_servidor()` en `campo_common.py` hace `pgrep
-streaming-server`, encuentra ese proceso viejo, asume que el servidor ya
-está listo, y no recarga nada. Se corrigió sacando el chequeo/`pkill` de
-`streaming-server` del `if` — ahora corre siempre, haya o no captura activa.
-Reproducido el bug y verificada la corrección con el mismo escenario (captura
-de 10s terminando sola + `apagar-starlink` real vía `.service`).
+Anomalía sin explicar: 2 pruebas en placa cortaron la sesión SSH a mitad de comando
+(exit 255, placa siempre arriba después, resultado final correcto) — no hay evidencia
+de que sea el script, podría ser el link USB-Ethernet. Investigar solo si se repite en
+campo con Starlink real.
 
-Anomalía sin explicar: 2 de las pruebas en placa (ambas veces que el fix
-efectivamente mataba un huérfano + recargaba el bitstream) cortaron la
-sesión SSH a mitad de comando (exit 255), con la placa siempre arriba después
-y el resultado final correcto. No hay evidencia de que sea el script — puede
-ser el link directo por USB-Ethernet. Si se repite en campo con Starlink real,
-ahí sí ameritaría investigarse.
+### Migración del pulso de control a PS_MIO10 (2026-07-23)
 
-## Migración del pulso de control a PS_MIO10 (2026-07-23)
+El pulso original iba por `DIO1_P` (PL) — funcionaba, pero se encontró que cualquier
+reprogramado de FPGA (arrancar o cortar una captura) podía togglear el relé solo, sin
+pasar por el script (glitch de ~12-19ms en el cambio de bitstream). Filtro de hardware
+(RC+Schmitt) evaluado y descartado.
 
-Relé y `control_starlink.sh` con pulso real ya funcionando desde el 22/07 (pin
-`DIO1_P`, PL) — pero se encontró que **cualquier reprogramado de FPGA
-(arrancar o cortar una captura) puede togglear el relé solo**, sin pasar por
-el script y sin aviso (glitch de ~12-19ms en el cambio de bitstream). Filtro
-de hardware (RC+Schmitt) evaluado y descartado.
+Fix: mover el pulso a `PS_MIO10` (lado PS del Zynq, pin 3 del conector E2, "SPI MOSI"
+de fábrica, vía Click Shield) — un GPIO del lado PS no se resetea con un reprogramado
+de PL. Requiere reconfigurar el mux del pin (`MIO_PIN_10` del SLCR, `0xf8000728` =
+`0x1600`) antes de usarlo como salida (ver `asegurar_mux_gpio()`/`asegurar_salida_ps()`/
+`pulsar_ps()` en `control_starlink.sh`). Validado con analizador lógico y round-trip
+real de bitstream (`v0.94` → `stream_app` → `v0.94`): mux y pin quedan intactos, el
+relé ya no se ve afectado por el reprogramado de FPGA.
 
-Solución encontrada y validada en banco: mover el pulso de control de
-`DIO1_P` (PL, housekeeping de la FPGA) a `PS_MIO10` (lado PS del Zynq, pin 3
-del conector E2, "SPI MOSI" de fábrica) — un GPIO del lado PS no se resetea
-con un reprogramado de PL. Requiere reconfigurar el multiplexor del pin
-(registro `MIO_PIN_10` del SLCR, `0xf8000728`, escribir `0x1600` para
-seleccionar función GPIO) antes de poder usarlo como salida — ver
-`asegurar_mux_gpio()`/`asegurar_salida_ps()`/`pulsar_ps()` en
-`control_starlink.sh`.
+**Persistencia del mux tras reboot — resuelta:** el mux vuelve a su función de fábrica
+al reiniciar la placa hasta que algo reescriba `MIO_PIN_10`. Confirmado en banco que
+aplicar mux+salida *sin pulso* igual togglea el relé (toggle real, no artefacto de
+analizador) — por eso no alcanza con resolverlo dentro del primer `on`/`off`, hay que
+aislarlo. Se separó en `mux_ps10_common.sh` (compartido) + `asegurar_mux_ps10.sh`,
+aplicado una sola vez al boot por el service correspondiente (el service que dispara
+el pulso depende de esta unit al bootear, `Requires=`/`After=`, para garantizar el
+orden sin importar qué dispare el `on`/`off`). Validado con reboot real: la unit corrió
+sola al boot, togglé el relé una sola vez de forma aislada, y después `on`/`off` a mano
+funcionaron correctos.
 
-Validado con analizador lógico y con round-trip real de bitstream
-(`v0.94` → `stream_app` → `v0.94`, arrancando y cortando una captura de
-prueba): el registro del mux y el estado del pin quedaron intactos durante
-todo el ciclo — el relé ya no se ve afectado por el reprogramado de FPGA.
+**Timers probados y OK, las dos direcciones:** catch-up de `Persistent=true` al
+reactivar el timer, y disparo natural al horario programado — ambos confirmados (ver
+más abajo, sec. "Reloj sin RTC", para el caso donde ese mismo catch-up SÍ falla, con el
+reloj atrasado de por medio).
 
-**Persistencia del mux tras reboot — resuelta (2026-07-23):** al reiniciar la
-placa, `PS_MIO10` vuelve a su función de fábrica (`SPI1_MOSI`) hasta que
-algo vuelva a escribir `MIO_PIN_10`. Se confirmó en banco (placa
-recién reiniciada) que aplicar mux+salida **sin pulso** igual togglea el
-relé (no es solo un evento de analizador, es un toggle real) — por eso
-no alcanza con resolverlo dentro del primer `on`/`off` de
-`control_starlink.sh` (ese toggle accidental se sumaría al intencional
-en la misma corrida y se cancelarían entre sí, dejando el pedido sin
-efecto real). Se separó la configuración de mux en
-`mux_ps10_common.sh` (compartido) + `asegurar_mux_ps10.sh`, aplicado una
-sola vez al boot por `systemd/starlink-mux-ps10.service`, del que
-`starlink-rele@.service` depende (`Requires=`/`After=`) para garantizar
-el orden sin importar qué dispare el `on`/`off` (timer, alias manual).
-`control_starlink.sh` sigue llamando a las mismas funciones como red de
-seguridad idempotente. Validado en placa real con reboot real: la unit
-corrió sola al boot, togglé el relé una sola vez de forma aislada
-(confirmado con analizador — un solo pulso limpio, sin pedido de
-`on`/`off` de por medio), y después `control_starlink.sh off`/`on`
-corridos a mano funcionaron correctos.
+**Con esto, la migración del pulso de control a `PS_MIO10` quedó cerrada por completo.**
 
-**Timers reales probados y OK (2026-07-23), las dos direcciones:** se forzó
-un disparo de `starlink-rele-on.timer` y, por separado, de
-`starlink-rele-off.timer` (horario temporal + reactivación en cada uno),
-confirmando en ambos los dos caminos posibles — catch-up de
-`Persistent=true` (dispara al reactivar, pulsa de verdad) y disparo
-natural al horario programado (toma el atajo, sin error, porque ya
-había quedado en el estado correcto por el catch-up).
+### PS_MIO50 (I2C SCL) evaluado como alternativa y descartado (2026-07-23)
 
-**Cableado:** siempre fue a través de la Click Shield (con su traductor de
-nivel), nunca directo al pin 3 del conector E2 sin pasar por la shield —
-todas las pruebas de `PS_MIO10` (round-trip de bitstream, persistencia de
-mux, auto-corrección al boot) fueron con ese cableado.
+Se probó usar `PS_MIO50` (I2C SCL, pin 9 de E2) en vez de `PS_MIO10` para dejar el bus
+SPI libre a futuro (`starlink_remoto/test_pulso_ps_mio50.sh`, script aparte, no
+integrado a `control_starlink.sh`). El pulso funcionó en ambas direcciones, pero **el
+intento de round-trip de bitstream reveló que convertir ese pin a GPIO corta el I2C que
+usa `profiles -f` para leer la EEPROM de modelo de la placa** — con eso `overlay.sh`
+falla (`profiles -f` devuelve `undefined`), rompiendo toda captura y todo
+`control_starlink.sh`. Descartado con evidencia directa, no solo por el riesgo teórico
+de pin compartido. Producción sigue con `PS_MIO10`.
 
-**Con esto, la migración del pulso de control a `PS_MIO10` quedó cerrada por
-completo.**
+### Persistencia de `STATE_FILE` ante corte de energía (2026-07-24)
 
-## PS_MIO50 (I2C SCL) evaluado como alternativa y descartado (2026-07-23)
+Probado con un corte de energía real (reset duro del kernel sin sync, no solo un
+`reboot` ordenado): la escritura de `STATE_FILE` (`echo > archivo`, sin `fsync`) se
+podía perder si el corte caía en la ventana de hasta ~5s antes de que ext4 confirmara
+la escritura en el journal — el sistema volvía a arrancar creyendo que el último
+comando real nunca pasó, sin ningún aviso. Se agregó un `sync` después de escribir
+`STATE_FILE` en `control_starlink.sh`. Reprobado con el mismo mecanismo de corte real
+en ambas direcciones (`off→on` y `on→off`): la escritura sobrevive en los dos sentidos.
 
-Se probó usar `PS_MIO50` (I2C SCL, pin 9 de E2) en vez de `PS_MIO10` para
-dejar el bus SPI libre a futuro (`starlink_remoto/test_pulso_ps_mio50.sh`,
-script aparte, no integrado a `control_starlink.sh`). El pulso funcionó en
-ambas direcciones, pero **el intento de round-trip de bitstream reveló que
-convertir ese pin a GPIO corta el I2C que usa `profiles -f` para leer la
-EEPROM de modelo de la placa** — con eso `overlay.sh` falla (`profiles -f`
-devuelve `undefined`), rompiendo toda captura y todo `control_starlink.sh`.
-Descartado con evidencia directa, no solo por el riesgo teórico de pin
-compartido. Producción sigue con `PS_MIO10`.
+### Horario configurable vía `config_campo.json` (2026-07-24)
 
-## Persistencia de `STATE_FILE` ante corte de energía (2026-07-24)
+El horario de los timers (`08:55`/`17:00` por default) dejó de estar hardcodeado en
+los `.timer` — ahora vive en `config_campo.json` → `starlink.hora_on`/`hora_off`,
+aplicado con `aplicar_horario.sh` (ver `COMANDOS.md`). Se descartó a propósito un
+chequeo periódico de alta frecuencia (ej. cada un minuto comparando la hora) en vez de
+timers de systemd: `control_starlink.sh` corta cualquier captura activa en cada
+invocación (necesario para reprogramar a `v0.94` y leer el feedback), así que un
+chequeo frecuente mataría capturas constantemente. Los timers de systemd solo invocan
+el script las veces que hace falta (dos por día).
 
-Probado con un corte de energía real (reset duro del kernel sin sync, no solo
-un `reboot` ordenado): la escritura de `STATE_FILE` (`echo > archivo`, sin
-`fsync`) se podía perder si el corte caía en la ventana de hasta ~5s antes de
-que ext4 confirmara la escritura en el journal — el sistema volvía a arrancar
-creyendo que el último comando real nunca pasó, sin ningún aviso. Se agregó
-un `sync` después de escribir `STATE_FILE` en `control_starlink.sh`. Reprobado
-con el mismo mecanismo de corte real en ambas direcciones (`off→on` y
-`on→off`): la escritura sobrevive en los dos sentidos.
+Probado en banco con horarios forzados a pocos minutos: los dos disparos corrieron
+limpios, confirmados por HW. Configuración restaurada al cerrar la prueba.
 
-## Horario configurable vía `config_campo.json` (2026-07-24)
+### Reloj sin RTC + `Persistent=true` + carrera on/off — hallazgo y rediseño (2026-07-27)
 
-El horario de los timers (`08:55`/`17:00` por default) dejó de estar
-hardcodeado en los `.timer` — ahora vive en `config_campo.json` →
-`starlink.hora_on`/`hora_off`, aplicado con `aplicar_horario.sh` (ver
-`COMANDOS.md`). Se descartó a propósito hacer esto con un chequeo periódico
-(ej. cada un minuto comparando la hora actual) en vez de timers de systemd:
-`control_starlink.sh` corta cualquier captura de arena activa en cada
-invocación (necesario para reprogramar a `v0.94` y leer el feedback del
-relé) — un chequeo de alta frecuencia mataría capturas en curso
-constantemente. Los timers de systemd, en cambio, solo invocan el script
-las veces que realmente hace falta (dos por día).
+**Problema planteado:** la placa corre a batería+panel solar, sin RTC. Si se queda sin
+batería muchas horas o un día entero, al rearrancar el reloj queda atrasado esa misma
+cantidad. Duda: ¿qué hacen los timers si el horario configurado ya "pasó" según el
+reloj real pero la placa recién arranca con un reloj que todavía no lo sabe?
 
-Probado en banco con horarios forzados a pocos minutos: los dos disparos
-(`on` y `off`) corrieron limpios, sin `ADVERTENCIA`, confirmados por HW.
-Horario devuelto a `08:55`/`17:00` y timers deshabilitados al cerrar la
-prueba (mismo estado que tenían antes).
+**Reproducido en placa real (banco, `10.42.0.180`):**
 
-## Reloj sin RTC + `Persistent=true` + carrera on/off — hallazgo y rediseño (2026-07-27)
+1. Confirmado en journal que ya le había pasado antes: `fake-hwclock` restauró al
+   bootear un reloj 3 días atrasado; al llegar la red, `ntpsec` corrigió con un salto
+   atómico (`stepped by 232775s`), no gradual.
+2. Reproducido a mano (reloj atrasado 2 días + reboot real): journal mostró `Not using
+   persistent file timestamp ... as it is in the future` — **`Persistent=true` no
+   sirve de red de seguridad acá**: systemd descarta la marca de "última corrida" por
+   verse "del futuro" desde el reloj recién restaurado (atrasado). No hay catch-up al
+   bootear; el relé se queda como estaba hasta que el reloj (atrasado pero corriendo
+   normal) llegue solo al próximo horario — acotado a ~24h pero impredecible desde
+   afuera.
+3. **Hallazgo no buscado:** si el salto de corrección de `ntpsec` cruza un horario de
+   encendido Y uno de apagado pendientes a la vez (típico tras un corte de varios
+   días), los dos servicios arrancan en simultáneo y compiten por el mismo relé —
+   reproducido dos veces, ganó uno cada vez, no determinístico.
 
-**Problema planteado:** la placa corre a batería+panel solar (sin RTC — ver
-comentario en `control_starlink.sh`). Si se queda sin batería muchas horas o
-un día entero, al volver a arrancar el reloj queda atrasado esa misma
-cantidad de tiempo. Duda: ¿qué pasa con los timers `starlink-rele-on`/`off`
-si el horario configurado (`08:55`/`17:00`) ya "pasó" según el reloj real
-pero la placa recién está arrancando con un reloj que todavía no lo sabe?
+Placa restaurada al estado original al cerrar las pruebas.
 
-**Reproducido en placa real (banco, `10.42.0.180`), no solo en teoría:**
+**Diseño: una sola decisión, no tres independientes.** Antes había tres puntos de
+decisión que no se hablaban entre sí (boot restaura `STATE_FILE` a ciegas, timer
+on/off pulsan a ciegas). Se reemplazan por una única función, `decidir_objetivo.sh`
+(no toca hardware, solo calcula "on"/"off"), con prioridad fija:
 
-1. Se confirmó en el journal que esto ya le había pasado a esta placa antes
-   de tocar nada: `fake-hwclock` (mecanismo estándar sin RTC, guardado
-   periódico cada ~20 min vía `fake-hwclock-save.timer`) restauró al bootear
-   un reloj 3 días atrasado; al llegar la red, `ntpsec` corrigió con un
-   `CLOCK: time stepped by 232775s` — un salto atómico, no gradual.
-2. Se reprodujo a mano: reloj atrasado 2 días + `fake-hwclock save` +
-   reboot real. Al arrancar, el journal mostró textualmente:
-   `starlink-rele-off.timer: Not using persistent file timestamp ... as it
-   is in the future.` — **`Persistent=true` no sirve de red de seguridad
-   acá**: systemd descarta la marca de "última vez que corrió" porque, vista
-   desde el reloj recién restaurado (atrasado), esa marca es "del futuro".
-   No hay catch-up al bootear. El relé se queda en lo que decía `STATE_FILE`
-   hasta que el reloj (atrasado pero corriendo a velocidad normal) llegue
-   solo al próximo horario programado — confirmado que eso pasa, acotado a
-   como mucho ~24h de "reloj falso", pero no es inmediato ni predecible
-   desde afuera sin conocer el desfasaje exacto.
-3. **Hallazgo nuevo, no buscado:** al forzar el salto de reloj hacia
-   adelante (simulando la corrección de `ntpsec` una vez que hay red), si
-   ese salto cruza tanto un horario de encendido como uno de apagado
-   pendientes (típico tras un corte de varios días), **`starlink-rele@on.
-   service` y `starlink-rele@off.service` arrancan al mismo instante y
-   corren en paralelo sobre el mismo relé** — reproducido dos veces, el
-   estado final quedó determinado por el orden de ejecución, no por ninguna
-   regla (una vez ganó "off", otra vez "on").
+1. **Modo manual** (`starlink_manual.sh {on|off|auto}`) — gana siempre, con una
+   excepción (ver "Modo manual con autolimpieza" más abajo): se borra solo en cuanto
+   el cálculo de 2+3 coincide por su cuenta con lo que el manual ya venía forzando.
+2. **Reloj no confiable** (`timedatectl show -p NTPSynchronized` = no) → fuerza "on"
+   (rescate), ignorando el horario — reemplaza la idea original de "franja de
+   encendido de emergencia": no hacía falta una franja nueva, hacía falta una señal
+   de si el reloj vale la pena mirarlo.
+3. **Horario normal** (`config_campo.json` → `hora_on`/`hora_off`), solo si ninguna
+   de las dos anteriores aplica.
 
-**Placa restaurada al estado original al cerrar las pruebas** (reloj
-resincronizado, timers vueltos a `disabled`/`inactive`, `STATE_FILE`/HW
-confirmado en `on` como estaba antes de empezar).
+`aplicar_objetivo.sh` decide y aplica (vía `control_starlink.sh`, ya idempotente).
+Boot, los dos timers diarios y un timer nuevo (`starlink-reconciliador.timer`, cada 5
+min) llaman todos a este mismo script — si dos disparan juntos, calculan el mismo
+objetivo y ya no compiten. La carrera de HW residual se cierra aparte con un `flock`
+en `control_starlink.sh`.
 
-**Diseño de la solución — una sola decisión, no tres independientes:**
+El reconciliador de 5 min tiene un cuidado explícito para no repetir el error ya
+evitado en "Horario configurable" (arriba): un chequeo de alta frecuencia sin filtro
+mataría capturas constantemente. Por eso `aplicar_objetivo.sh` sin `--forzar` compara
+el objetivo contra `STATE_FILE` *antes* de llamar a `control_starlink.sh`, y solo
+actúa si de verdad hay que cambiar algo. El boot es la única excepción (`--forzar`,
+siempre verifica por HW real) porque ahí sí puede haber un mismatch real (el mux de
+`PS_MIO10` puede togglear el relé solo al habilitarse, ver arriba).
 
-Antes había tres puntos de decisión que no se hablaban entre sí (boot
-restaura `STATE_FILE` a ciegas, timer on pulsa "on" a ciegas, timer off
-pulsa "off" a ciegas). Se reemplazan por una única función,
-`decidir_objetivo.sh` (no toca hardware, solo calcula "on"/"off"), con
-prioridad fija:
+Se agregó también `estado_starlink.sh` (lectura pasiva de `STATE_FILE`) y, en
+`control_starlink.sh`, mensaje explícito de éxito al pulsar y `exit 1` real cuando el
+feedback no coincide con lo pedido (antes salía con éxito igual, silencioso).
+`starlink-rele@.service` (template viejo) quedó retirado — los timers apuntan a
+`starlink-aplicar-objetivo.service`.
 
-1. **Modo manual** (`starlink_manual.sh {on|off|auto}`, flag en
-   `modo_manual_file` de `config_campo.json`) — gana siempre, con una
-   excepción (ver "Modo manual con autolimpieza" más abajo): se borra solo
-   en cuanto el cálculo de 2+3 coincide por su cuenta con lo que el manual
-   ya venía forzando. Es la respuesta a "qué pasa si nosotros apagamos a
-   propósito": ninguna lógica automática lo toca hasta que coincida solo o
-   hasta que alguien corra `auto-starlink` a mano.
-2. **Reloj no confiable** (`timedatectl show -p NTPSynchronized` = no,
-   señal ya existente y confirmada confiable en las pruebas de arriba) →
-   fuerza "on" (rescate), ignorando el horario. Esto es lo que reemplaza a
-   la idea original de "franja horaria de encendido de emergencia" — no
-   hacía falta una franja nueva, hacía falta una señal de si el reloj vale
-   la pena mirarlo.
-3. **Horario normal** (`config_campo.json` → `hora_on`/`hora_off`), solo si
-   ninguna de las dos anteriores aplica.
+### Modo manual con autolimpieza (2026-07-27, misma sesión)
 
-`aplicar_objetivo.sh` decide y aplica (vía `control_starlink.sh`, ya
-idempotente). Boot (`asegurar_mux_ps10.sh`), los dos timers diarios y un
-timer nuevo (`starlink-reconciliador.timer`, cada 5 min) llaman todos a este
-mismo script — así, si dos disparan juntos (el caso de arriba), **calculan
-el mismo objetivo y ya no compiten por imponer valores distintos**. La
-carrera de HW residual (dos procesos tocando el registro a la vez) se cierra
-aparte con un `flock` en `control_starlink.sh`.
+**Motivo:** el usuario quería poder cortar el relé a mano antes de horario (ej. a las
+15:00 en vez de esperar las 17:00, para no gastar batería al pedo) sin quedar pegado
+en modo manual para siempre — el modo manual original no expira solo, así que un
+corte de energía largo después de apagarlo a mano lo dejaría apagado indefinidamente
+sin rescate automático (agrava el riesgo de fail-safe de "Riesgos abiertos": el único
+camino de acceso remoto es el propio Starlink que este relé corta).
 
-El reconciliador de 5 min tiene un cuidado explícito para no repetir un
-error ya evitado antes en este proyecto (ver "Horario configurable vía
-`config_campo.json`", arriba): `control_starlink.sh` corta cualquier
-captura activa en cada invocación, así que un chequeo de alta frecuencia sin
-filtro mataría capturas constantemente. Por eso `aplicar_objetivo.sh` sin
-`--forzar` compara el objetivo contra `STATE_FILE` (la última lectura real
-conocida) *antes* de llamar a `control_starlink.sh`, y solo lo invoca si de
-verdad hay que cambiar algo. El boot es la única excepción (`--forzar`,
-siempre verifica por HW real) porque ahí sí puede haber un mismatch real
-entre `STATE_FILE` y el HW (el mux de `PS_MIO10` puede togglear el relé solo
-al habilitarse, ver más arriba) que la comparación liviana no detectaría.
-
-Se agregó también `estado_starlink.sh` (lectura pasiva de `STATE_FILE`, sin
-tocar FPGA/captura) y, en `control_starlink.sh`, un mensaje explícito de
-éxito al pulsar (antes el caso exitoso quedaba en silencio total) y
-`exit 1` real cuando el feedback no coincide con lo pedido (antes salía con
-éxito igual en ese caso, silencioso incluso para quien scriptee alrededor).
-
-`starlink-rele@.service` (el template que usaban los timers antes) quedó
-retirado — los timers ahora apuntan a `starlink-aplicar-objetivo.service`.
-
-## Modo manual con autolimpieza (2026-07-27, misma sesión)
-
-**Motivo:** el usuario quería poder cortar el relé a mano antes de horario
-(ej. apagarlo a las 15:00 en vez de esperar a las 17:00, para no gastar
-batería al pedo) sin quedar pegado en modo manual para siempre — el modo
-manual original (arriba) no expira solo, así que si después de apagarlo a
-mano pasa un corte de energía largo, se queda apagado indefinidamente sin
-que ninguna lógica automática lo rescate (agrava el riesgo de fail-safe ya
-anotado en "Riesgos abiertos": el único camino de acceso remoto es el propio
-Starlink que este relé corta).
-
-**Diseño:** `decidir_objetivo.sh` ahora calcula siempre el valor de
-reloj-no-confiable/horario (prioridad 2+3), incluso cuando hay modo manual
-activo. Si el manual coincide con ese valor calculado, se borra el archivo
-de modo manual solo (sin tocar HW) antes de devolver el resultado — así
-"apagar antes de horario" se autolimpia en cuanto el horario real llega a
-ese mismo valor por su cuenta, sin que nadie tenga que acordarse de correr
-`auto-starlink` después.
+**Diseño:** `decidir_objetivo.sh` calcula siempre el valor de reloj-no-confiable/
+horario (prioridad 2+3), incluso con modo manual activo. Si el manual coincide con ese
+valor, se borra el archivo de modo manual solo (sin tocar HW) antes de devolver el
+resultado — "apagar antes de horario" se autolimpia en cuanto el horario real llega a
+ese mismo valor, sin que nadie tenga que acordarse de `auto-starlink` después.
 
 **Validado en placa real (192.168.0.55) con 3 casos:**
 1. Manual coincidía de entrada con el horario natural → se autolimpió sin pedirlo.
-2. Manual="off" en medio de la ventana de "on" (el caso real de uso) → se mantuvo forzado, archivo intacto (no coincide, no se autolimpia).
-3. Se forzó `hora_off` a un horario ya pasado (simulando llegar al corte real) con manual="off" puesto → coincidió y se autolimpió, quedando en automático.
+2. Manual="off" en medio de la ventana de "on" (caso real de uso) → se mantuvo forzado, archivo intacto.
+3. `hora_off` forzada a un horario ya pasado con manual="off" puesto → coincidió y se autolimpió.
 
-**Qué NO resuelve:** si el corte de energía largo ocurre mientras el manual
-está en un valor que nunca va a coincidir con el rescate por reloj (ej.
-manual="off" durante todo un apagón largo, donde el rescate diría "on"), el
-manual sigue ganando sin límite de tiempo — el riesgo de fail-safe de
-"Riesgos abiertos" sigue exactamente igual, esto solo resuelve el caso de
-uso cotidiano (cortar antes de horario), no el escenario de emergencia.
+**Qué NO resuelve:** si el corte de energía largo ocurre mientras el manual está en un
+valor que nunca va a coincidir con el rescate por reloj (ej. manual="off" durante todo
+un apagón, donde el rescate diría "on"), el manual sigue ganando sin límite de tiempo
+— el riesgo de fail-safe sigue exactamente igual, esto solo resuelve el caso de uso
+cotidiano, no el escenario de emergencia.
 
-## Rescate por modo manual "off" vencido (2026-07-28)
+### Rescate por modo manual "off" vencido (2026-07-28)
 
-**Motivo:** cierra el hueco que "Modo manual con autolimpieza" (arriba)
-dejaba explícitamente sin resolver — modo manual="off" que nunca coincide
-solo con el rescate por reloj/horario (ej. puesto en pleno día, dentro de la
-ventana de "on") se queda forzado sin límite de tiempo. Si en el medio hay
-un corte de energía largo, el sitio queda inaccesible para siempre: el único
-camino de acceso remoto es el propio Starlink que este relé corta.
+**Motivo:** cierra el hueco que "Modo manual con autolimpieza" dejaba explícitamente
+sin resolver — modo manual="off" que nunca coincide solo con el rescate por
+reloj/horario (ej. puesto en pleno día) se queda forzado sin límite de tiempo. Si en
+el medio hay un corte de energía largo, el sitio queda inaccesible para siempre.
 
-**Diseño:** `starlink_manual.sh` ahora guarda un timestamp (epoch) junto con
-el valor, en `modo_manual_file` (2 líneas: valor, timestamp — se reescribe
-cada vez que se corre `on`/`off`). `decidir_objetivo.sh` agrega una prioridad
-0, por encima de "honrar el modo manual": si el valor es "off" y pasaron
-`starlink.rescate_manual_horas` (default 24, en `config_campo.json`) sin que
-nadie lo renueve, se lo ignora y se fuerza "on" — sin borrar el archivo. Si
-alguien vuelve a pedir manual="off" (renovarlo), el reloj de rescate arranca
-de nuevo desde cero; funciona como un dead-man's switch, no como un límite
-absoluto de "no podés dejarlo apagado más de X horas" (con re-confirmación
-periódica se puede mantener apagado indefinidamente).
+**Diseño:** `starlink_manual.sh` guarda un timestamp (epoch) junto con el valor en
+`modo_manual_file` (2 líneas, se reescribe cada `on`/`off`). `decidir_objetivo.sh`
+agrega una prioridad 0, por encima de "honrar el modo manual": si el valor es "off" y
+pasaron `starlink.rescate_manual_horas` (default 24) sin renovarse, se lo ignora y se
+fuerza "on" — sin borrar el archivo. Renovar (`starlink_manual.sh off` de nuevo)
+reinicia el reloj de rescate desde cero; es un dead-man's switch, no un límite
+absoluto (con re-confirmación periódica se puede mantener apagado indefinidamente).
 
-Formato viejo de `modo_manual_file` (una sola línea, sin timestamp, de antes
-de este mecanismo): se trata como timestamp desconocido → rescate vencido de
-entrada, más seguro que asumir que es reciente.
+Formato viejo de `modo_manual_file` (una línea, sin timestamp): se trata como
+timestamp desconocido → rescate vencido de entrada, más seguro que asumir que es
+reciente.
 
-**Validado en placa real (192.168.0.55) con 4 casos, no solo `bash -n`:**
-1. Archivo formato viejo (sin timestamp), manual="off" preexistente → `on` (rescatado de entrada).
-2. Manual="off" recién puesto (timestamp de "ahora") → `off` (no vencido, se respeta).
-3. Manual="off" con timestamp simulado de hace 25hs → `on` (rescatado), archivo intacto (no se borra).
+**Validado en placa real (192.168.0.55), 4 casos:**
+1. Formato viejo (sin timestamp), manual="off" preexistente → `on` (rescatado de entrada).
+2. Manual="off" recién puesto → `off` (no vencido, se respeta).
+3. Manual="off" con timestamp simulado de hace 25hs → `on` (rescatado), archivo intacto.
 4. Manual="off" con timestamp simulado de hace 23hs → `off` (todavía no vencido).
 
-Regresión de la autolimpieza (sec. anterior) confirmada sin cambios: manual
-coincidiendo solo con el horario natural se sigue autolimpiando igual.
+Regresión de la autolimpieza confirmada sin cambios.
 
-**Qué NO resuelve:** el umbral (24hs, elegido para cubrir una noche normal
-de ~16hs más margen) es una ventana de exposición que sigue existiendo — un
-corte de luz de menos de 24hs con manual="off" puesto en mal momento sigue
-dejando el sitio inaccesible durante ese corte, solo que ahora tiene un techo
-en vez de ser indefinido. Tampoco resuelve el riesgo si el corte dura más que
-el rescate pero la placa nunca llega a bootear/ejecutar el reconciliador por
-alguna otra falla de hardware/software — este mecanismo asume que el
-software corre normalmente, solo corrige una decisión de estado, no un
-cuelgue (para eso está el watchdog de hardware de systemd, ver más abajo en
+**Qué NO resuelve:** el umbral (24hs, para cubrir una noche normal de ~16hs más
+margen) sigue siendo una ventana de exposición real — un corte de menos de 24hs con
+manual="off" en mal momento sigue dejando el sitio inaccesible durante ese corte,
+ahora con techo en vez de indefinido. Tampoco resuelve un cuelgue de software que
+impida bootear/ejecutar el reconciliador — este mecanismo corrige una decisión de
+estado, no un cuelgue (para eso está el watchdog de hardware de systemd, ver arriba en
 "Pendientes reales").
 
-**Fix (2026-07-28, misma sección, encontrado al re-explicar el mecanismo):**
-el cálculo de horas transcurridas usaba `date +%s` sin chequear antes si el
-reloj está sincronizado por NTP. Sin RTC (ver sec. "reloj sin RTC" arriba),
-justo después de un reboot el reloj puede estar atrasado hasta que `ntpsec`
-lo corrige — si ese reboot cae en medio de un corte de luz largo con
-manual="off" puesto, la resta contra el timestamp guardado daba un número de
-horas de menos (o negativo), demorando el rescate justo cuando más importa.
-Se agregó el mismo chequeo `NTPSynchronized` que ya usaba la prioridad 2: si
-el reloj no está sincronizado, se trata como timestamp desconocido → vencido
-de entrada (mismo criterio que el formato viejo del archivo). Validado con
-un dry-run local (script + `cfg.py`/`timedatectl` mockeados, sin tocar la
-placa): los 4 casos de arriba siguen dando el mismo resultado, más el caso
-nuevo (NTP no sincronizado + manual="off" recién puesto → ahora `"on"`,
-antes hubiera dado `"off"`). **Falta validar en la placa real** — no se
-probó todavía con un reboot real ni con `timedatectl` real, solo con el stub.
-
-## Pendientes reales
-
-- Probar el rescate por modo manual vencido con los timers/reconciliador reales disparando solos (no solo invocación manual de `decidir_objetivo.sh`), y con un reboot en el medio — todo lo de arriba se probó invocando el script a mano y simulando el timestamp, no con el paso real de 24hs ni con timers reales.
-- Validar en la placa real el fix de "NTP no sincronizado → rescate vencido de entrada" (2026-07-28) — probado solo con dry-run local (`cfg.py`/`timedatectl` mockeados), falta reproducir con un reboot real y reloj atrasado de verdad, como se hizo para el resto del rediseño en sec.78.
-- ~~Confirmar el comportamiento fail-safe deseado del relé real (qué pasa sin señal de control)~~ — **cerrado (2026-07-28):** era una redacción vieja sin cruzar contra la decisión de relé biestable/latching, ver "Riesgos abiertos" arriba. Lo que sigue sin cubrir es un cuelgue de *software* (no del relé) — para eso ya hay un watchdog de hardware de systemd activo en la placa, `RuntimeWatchdogSec=5s` vía `cdns-wdt`/`/dev/watchdog0`, confirmado por SSH — resetea si systemd se cuelga, no decide nada sobre el estado del relé.
-- Decidir si esta carpeta se fusiona con `scripts_campo_comun/` (infraestructura compartida) una vez que el relé esté instalado en campo, o queda separada.
-- Asunción de IP pública de Starlink sin CGNAT, a reconfirmar en sitio con el kit real conectado — nada de esto se probó todavía con Starlink real, todo el trabajo hasta ahora fue en banco.
-- Probar los timers en su horario real (sin forzar horarios cercanos) en más de un ciclo, antes de confiar del todo en uso normal de varios días seguidos.
-- ~~Confirmar con multímetro si `DIO2_P` (feedback) realmente queda flotante al desconectar el cable~~ — **cerrado (2026-07-28):** medido físicamente con multímetro por el usuario, confirma el comportamiento que ya se había visto por registro (`control_starlink.sh on` con cable desconectado disparaba `ADVERTENCIA` + `exit 1`). Ya no es una lectura de registro sin verificar contra el hardware real.
+**Fix (2026-07-28, encontrado al re-explicar el mecanismo):** el cálculo de horas
+transcurridas usaba `date +%s` sin chequear antes si el reloj está sincronizado por
+NTP. Sin RTC, justo después de un reboot el reloj puede estar atrasado hasta que
+`ntpsec` lo corrige — si ese reboot cae en medio de un corte largo con manual="off"
+puesto, la resta contra el timestamp guardado daba horas de menos (o negativo),
+demorando el rescate justo cuando más importa. Se agregó el mismo chequeo
+`NTPSynchronized` que ya usaba la prioridad 2: si no está sincronizado, se trata como
+timestamp desconocido → vencido de entrada. Validado con dry-run local
+(`cfg.py`/`timedatectl` mockeados, sin tocar la placa): los 4 casos de arriba dan el
+mismo resultado, más el caso nuevo (NTP no sincronizado + manual="off" recién puesto →
+ahora `"on"`, antes daba `"off"`). **Falta validar en la placa real** con reboot real.
+Commiteado (`54338ec`).

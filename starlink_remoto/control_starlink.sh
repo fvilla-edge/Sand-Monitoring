@@ -1,36 +1,26 @@
 #!/usr/bin/env bash
 # control_starlink.sh — togglea el rele biestable que corta/da paso a Starlink.
 #
-# El rele es biestable por flanco (modulo "boton externo" en paralelo con su
-# boton de a bordo): un pulso lo cambia de estado sin importar cual era antes.
-# Control por PS_MIO10 (mux_ps10_common.sh), reposo LOW, pulso a HIGH y
-# vuelta a LOW togglea. El mux de PS_MIO10 no persiste un reboot (vuelve a
-# SPI1_MOSI) y ademas habilitar su salida por primera vez togglea el rele
-# solo (glitch real, no solo de analizador) — por eso ese reconfigurado
-# corre aislado, una sola vez al boot, via starlink-mux-ps10.service, nunca
-# junto con un pulso intencional en la misma corrida (si se mezclan, los dos
-# toggles se cancelan y el pedido de on/off termina sin efecto). Las
-# llamadas a asegurar_mux_gpio/asegurar_salida_ps mas abajo son una red de
-# seguridad idempotente por si esa unit no corrio.
+# Rele biestable por flanco: un pulso (via PS_MIO10, reposo LOW) lo cambia de
+# estado sin importar cual era antes. El mux de PS_MIO10 no persiste un
+# reboot (vuelve a SPI1_MOSI) y habilitar su salida por primera vez togglea
+# el rele solo (glitch real, confirmado con analizador) — por eso ese
+# reconfigurado corre aislado al boot (starlink-mux-ps10.service), nunca
+# junto a un pulso intencional (si se mezclan, se cancelan y el pedido
+# termina sin efecto). asegurar_mux_gpio/asegurar_salida_ps mas abajo son
+# red de seguridad idempotente por si esa unit no corrio.
 #
-# El "pad indicador externo" (LED de estado) esta cableado a DIO2_P via un
-# transistor NPN en emisor comun (el pad solo
-# da 0.15V/1.8V, insuficiente para logica limpia); la lectura sale invertida
-# (transistor saturado con LED prendido = colector en LOW): bit en alto =
-# rele en "off".
+# Feedback (DIO2_P) cableado via transistor NPN en emisor comun (el pad da
+# 0.15V/1.8V, insuficiente para logica limpia) — la lectura sale invertida:
+# bit en alto = rele en "off". Solo existe en el bitstream default (v0.94);
+# con stream_app el nivel no sobrevive el cambio, por eso se fuerza v0.94
+# siempre, cortando la captura activa antes. El pulso de control (PS_MIO10)
+# no depende de esto.
 #
-# DIO2_P (feedback) solo existe en el bitstream default (v0.94); con
-# streaming-server (stream_app) es otra cosa y el nivel no sobrevive el
-# cambio — por eso se fuerza v0.94 siempre, cortando la captura activa antes.
-# El pulso de control (PS_MIO10) ya no depende de esto.
-#
-# En "on" reinicia ntpsec para forzar un STEP inmediato del reloj (la placa
-# no tiene RTC, asi que llega a cada ventana con reloj desviado).
-#
-# El atajo de mas abajo evita el pulso (y su vuelta al bitstream v0.94 en la
-# proxima corrida) si el rele ya esta, de verdad, en el estado pedido —
-# STATE_FILE queda solo como copia informativa de la ultima lectura real,
-# nunca es la fuente de la decision.
+# En "on" reinicia ntpsec para forzar un STEP de reloj (sin RTC, llega
+# desviado a cada ventana). El atajo de mas abajo evita el pulso si el rele
+# ya esta, de verdad, en el estado pedido — STATE_FILE es solo copia
+# informativa de la ultima lectura real, nunca la fuente de la decision.
 
 set -euo pipefail
 
