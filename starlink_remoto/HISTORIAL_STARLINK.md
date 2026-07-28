@@ -73,7 +73,7 @@ migración más abajo).
 | Riesgo | Estado |
 |---|---|
 | Starlink no queda usable al instante (boot + actualización de firmware) | Margen de 5 min antes de la hora "oficial"; el firmware update puede igual comerse parte de la ventana, sin mitigación total posible |
-| Red Pitaya se cuelga/reinicia a mitad de ventana | `Persistent=true` en ambos timers dispara el que se perdió al volver a bootear, pero el estado *fail-safe* del relé físico (qué pasa sin señal de control) todavía no está definido — depende del modelo de relé |
+| Red Pitaya se cuelga/reinicia a mitad de ventana | `Persistent=true` en ambos timers dispara el que se perdió al volver a bootear. **Resuelto (fila de abajo, misma sesión de origen de esta tabla):** el fail-safe del relé físico ante ausencia total de señal de control SÍ quedó definido por el modelo elegido — relé biestable/latching, mantiene el último estado mecánicamente sin necesitar señal sostenida ni alimentación en el circuito de control, así que un cuelgue o corte de la Red Pitaya no lo mueve solo. Esta fila quedó redactada como pendiente en el mismo commit que registraba esa decisión más abajo, sin cruzarlas — corregido el 2026-07-28. |
 | Drift real de reloj en 16 hs sin red | Mitigado con el restart de `ntpsec` en el `on`, pero no medido en campo real todavía |
 | Asunción de IP pública resulta ser CGNAT | Reconfirmar con Starlink activo en sitio |
 | El pin del relé no sostiene el nivel al cambiar de bitstream | **Confirmado con analizador lógico (2026-07-15):** al pasar de `v0.94` a `stream_app`, el pin cae limpio, siempre, ~800ms. Un relé normal se desenergizaría en cada cambio → **decidido usar relé biestable/latching** (mantiene su estado solo, sin señal sostenida) |
