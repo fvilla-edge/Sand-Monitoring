@@ -414,9 +414,26 @@ software corre normalmente, solo corrige una decisión de estado, no un
 cuelgue (para eso está el watchdog de hardware de systemd, ver más abajo en
 "Pendientes reales").
 
+**Fix (2026-07-28, misma sección, encontrado al re-explicar el mecanismo):**
+el cálculo de horas transcurridas usaba `date +%s` sin chequear antes si el
+reloj está sincronizado por NTP. Sin RTC (ver sec. "reloj sin RTC" arriba),
+justo después de un reboot el reloj puede estar atrasado hasta que `ntpsec`
+lo corrige — si ese reboot cae en medio de un corte de luz largo con
+manual="off" puesto, la resta contra el timestamp guardado daba un número de
+horas de menos (o negativo), demorando el rescate justo cuando más importa.
+Se agregó el mismo chequeo `NTPSynchronized` que ya usaba la prioridad 2: si
+el reloj no está sincronizado, se trata como timestamp desconocido → vencido
+de entrada (mismo criterio que el formato viejo del archivo). Validado con
+un dry-run local (script + `cfg.py`/`timedatectl` mockeados, sin tocar la
+placa): los 4 casos de arriba siguen dando el mismo resultado, más el caso
+nuevo (NTP no sincronizado + manual="off" recién puesto → ahora `"on"`,
+antes hubiera dado `"off"`). **Falta validar en la placa real** — no se
+probó todavía con un reboot real ni con `timedatectl` real, solo con el stub.
+
 ## Pendientes reales
 
 - Probar el rescate por modo manual vencido con los timers/reconciliador reales disparando solos (no solo invocación manual de `decidir_objetivo.sh`), y con un reboot en el medio — todo lo de arriba se probó invocando el script a mano y simulando el timestamp, no con el paso real de 24hs ni con timers reales.
+- Validar en la placa real el fix de "NTP no sincronizado → rescate vencido de entrada" (2026-07-28) — probado solo con dry-run local (`cfg.py`/`timedatectl` mockeados), falta reproducir con un reboot real y reloj atrasado de verdad, como se hizo para el resto del rediseño en sec.78.
 - ~~Confirmar el comportamiento fail-safe deseado del relé real (qué pasa sin señal de control)~~ — **cerrado (2026-07-28):** era una redacción vieja sin cruzar contra la decisión de relé biestable/latching, ver "Riesgos abiertos" arriba. Lo que sigue sin cubrir es un cuelgue de *software* (no del relé) — para eso ya hay un watchdog de hardware de systemd activo en la placa, `RuntimeWatchdogSec=5s` vía `cdns-wdt`/`/dev/watchdog0`, confirmado por SSH — resetea si systemd se cuelga, no decide nada sobre el estado del relé.
 - Decidir si esta carpeta se fusiona con `scripts_campo_comun/` (infraestructura compartida) una vez que el relé esté instalado en campo, o queda separada.
 - Asunción de IP pública de Starlink sin CGNAT, a reconfirmar en sitio con el kit real conectado — nada de esto se probó todavía con Starlink real, todo el trabajo hasta ahora fue en banco.

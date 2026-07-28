@@ -37,7 +37,11 @@
 # Formato viejo de modo_manual_file (una sola linea, sin timestamp, de antes
 # de este mecanismo): se trata como timestamp desconocido y el rescate se
 # considera vencido de entrada (fuerza "on") — mas seguro asumir "no se sabe
-# hace cuanto" que confiar en que es reciente.
+# hace cuanto" que confiar en que es reciente. Mismo criterio si el reloj
+# todavia no sincronizo por NTP (sin RTC, ver control_starlink.sh): sin RTC
+# el "date +%s" post-reboot puede estar atrasado, y la resta contra el
+# timestamp guardado daria horas de menos (o negativo) justo cuando mas
+# importa el rescate — se trata como vencido de entrada por la misma razon.
 
 set -euo pipefail
 
@@ -49,7 +53,9 @@ HORA_ON=$(python3 "$CFG" starlink.hora_on)
 HORA_OFF=$(python3 "$CFG" starlink.hora_off)
 RESCATE_MANUAL_HORAS=$(python3 "$CFG" starlink.rescate_manual_horas)
 
-if [ "$(timedatectl show -p NTPSynchronized --value)" != "yes" ]; then
+NTP_SYNC=$(timedatectl show -p NTPSynchronized --value)
+
+if [ "$NTP_SYNC" != "yes" ]; then
   RESCATE_U_HORARIO=on
 else
   AHORA=$(TZ="$TZ_CAMPO" date +%H:%M)
@@ -65,6 +71,10 @@ if [ -s "$MODO_MANUAL_FILE" ]; then
   MANUAL_TS=$(sed -n '2p' "$MODO_MANUAL_FILE")
 
   if [ "$MANUAL" = "off" ]; then
+    if [ "$NTP_SYNC" != "yes" ]; then
+      echo "on"   # rescate: reloj todavia no sincronizado, no se puede confiar en el timestamp guardado (ver header)
+      exit 0
+    fi
     AHORA_EPOCH=$(date +%s)
     if [[ ! "$MANUAL_TS" =~ ^[0-9]+$ ]]; then
       HORAS_TRANSCURRIDAS=$((RESCATE_MANUAL_HORAS))   # formato viejo sin timestamp: vencido de entrada (ver header)
