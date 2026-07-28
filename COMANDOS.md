@@ -152,9 +152,10 @@ caminos se pisen entre si.
 ```bash
 # ver estado sin tocar hardware ni cortar una captura activa
 estado-starlink
-# = Rele: ON — ultima confirmacion real por HW: 2026-07-27 13:05:38
-#   Modo: automatico (reloj + horario)
-#   Reloj sincronizado: si
+# = ON
+# (el detalle de mtime/modo manual/sincronizacion de reloj esta comentado en
+#  estado_starlink.sh a pedido, para no saturar la salida en demos con
+#  cliente — descomentar ahi si hace falta ese nivel de detalle)
 
 # prender/apagar a mano — entra en modo MANUAL, no se lo pisa el horario ni el
 # rescate por reloj; se autolimpia solo en cuanto el horario real llegue a

@@ -38,8 +38,14 @@ Sand Monitoring/
 │   └── tests/              # Tests del parser de .bin y la logica de deteccion (pytest)
 ├── starlink_remoto/        # Control del rele que energiza el kit Starlink (PS_MIO10)
 │   ├── control_starlink.sh    # Prender/apagar, idempotente por feedback de HW
+│   ├── decidir_objetivo.sh    # Unica logica de decision (rescate > manual > reloj no confiable > horario)
+│   ├── aplicar_objetivo.sh    # Aplica lo que decide decidir_objetivo.sh (reconciliador de 5 min)
 │   ├── aplicar_horario.sh     # Aplica hora_on/hora_off de config_campo.json a los timers
-│   ├── systemd/                # Units y timers (mux al boot, rele on/off)
+│   ├── starlink_manual.sh     # Entrar/salir de modo manual
+│   ├── estado_starlink.sh     # Lectura pasiva del ultimo estado conocido
+│   ├── asegurar_mux_ps10.sh   # Fuerza el mux de PS_MIO10 al boot
+│   ├── mux_ps10_common.sh     # Registros/funciones compartidas del pulso por PS_MIO10
+│   ├── systemd/                # Units y timers (mux al boot, rele on/off, reconciliador)
 │   └── HISTORIAL_STARLINK.md  # Arquitectura y hallazgos de hardware (no es guia de uso)
 ├── relay/                  # Foto/referencia del modulo de rele biestable
 ├── datos_campo/            # Capturas de campo (gitignoreado)

@@ -91,9 +91,9 @@ Los parámetros operativos que tiene sentido ajustar sin tocar código viven en
   "espacio":           { "minimo_mb_por_canal": 500 },
   "eficiencia":        { "umbral_bajo_pct": 80 },
   "reintentos":        { "max": 10, "espera_s": 5 },
-  "starlink":          { "timeout_stop_s": 150 },
+  "starlink":          { "timeout_stop_s": 150, "hora_on": "08:55", "hora_off": "17:00", "rescate_manual_horas": 24 },
   "captura_defaults":  { "decimacion": 32, "duracion_chunk_min": 1.0, "directorio": "/mnt/usb" },
-  "rutas":             { "log_dir": "/root/logs_campo", "stream_dir": "...", "state_file": "..." }
+  "rutas":             { "log_dir": "/root/logs_campo", "stream_dir": "...", "state_file": "...", "modo_manual_file": "..." }
 }
 ```
 
@@ -110,7 +110,7 @@ línea de comandos como siempre; lo que cambió es de dónde sale el valor por d
 **Qué NO está en el JSON, a propósito** — invariantes de hardware/firmware, no
 parámetros operativos: `FS_BASE` (frecuencia base del ADC), `DEC_VALIDOS`/
 `DEC_SEGURAS_DUAL` (factores de decimación válidos/validados), y en
-`control_starlink.sh` las direcciones de registro FPGA (`DIR_REG`/`OUT_REG`) y la
+`control_starlink.sh`/`mux_ps10_common.sh` las direcciones de registro FPGA (`IN_REG`, `DATA_REG`/`DIRM_REG`/`OEN_REG`/`MUX_REG`) y la
 versión de bitstream (`v0.94`) — cambiarlos sin cambiar el hardware/bitstream
 correspondiente rompe la captura o el control del relé, así que quedan
 hardcodeados en el código con el motivo comentado ahí mismo.

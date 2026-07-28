@@ -162,7 +162,7 @@ shutdown -h now
 | **Sin pendrive, directo a la PC por red** | Agregar `--destino red --pc_host usuario@IP --pc_ruta /ruta/en/pc` al comando de captura. Los archivos llegan solos a la PC, se saltea el paso 6 completo. |
 | **Prueba rápida de banco (sin guardar nada)** | `probar_dual_stream.py` — captura corta de solo lectura para chequear que los 2 canales están bien mapeados, no toca el USB. Usar antes de confiar en una captura dual nueva. |
 | **Cambiar el horario del Starlink** | Editar `starlink.hora_on`/`hora_off` en `scripts_campo_comun/config_campo.json`, después correr `/root/starlink_remoto/aplicar_horario.sh` en la placa. No tocar los `.timer` a mano. |
-| **Desactivar el horario automático del Starlink** (ej. pruebas de campo) | `systemctl disable --now starlink-rele-on.timer starlink-rele-off.timer` en la placa. `prender-starlink`/`apagar-starlink` siguen funcionando igual. |
+| **Desactivar el horario automático del Starlink** (ej. pruebas de campo) | `systemctl disable --now starlink-rele-on.timer starlink-rele-off.timer starlink-reconciliador.timer` en la placa (los tres — si dejás el reconciliador prendido, revierte solo lo que fijes a mano cada 5 min). `prender-starlink`/`apagar-starlink` siguen funcionando igual. |
 
 ---
 

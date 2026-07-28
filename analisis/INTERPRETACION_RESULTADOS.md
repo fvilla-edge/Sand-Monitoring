@@ -72,7 +72,7 @@ fraccion_activa = ventanas con kurtosis > 20 / total de ventanas
 
 El std de baja es ±6% (CV=14%) vs la kurtosis global que tenía CV=121%. **Esta es la métrica más estable para clasificar cantidad de arena.**
 
-> Parámetros actuales: ventana = 50 ms · umbral kurtosis = 20 · fs = 1.953 MHz. Desde semana 3, estos parámetros se aplican en tiempo de captura dentro de `capturar.py` y el resultado se guarda nativamente en el HDF5 — ya no es necesario releer el `raw_signal` para obtenerla.
+> Parámetros actuales: ventana = 50 ms · umbral kurtosis = 20 · fs = 1.953 MHz. `analisis/revisar.py` calcula `fraccion_activa` a partir de la señal cruda del `.bin` (función `_fraccion_activa`), no hay paso previo que la precalcule ni formato HDF5 en el pipeline actual.
 
 ---
 
@@ -188,7 +188,7 @@ Hardware: Red Pitaya STEMlab 125-14 · Sensor VS150-RI · Modo HV ±20V · Filtr
 
 ### Semana 3 (`analisis/outputs_semana3/`)
 
-Mismos tres gráficos, misma interpretación. Diferencia clave: `fraccion_activa` se lee directo del HDF5 sin recalcular — el análisis carga `raw_signal` solo para los 4 archivos representativos del timeline.
+Mismos tres gráficos, misma interpretación.
 
 ---
 
