@@ -370,9 +370,54 @@ manual sigue ganando sin límite de tiempo — el riesgo de fail-safe de
 "Riesgos abiertos" sigue exactamente igual, esto solo resuelve el caso de
 uso cotidiano (cortar antes de horario), no el escenario de emergencia.
 
+## Rescate por modo manual "off" vencido (2026-07-28)
+
+**Motivo:** cierra el hueco que "Modo manual con autolimpieza" (arriba)
+dejaba explícitamente sin resolver — modo manual="off" que nunca coincide
+solo con el rescate por reloj/horario (ej. puesto en pleno día, dentro de la
+ventana de "on") se queda forzado sin límite de tiempo. Si en el medio hay
+un corte de energía largo, el sitio queda inaccesible para siempre: el único
+camino de acceso remoto es el propio Starlink que este relé corta.
+
+**Diseño:** `starlink_manual.sh` ahora guarda un timestamp (epoch) junto con
+el valor, en `modo_manual_file` (2 líneas: valor, timestamp — se reescribe
+cada vez que se corre `on`/`off`). `decidir_objetivo.sh` agrega una prioridad
+0, por encima de "honrar el modo manual": si el valor es "off" y pasaron
+`starlink.rescate_manual_horas` (default 24, en `config_campo.json`) sin que
+nadie lo renueve, se lo ignora y se fuerza "on" — sin borrar el archivo. Si
+alguien vuelve a pedir manual="off" (renovarlo), el reloj de rescate arranca
+de nuevo desde cero; funciona como un dead-man's switch, no como un límite
+absoluto de "no podés dejarlo apagado más de X horas" (con re-confirmación
+periódica se puede mantener apagado indefinidamente).
+
+Formato viejo de `modo_manual_file` (una sola línea, sin timestamp, de antes
+de este mecanismo): se trata como timestamp desconocido → rescate vencido de
+entrada, más seguro que asumir que es reciente.
+
+**Validado en placa real (192.168.0.55) con 4 casos, no solo `bash -n`:**
+1. Archivo formato viejo (sin timestamp), manual="off" preexistente → `on` (rescatado de entrada).
+2. Manual="off" recién puesto (timestamp de "ahora") → `off` (no vencido, se respeta).
+3. Manual="off" con timestamp simulado de hace 25hs → `on` (rescatado), archivo intacto (no se borra).
+4. Manual="off" con timestamp simulado de hace 23hs → `off` (todavía no vencido).
+
+Regresión de la autolimpieza (sec. anterior) confirmada sin cambios: manual
+coincidiendo solo con el horario natural se sigue autolimpiando igual.
+
+**Qué NO resuelve:** el umbral (24hs, elegido para cubrir una noche normal
+de ~16hs más margen) es una ventana de exposición que sigue existiendo — un
+corte de luz de menos de 24hs con manual="off" puesto en mal momento sigue
+dejando el sitio inaccesible durante ese corte, solo que ahora tiene un techo
+en vez de ser indefinido. Tampoco resuelve el riesgo si el corte dura más que
+el rescate pero la placa nunca llega a bootear/ejecutar el reconciliador por
+alguna otra falla de hardware/software — este mecanismo asume que el
+software corre normalmente, solo corrige una decisión de estado, no un
+cuelgue (para eso está el watchdog de hardware de systemd, ver más abajo en
+"Pendientes reales").
+
 ## Pendientes reales
 
-- Confirmar el comportamiento fail-safe deseado del relé real (qué pasa sin señal de control — depende del modelo, nunca definido). Sigue sin resolverse pese a la autolimpieza del modo manual (ver arriba) — casos donde el manual nunca coincide con el rescate por reloj siguen bloqueados indefinidamente.
+- Probar el rescate por modo manual vencido con los timers/reconciliador reales disparando solos (no solo invocación manual de `decidir_objetivo.sh`), y con un reboot en el medio — todo lo de arriba se probó invocando el script a mano y simulando el timestamp, no con el paso real de 24hs ni con timers reales.
+- Confirmar el comportamiento fail-safe deseado del relé real (qué pasa sin señal de control — depende del modelo, nunca definido). El rescate por modo manual vencido (arriba) resuelve el caso de "manual off olvidado", pero no cubre un cuelgue de software (para eso ya hay un watchdog de hardware de systemd activo en la placa, `RuntimeWatchdogSec=5s` vía `cdns-wdt`/`/dev/watchdog0`, confirmado por SSH — resetea si systemd se cuelga, no decide nada sobre el estado del relé).
 - Decidir si esta carpeta se fusiona con `scripts_campo_comun/` (infraestructura compartida) una vez que el relé esté instalado en campo, o queda separada.
 - Asunción de IP pública de Starlink sin CGNAT, a reconfirmar en sitio con el kit real conectado — nada de esto se probó todavía con Starlink real, todo el trabajo hasta ahora fue en banco.
 - Probar los timers en su horario real (sin forzar horarios cercanos) en más de un ciclo, antes de confiar del todo en uso normal de varios días seguidos.

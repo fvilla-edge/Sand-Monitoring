@@ -12,7 +12,8 @@
   "starlink": {
     "timeout_stop_s": 150,
     "hora_on": "08:55",
-    "hora_off": "17:00"
+    "hora_off": "17:00",
+    "rescate_manual_horas": 24
   },
   "captura_defaults": {
     "decimacion": 32,

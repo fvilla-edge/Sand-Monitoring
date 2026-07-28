@@ -144,9 +144,10 @@ ssh root@<IP_PLACA> "grep -q 'prender-starlink' /root/.bashrc || cat /root/starl
 ### Operación día a día
 
 El rele ya no responde a "quien lo llamo" sino a una unica decision
-(`decidir_objetivo.sh`, prioridad manual > reloj no confiable > horario —
-ver `HISTORIAL_STARLINK.md`). Todo lo de abajo termina llamando a esa misma
-logica, asi que no hay forma de que dos caminos se pisen entre si.
+(`decidir_objetivo.sh`, prioridad rescate por manual vencido > manual >
+reloj no confiable > horario — ver `HISTORIAL_STARLINK.md`). Todo lo de
+abajo termina llamando a esa misma logica, asi que no hay forma de que dos
+caminos se pisen entre si.
 
 ```bash
 # ver estado sin tocar hardware ni cortar una captura activa
@@ -158,7 +159,11 @@ estado-starlink
 # prender/apagar a mano — entra en modo MANUAL, no se lo pisa el horario ni el
 # rescate por reloj; se autolimpia solo en cuanto el horario real llegue a
 # coincidir con lo forzado (ej. "apagar-starlink" antes de horario no hace
-# falta revertirlo despues), o "auto-starlink" fuerza la vuelta ya mismo
+# falta revertirlo despues), o "auto-starlink" fuerza la vuelta ya mismo.
+# "apagar-starlink" que NUNCA coincide solo con el horario (ej. apagado en
+# pleno dia) se ignora despues de starlink.rescate_manual_horas (default 24h)
+# sin renovarse, forzando "on" — evita quedar sin acceso remoto para siempre
+# si de por medio hay un corte de luz largo (ver HISTORIAL_STARLINK.md).
 prender-starlink
 apagar-starlink
 
