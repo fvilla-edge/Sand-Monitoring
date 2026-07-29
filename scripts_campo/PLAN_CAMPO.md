@@ -22,7 +22,7 @@ un thread de fondo mientras ya empieza el siguiente chunk.
 
 | Documento | Contenido | Cuándo leerlo |
 |---|---|---|
-| [`plan_campo/setup_placa.md`](plan_campo/setup_placa.md) | Setup único por placa: copiar scripts, librería de streaming, montaje automático de USB, autosuspend, modo red | Antes de la primera salida a campo con una placa, o después de reflashearla |
+| [`plan_campo/setup_placa.md`](plan_campo/setup_placa.md) | Setup único por placa: copiar scripts, librería de streaming, montaje automático de USB, autosuspend, modo red, control remoto del relé Starlink | Antes de la primera salida a campo con una placa, o después de reflashearla |
 | [`plan_campo/operacion_campo.md`](plan_campo/operacion_campo.md) | Sensor de referencia (dual), conectar, verificar USB, ejecutar captura, parámetros, ejemplos, sesiones largas/relanzado, archivos generados, revisar en la PC | Cada vez que se sale a capturar |
 | [`plan_campo/formato_y_funcionamiento.md`](plan_campo/formato_y_funcionamiento.md) | Cómo funciona el script por dentro (buffer SD, eficiencia), estructura del repo, formato `.bin`, logs, core dumps, espacio en disco y velocidades | Para entender resultados raros, estimar espacio/tiempo, o debuggear |
 | [`plan_campo/troubleshooting.md`](plan_campo/troubleshooting.md) | Qué hacer si algo falla, organizado por síntoma | Cuando algo no anda |

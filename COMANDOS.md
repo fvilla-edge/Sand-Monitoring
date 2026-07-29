@@ -112,42 +112,8 @@ ni datos de campo reales.
 
 Arquitectura, hallazgos de hardware y decisiones: `starlink_remoto/HISTORIAL_STARLINK.md`.
 
-### Instalación (una vez por placa)
-
-```bash
-cd starlink_remoto
-
-# scripts + configuracion de mux compartida + boot + horario + decision/aplicacion + estado
-scp control_starlink.sh mux_ps10_common.sh asegurar_mux_ps10.sh aplicar_horario.sh \
-    decidir_objetivo.sh aplicar_objetivo.sh starlink_manual.sh estado_starlink.sh \
-    root@<IP_PLACA>:/root/starlink_remoto/
-
-# cfg.py + config_campo.json — de donde salen hora_on/hora_off, timeouts, rescate_manual_horas.
-# Necesario aunque no se instale nada de captura en esta placa: control_starlink.sh y
-# decidir_objetivo.sh llaman a /root/scripts_campo_comun/cfg.py por ruta fija.
-# Si ya se hizo el setup de captura (ver setup_placa.md paso 1) esto ya esta copiado.
-ssh root@<IP_PLACA> "mkdir -p /root/scripts_campo_comun"
-scp ../scripts_campo_comun/cfg.py ../scripts_campo_comun/config_campo.json \
-    root@<IP_PLACA>:/root/scripts_campo_comun/
-
-# unidades systemd
-scp systemd/starlink-mux-ps10.service systemd/starlink-aplicar-objetivo.service \
-    systemd/starlink-rele-on.timer systemd/starlink-rele-off.timer \
-    systemd/starlink-reconciliador.timer \
-    root@<IP_PLACA>:/etc/systemd/system/
-
-ssh root@<IP_PLACA> "
-  chmod +x /root/starlink_remoto/*.sh
-  systemctl daemon-reload
-  systemctl enable --now starlink-mux-ps10.service
-  systemctl enable --now starlink-rele-on.timer starlink-rele-off.timer
-  systemctl enable --now starlink-reconciliador.timer
-"
-
-# alias para prender/apagar/consultar a mano por SSH (opcional, comodidad)
-scp aliases.sh root@<IP_PLACA>:/root/starlink_remoto/
-ssh root@<IP_PLACA> "grep -q 'prender-starlink' /root/.bashrc || cat /root/starlink_remoto/aliases.sh >> /root/.bashrc"
-```
+Instalación (una vez por placa, qué copiar y qué comandos correr):
+`scripts_campo/plan_campo/setup_placa.md` → paso 5.
 
 ### Operación día a día
 

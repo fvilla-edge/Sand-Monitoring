@@ -144,3 +144,40 @@ Crear el directorio destino en la PC **antes de correr el script** (SCP falla si
 ```bash
 mkdir -p ~/datos_campo
 ```
+
+## 5. Starlink / control remoto del relé (si esta placa lo maneja)
+
+Arquitectura, hallazgos de hardware y decisiones: `../../starlink_remoto/HISTORIAL_STARLINK.md`.
+Depende de `cfg.py`/`config_campo.json` del paso 1 — no hace falta copiarlos de nuevo (si por algún
+motivo se instala Starlink solo, sin el resto de este setup, copiarlos igual desde el paso 1 antes
+de seguir).
+
+```bash
+cd starlink_remoto
+
+# scripts + configuracion de mux compartida + boot + horario + decision/aplicacion + estado
+scp control_starlink.sh mux_ps10_common.sh asegurar_mux_ps10.sh aplicar_horario.sh \
+    decidir_objetivo.sh aplicar_objetivo.sh starlink_manual.sh estado_starlink.sh \
+    root@<IP_PLACA>:/root/starlink_remoto/
+
+# unidades systemd
+scp systemd/starlink-mux-ps10.service systemd/starlink-aplicar-objetivo.service \
+    systemd/starlink-rele-on.timer systemd/starlink-rele-off.timer \
+    systemd/starlink-reconciliador.timer \
+    root@<IP_PLACA>:/etc/systemd/system/
+
+ssh root@<IP_PLACA> "
+  chmod +x /root/starlink_remoto/*.sh
+  systemctl daemon-reload
+  systemctl enable --now starlink-mux-ps10.service
+  systemctl enable --now starlink-rele-on.timer starlink-rele-off.timer
+  systemctl enable --now starlink-reconciliador.timer
+"
+
+# alias para prender/apagar/consultar a mano por SSH (opcional, comodidad)
+scp aliases.sh root@<IP_PLACA>:/root/starlink_remoto/
+ssh root@<IP_PLACA> "grep -q 'prender-starlink' /root/.bashrc || cat /root/starlink_remoto/aliases.sh >> /root/.bashrc"
+```
+
+Uso día a día (prender/apagar a mano, cambiar horario, etc.): ver `COMANDOS.md` →
+"Starlink / control remoto del relé".
