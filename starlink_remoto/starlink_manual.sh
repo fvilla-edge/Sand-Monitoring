@@ -24,6 +24,7 @@ ACCION="${1:-}"
 case "$ACCION" in
   on|off)
     printf '%s\n%s\n' "$ACCION" "$(date +%s)" > "$MODO_MANUAL_FILE"
+    sync   # sin esto un corte de luz justo despues puede perder este cambio (ver control_starlink.sh)
     # echo "modo manual: $ACCION — se mantiene asi hasta correr 'starlink_manual.sh auto', o hasta el rescate por timeout si es 'off'"
     ;;
   auto)
