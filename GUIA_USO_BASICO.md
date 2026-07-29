@@ -31,7 +31,7 @@ prender-starlink   # pulsa el relé a "on"
 ```
 
 Si esta placa todavía no tiene el relé instalado, saltear este paso — no es necesario para
-capturar, solo controla el link de datos remoto.
+capturar, solo controla el link de datos remoto. Para instalarlo: `scripts_campo/plan_campo/setup_placa.md` → paso 5.
 
 ### 3. Verificar que el USB está listo (si se captura a `usb`)
 
