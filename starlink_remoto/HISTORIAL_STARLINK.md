@@ -39,7 +39,7 @@ la práctica resulta ser CGNAT, este plan no alcanza y hace falta agregar esa ca
 ## Pendientes reales
 
 - Probar el rescate por modo manual vencido con los timers/reconciliador reales disparando solos (no solo invocación manual de `decidir_objetivo.sh`), y con un reboot en el medio — todo lo de arriba se probó invocando el script a mano y simulando el timestamp, no con el paso real de 24hs ni con timers reales.
-- Validar en la placa real el fix de "NTP no sincronizado → rescate vencido de entrada" (2026-07-28, commit `54338ec`) — probado solo con dry-run local (`cfg.py`/`timedatectl` mockeados), falta reproducir con un reboot real y reloj atrasado de verdad, como se hizo para el resto del rediseño de reloj.
+- `starlink_manual.sh` escribe `modo_manual_file` sin `sync` explícito, a diferencia de `control_starlink.sh` (que sí tiene uno para `STATE_FILE` desde 2026-07-24). Gap real de persistencia: si `aplicar_objetivo.sh` toma el atajo idempotente (STATE_FILE ya coincide, no llama a `control_starlink.sh`), la escritura de `modo_manual_file` queda sin nada que la proteja de un corte de energía justo después. Encontrado 2026-07-28, no arreglado todavía.
 - ~~Confirmar el comportamiento fail-safe deseado del relé real (qué pasa sin señal de control)~~ — **cerrado (2026-07-28):** era una redacción vieja sin cruzar contra la decisión de relé biestable/latching, ver "Riesgos abiertos" arriba. Lo que sigue sin cubrir es un cuelgue de *software* (no del relé) — para eso ya hay un watchdog de hardware de systemd activo en la placa, `RuntimeWatchdogSec=5s` vía `cdns-wdt`/`/dev/watchdog0`, confirmado por SSH — resetea si systemd se cuelga, no decide nada sobre el estado del relé.
 - Decidir si esta carpeta se fusiona con `scripts_campo_comun/` (infraestructura compartida) una vez que el relé esté instalado en campo, o queda separada.
 - Asunción de IP pública de Starlink sin CGNAT, a reconfirmar en sitio con el kit real conectado — nada de esto se probó todavía con Starlink real, todo el trabajo hasta ahora fue en banco.
@@ -330,5 +330,15 @@ demorando el rescate justo cuando más importa. Se agregó el mismo chequeo
 timestamp desconocido → vencido de entrada. Validado con dry-run local
 (`cfg.py`/`timedatectl` mockeados, sin tocar la placa): los 4 casos de arriba dan el
 mismo resultado, más el caso nuevo (NTP no sincronizado + manual="off" recién puesto →
-ahora `"on"`, antes daba `"off"`). **Falta validar en la placa real** con reboot real.
-Commiteado (`54338ec`).
+ahora `"on"`, antes daba `"off"`). Commiteado (`54338ec`).
+
+**Validado en placa real con reboot real (2026-07-29):** manual="off" puesto en pleno
+horario "on" (diverge del horario, condición necesaria para que el rescate importe) y
+reboot real. `journalctl -b 0` mostró `NTPSynchronized` en `no` desde el arranque de
+`ntpsec` hasta el step de reloj real (`time stepped by ~15.9s`) y unos segundos más de
+asentamiento — con flapping (`yes` momentáneo apenas arranca `ntpsec`, antes de que fije
+el estado real en `no`). Invocando `aplicar_objetivo.sh` a mano en esa ventana: forzó
+`on` de verdad (pulso real confirmado por HW), sin borrar `modo_manual_file` ni su
+timestamp. A los ~2 min (`starlink-reconciliador.timer`, ya con reloj sincronizado)
+volvió solo a `off`, honrando el manual todavía no vencido. Ciclo completo (rescate →
+auto-corrección) confirmado en hardware, no solo en dry-run.
