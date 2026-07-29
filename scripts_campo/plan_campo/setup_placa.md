@@ -8,7 +8,15 @@ IPs según topología de red: ver `../PLAN_CAMPO.md` → "IPs según topología 
 ```bash
 scp scripts_campo/capturar_stream.py scripts_campo_comun/campo_common.py root@<IP_PLACA>:/root/scripts_campo/
 scp scripts_campo_comun/relanzar_captura.sh root@<IP_PLACA>:/root/
+scp scripts_campo_comun/cfg.py scripts_campo_comun/config_campo.json root@<IP_PLACA>:/root/scripts_campo_comun/
 ```
+
+`cfg.py` tiene que vivir junto a `config_campo.json` en `/root/scripts_campo_comun/` — esa ruta
+está hardcodeada tanto en los scripts Python (`sys.path.insert(0, '/root/scripts_campo_comun')`
+en `capturar_stream.py`) como en los de Starlink (`CFG=/root/scripts_campo_comun/cfg.py` en
+`control_starlink.sh` y `decidir_objetivo.sh`), y `cfg.py` busca `config_campo.json` en su propio
+directorio. Sin este paso, la captura falla en el primer arranque con
+`ModuleNotFoundError: No module named 'cfg'`.
 
 ## 2. Librería de streaming — persistencia automática
 

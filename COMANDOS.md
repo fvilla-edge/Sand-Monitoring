@@ -122,6 +122,14 @@ scp control_starlink.sh mux_ps10_common.sh asegurar_mux_ps10.sh aplicar_horario.
     decidir_objetivo.sh aplicar_objetivo.sh starlink_manual.sh estado_starlink.sh \
     root@<IP_PLACA>:/root/starlink_remoto/
 
+# cfg.py + config_campo.json — de donde salen hora_on/hora_off, timeouts, rescate_manual_horas.
+# Necesario aunque no se instale nada de captura en esta placa: control_starlink.sh y
+# decidir_objetivo.sh llaman a /root/scripts_campo_comun/cfg.py por ruta fija.
+# Si ya se hizo el setup de captura (ver setup_placa.md paso 1) esto ya esta copiado.
+ssh root@<IP_PLACA> "mkdir -p /root/scripts_campo_comun"
+scp ../scripts_campo_comun/cfg.py ../scripts_campo_comun/config_campo.json \
+    root@<IP_PLACA>:/root/scripts_campo_comun/
+
 # unidades systemd
 scp systemd/starlink-mux-ps10.service systemd/starlink-aplicar-objetivo.service \
     systemd/starlink-rele-on.timer systemd/starlink-rele-off.timer \
