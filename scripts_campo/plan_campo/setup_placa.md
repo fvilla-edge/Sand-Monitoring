@@ -7,7 +7,7 @@ IPs según topología de red: ver `../PLAN_CAMPO.md` → "IPs según topología 
 
 ```bash
 scp scripts_campo/capturar_stream.py scripts_campo_comun/campo_common.py root@<IP_PLACA>:/root/scripts_campo/
-scp scripts_campo_comun/relanzar_captura.sh root@<IP_PLACA>:/root/
+scp scripts_campo_comun/relanzar_captura.sh root@<IP_PLACA>:/root/scripts_campo_comun/
 scp scripts_campo_comun/cfg.py scripts_campo_comun/config_campo.json root@<IP_PLACA>:/root/scripts_campo_comun/
 ```
 

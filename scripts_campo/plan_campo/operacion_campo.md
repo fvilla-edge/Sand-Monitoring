@@ -186,12 +186,12 @@ el wrapper **no** relanza — esos casos son intencionales, no un crash.
 
 ```bash
 # Mono
-bash /root/relanzar_captura.sh \
+bash /root/scripts_campo_comun/relanzar_captura.sh \
   /root/scripts_campo/capturar_stream.py \
   --condicion reposo --decimacion 32 --duracion_chunk 1 --directorio /mnt/usb
 
 # Dual
-bash /root/relanzar_captura.sh \
+bash /root/scripts_campo_comun/relanzar_captura.sh \
   /root/scripts_campo/capturar_stream.py \
   --condicion reposo --canales 2 --decimacion 64 --duracion_chunk 1 --directorio /mnt/usb
 ```
