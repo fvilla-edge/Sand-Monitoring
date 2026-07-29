@@ -172,12 +172,18 @@ ssh root@<IP_PLACA> "
   systemctl enable --now starlink-mux-ps10.service
   systemctl enable --now starlink-rele-on.timer starlink-rele-off.timer
   systemctl enable --now starlink-reconciliador.timer
+  /root/starlink_remoto/aplicar_horario.sh
 "
 
 # alias para prender/apagar/consultar a mano por SSH (opcional, comodidad)
 scp aliases.sh root@<IP_PLACA>:/root/starlink_remoto/
 ssh root@<IP_PLACA> "grep -q 'prender-starlink' /root/.bashrc || cat /root/starlink_remoto/aliases.sh >> /root/.bashrc"
 ```
+
+El `aplicar_horario.sh` del final no es opcional: los `.timer` de este repo tienen `hora_on`/`hora_off`
+hardcodeados en su `OnCalendar=` (los valores por defecto de `config_campo.json`). Si el JSON se editó
+antes de este paso, sin ese comando la placa queda armada con el horario viejo hasta que alguien lo
+corra a mano — sin ningún aviso.
 
 Uso día a día (prender/apagar a mano, cambiar horario, etc.): ver `COMANDOS.md` →
 "Starlink / control remoto del relé".
