@@ -17,6 +17,14 @@ DIRM_REG=0xe000a204   # GPIO banco0, direccion
 OEN_REG=0xe000a208    # GPIO banco0, habilitacion de salida
 PS_BIT=0x400          # bit10 = MIO10
 
+# El patron exige el prefijo "python3" para no matchear tambien la linea de
+# comando de relanzar_captura.sh (que incluye la ruta a capturar_stream.py
+# como argumento) — si lo matchea, un pkill -f mata al supervisor junto con
+# el proceso python, y este nunca llega a ver el exit code para decidir si
+# relanzar o no. Compartido por control_starlink.sh (para cortarla) y
+# aplicar_objetivo.sh (para saber si hay que protegerla del reconciliador).
+PATRON_CAPTURA='python3.*capturar_stream\.py'
+
 asegurar_mux_gpio() {
   if [ "$("$MONITOR" "$MUX_REG")" != "$(printf '0x%08x' "$MUX_GPIO")" ]; then
     "$MONITOR" "$MUX_REG" "$MUX_GPIO"

@@ -63,13 +63,6 @@ if ! flock -w 180 9; then
   exit 1
 fi
 
-# El patron exige el prefijo "python3" para no matchear tambien la linea de
-# comando de relanzar_captura.sh (que incluye la ruta a capturar_stream.py
-# como argumento) — si lo matchea, un pkill -f mata al supervisor junto con
-# el proceso python, y este nunca llega a ver el exit code para decidir si
-# relanzar o no.
-PATRON_CAPTURA='python3.*capturar_stream\.py'
-
 # Precondicion: bitstream v0.94 ya cargado (ver header).
 leer_estado_real() {
   local val=$("$MONITOR" "$IN_REG")
@@ -80,11 +73,30 @@ leer_estado_real() {
   fi
 }
 
+# En prueba (pulsos espurios con Starlink real conectado, ver
+# HISTORIAL_STARLINK.md): polaridad invertida — reposo en 1 en vez de 0, pulso
+# como flanco de bajada (1->0->1) en vez de subida. El header de este archivo
+# (linea 4, "reposo LOW") describe la polaridad ORIGINAL, no esta — no
+# cambia el glitch conocido del primer enable del mux al boot, ese pasa antes
+# de que este reposo importe.
+#
+# Para volver a la polaridad original: comentar el bloque "invertido" de
+# abajo y descomentar el bloque "original" (son mutuamente excluyentes, no
+# dejar los dos activos a la vez).
 pulsar_ps() {
-  local base=$(( ($("$MONITOR" "$DATA_REG") & ~PS_BIT) & 0xFFFFFFFF ))
+  # --- original (comentado): reposo en 0, pulso como flanco de subida (0->1->0) ---
+  # local base=$(( ($("$MONITOR" "$DATA_REG") & ~PS_BIT) & 0xFFFFFFFF ))
+  # "$MONITOR" "$DATA_REG" "$(printf '0x%x' "$base")"
+  # sleep "$PULSO_S"
+  # "$MONITOR" "$DATA_REG" "$(printf '0x%x' $((base | PS_BIT)))"
+  # sleep "$PULSO_S"
+  # "$MONITOR" "$DATA_REG" "$(printf '0x%x' "$base")"
+
+  # --- invertido, activo: reposo en 1, pulso como flanco de bajada (1->0->1) ---
+  local base=$(( ($("$MONITOR" "$DATA_REG") | PS_BIT) & 0xFFFFFFFF ))
   "$MONITOR" "$DATA_REG" "$(printf '0x%x' "$base")"
   sleep "$PULSO_S"
-  "$MONITOR" "$DATA_REG" "$(printf '0x%x' $((base | PS_BIT)))"
+  "$MONITOR" "$DATA_REG" "$(printf '0x%x' $((base & ~PS_BIT)))"
   sleep "$PULSO_S"
   "$MONITOR" "$DATA_REG" "$(printf '0x%x' "$base")"
 }
