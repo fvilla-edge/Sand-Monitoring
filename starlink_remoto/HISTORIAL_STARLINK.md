@@ -44,6 +44,7 @@ la práctica resulta ser CGNAT, este plan no alcanza y hace falta agregar esa ca
 - Decidir si esta carpeta se fusiona con `scripts_campo_comun/` (infraestructura compartida) una vez que el relé esté instalado en campo, o queda separada.
 - Asunción de IP pública de Starlink sin CGNAT, a reconfirmar en sitio con el kit real conectado — nada de esto se probó todavía con Starlink real, todo el trabajo hasta ahora fue en banco.
 - Probar los timers en su horario real (sin forzar horarios cercanos) en más de un ciclo, antes de confiar del todo en uso normal de varios días seguidos.
+- Validar de punta a punta el fix de `STATE_FILE`/`aplicar_objetivo.sh` (2026-07-31): que el reconciliador de 5 min corrija solo un drift real sin intervención manual, sin captura activa de por medio.
 - ~~Confirmar con multímetro si `DIO2_P` (feedback) realmente queda flotante al desconectar el cable~~ — **cerrado (2026-07-28):** medido físicamente con multímetro por el usuario, confirma el comportamiento que ya se había visto por registro (`control_starlink.sh on` con cable desconectado disparaba `ADVERTENCIA` + `exit 1`). Ya no es una lectura de registro sin verificar contra el hardware real.
 
 ## Por qué systemd timers
@@ -342,3 +343,48 @@ el estado real en `no`). Invocando `aplicar_objetivo.sh` a mano en esa ventana: 
 timestamp. A los ~2 min (`starlink-reconciliador.timer`, ya con reloj sincronizado)
 volvió solo a `off`, honrando el manual todavía no vencido. Ciclo completo (rescate →
 auto-corrección) confirmado en hardware, no solo en dry-run.
+
+### Pulsos espurios en PS_MIO10 con Starlink real conectado — polaridad invertida + capacitor, y bug de `STATE_FILE` desactualizado (2026-07-31)
+
+**Contexto:** primera vez con el kit Starlink real conectado y con carga real detrás del
+relé — todo el trabajo anterior (arriba) fue en banco, sin Starlink real. Placa usada:
+`rp-f0fbda` (la de banco, ver referencia de placas), llevada físicamente afuera y
+conectada directo a la Starlink real para esta prueba — no es la placa de campo de IP
+pública `153.67.6.182` de sesiones anteriores, no confundir ambos hallazgos.
+
+**Síntoma:** al pedir `on`, el relé prendía y a los pocos segundos se apagaba solo, sin
+que ningún script lo pidiera. Con analizador lógico sobre `PS_MIO10` se confirmaron
+pulsos chicos ajenos al pulso intencional del script — el relé es biestable por flanco
+(cualquier pulso lo togglea, sin importar el origen), así que un pulso espurio alcanza
+para apagarlo. No se había visto nunca en banco porque ahí no hay una carga real de
+Starlink (inrush/ruido) detrás del relé.
+
+**Fix de hardware, confirmado por el usuario:** se invirtió la polaridad del pulso en
+`pulsar_ps()` (`control_starlink.sh`) — reposo en 1 en vez de 0, pulso como flanco de
+bajada (1→0→1) en vez de subida — más un capacitor agregado por el usuario en la línea
+de control. El bloque original (reposo en 0, flanco de subida) quedó comentado en el
+mismo archivo, no borrado, para poder revertir. No se aisló cuál de los dos cambios
+(polaridad vs. capacitor) fue el determinante, se probaron juntos. No cambia el glitch
+ya conocido del primer enable del mux al bootear (ver "Migración del pulso de control a
+PS_MIO10" más arriba) — ese pasa antes de que la polaridad de reposo importe.
+
+**Bug de software encontrado en paralelo, real y separado:** `aplicar_objetivo.sh`
+comparaba el objetivo contra `STATE_FILE` y, si coincidían, se saltaba la verificación
+real por HW sin límite de tiempo — así, un pulso espurio como el de arriba (o cualquier
+cambio de estado por fuera del script) nunca se detectaba hasta que el objetivo mismo
+cambiara por otro motivo (próximo horario). Reproducido en placa real: tres corridas
+seguidas del reconciliador (`18:09`, `18:14`, `18:19`) se saltearon la verificación por
+HW porque `STATE_FILE` ya coincidía con el objetivo, mientras el relé real ya había
+cambiado de estado sin que nada lo registrara.
+
+**Fix:** `aplicar_objetivo.sh` ahora solo aplica el atajo de caché si hay una captura
+activa que proteger (verificar de verdad exige el bitstream `v0.94`, que corta
+`stream_app`) — sin captura activa, siempre verifica contra el HW real, aunque el
+objetivo ya coincida con la caché. `PATRON_CAPTURA` (antes solo en
+`control_starlink.sh`) se movió a `mux_ps10_common.sh`, compartido por los dos scripts
+en vez de duplicado.
+
+**Desplegado en la placa (`10.42.0.180`), con backups de los tres archivos tocados
+(`*.bak_pre_invertido`, `*.bak_pre_statefile_fix`). Pendiente: validar un ciclo completo
+del reconciliador corrigiendo un drift real sin intervención manual (se verificó
+sintaxis y las líneas clave desplegadas, no un ciclo de 5 min de punta a punta).**
