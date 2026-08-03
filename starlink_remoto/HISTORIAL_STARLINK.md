@@ -486,13 +486,13 @@ del rescate por reloj no confiable, que ya estaba validado desde antes.**
 **Opción A — clave propia para esa persona (recomendada, hay que hacerla *antes* de necesitarla):**
 1. Esa persona genera su propio par de claves si no tiene uno: `ssh-keygen -t ed25519 -C "su-email"`.
 2. Pasa el contenido de su `.pub` (no es sensible, se puede mandar por cualquier medio — el archivo privado nunca sale de su máquina).
-3. Se agrega esa línea al final de `/root/.ssh/authorized_keys` en la placa:
+3. Se agrega esa línea al final de `/root/.ssh/authorized_keys` en la placa — con `printf '\n%s\n'`, no `echo >>` a secas, para garantizar el salto de línea antes de la clave nueva. Si el archivo ya terminara sin salto de línea (no es el caso hoy, pero puede cambiar), un `echo >>` común pega la clave nueva en la misma línea que la anterior y **rompe las dos a la vez**:
    ```bash
-   ssh root@153.67.6.182 "echo '<contenido del .pub>' >> ~/.ssh/authorized_keys"
+   ssh root@153.67.6.182 "printf '\n%s\n' '<contenido del .pub>' >> ~/.ssh/authorized_keys"
    ```
-4. Confirmar: esa persona corre `ssh root@153.67.6.182` y entra directo, sin que se le pida nada.
+4. Confirmar ANTES de dar por cerrado el trámite: esa persona corre `ssh root@153.67.6.182` y entra directo, sin que se le pida nada, **con la clave vieja (la que ya estaba) todavía intacta** — abrir una segunda sesión con la clave original en paralelo mientras se prueba la nueva, para detectar de inmediato si el `authorized_keys` quedó corrompido.
 
 **Opción B — reactivar password temporalmente (solo como fallback de emergencia, no dejar así):**
-1. En la placa: `PasswordAuthentication yes` en `/etc/ssh/sshd_config`, `sshd -t` para validar, `systemctl restart sshd`.
-2. Compartir la password de root con esa persona por el medio que corresponda.
-3. **Apenas termine la necesidad puntual:** volver a `PasswordAuthentication no` y `systemctl restart sshd` — dejarlo en `yes` reabre exactamente el hueco de seguridad cerrado en este mismo hardening (root con password expuesto en la IP pública de Starlink, sin CGNAT de por medio).
+1. En la placa, **las dos directivas** en `/etc/ssh/sshd_config` (cambiar solo `PasswordAuthentication` no alcanza — `PermitRootLogin prohibit-password` bloquea el password de `root` en particular, aunque `PasswordAuthentication` esté en `yes`): `PasswordAuthentication yes` + `PermitRootLogin yes`. Validar con `sshd -t` antes de reiniciar. El servicio en esta placa se llama **`ssh.service`, no `sshd.service`** (Debian/Ubuntu) — `systemctl restart ssh`.
+2. Compartir la password de root con esa persona por el medio que corresponda. Verificado en vivo (2026-08-03): login por password funciona con las dos directivas puestas.
+3. **Apenas termine la necesidad puntual:** volver a `PasswordAuthentication no` + `PermitRootLogin prohibit-password` y `systemctl restart ssh` — dejarlo así reabre exactamente el hueco de seguridad cerrado en este mismo hardening (root con password expuesto en la IP pública de Starlink, sin CGNAT de por medio). Si además se usó una password débil para la prueba (ej. corta, con el nombre de la empresa), cambiarla de nuevo a algo fuerte al revertir, no dejarla puesta.
