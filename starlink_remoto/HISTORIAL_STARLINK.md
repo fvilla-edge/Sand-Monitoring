@@ -43,8 +43,8 @@ la práctica resulta ser CGNAT, este plan no alcanza y hace falta agregar esa ca
 - ~~Confirmar el comportamiento fail-safe deseado del relé real (qué pasa sin señal de control)~~ — **cerrado (2026-07-28):** era una redacción vieja sin cruzar contra la decisión de relé biestable/latching, ver "Riesgos abiertos" arriba. Lo que sigue sin cubrir es un cuelgue de *software* (no del relé) — para eso ya hay un watchdog de hardware de systemd activo en la placa, `RuntimeWatchdogSec=5s` vía `cdns-wdt`/`/dev/watchdog0`, confirmado por SSH — resetea si systemd se cuelga, no decide nada sobre el estado del relé.
 - Decidir si esta carpeta se fusiona con `scripts_campo_comun/` (infraestructura compartida) una vez que el relé esté instalado en campo, o queda separada.
 - Asunción de IP pública de Starlink sin CGNAT, a reconfirmar en sitio con el kit real conectado — nada de esto se probó todavía con Starlink real, todo el trabajo hasta ahora fue en banco.
-- Probar los timers en su horario real (sin forzar horarios cercanos) en más de un ciclo, antes de confiar del todo en uso normal de varios días seguidos.
-- Validar de punta a punta el fix de `STATE_FILE`/`aplicar_objetivo.sh` (2026-07-31): que el reconciliador de 5 min corrija solo un drift real sin intervención manual, sin captura activa de por medio.
+- Probar los timers en su horario real (`08:55`/`17:00`, ya aplicado en la placa el 2026-08-03) en más de un ciclo día/noche seguido, antes de confiar del todo en uso normal de varios días — lo probado hasta ahora fue siempre con horarios forzados a pocos minutos.
+- ~~Validar de punta a punta el fix de `STATE_FILE`/`aplicar_objetivo.sh` (2026-07-31): que el reconciliador de 5 min corrija solo un drift real sin intervención manual, sin captura activa de por medio~~ — **cerrado (2026-08-03):** validado en placa real con un drift inyectado a propósito, ver sección correspondiente en "Historial de cambios".
 - ~~Confirmar con multímetro si `DIO2_P` (feedback) realmente queda flotante al desconectar el cable~~ — **cerrado (2026-07-28):** medido físicamente con multímetro por el usuario, confirma el comportamiento que ya se había visto por registro (`control_starlink.sh on` con cable desconectado disparaba `ADVERTENCIA` + `exit 1`). Ya no es una lectura de registro sin verificar contra el hardware real.
 
 ## Por qué systemd timers
@@ -349,8 +349,14 @@ auto-corrección) confirmado en hardware, no solo en dry-run.
 **Contexto:** primera vez con el kit Starlink real conectado y con carga real detrás del
 relé — todo el trabajo anterior (arriba) fue en banco, sin Starlink real. Placa usada:
 `rp-f0fbda` (la de banco, ver referencia de placas), llevada físicamente afuera y
-conectada directo a la Starlink real para esta prueba — no es la placa de campo de IP
-pública `153.67.6.182` de sesiones anteriores, no confundir ambos hallazgos.
+conectada directo a la Starlink real para esta prueba.
+
+**Corrección (2026-08-03):** el párrafo anterior decía que esta placa no era "la placa
+de campo de IP pública `153.67.6.182`". Eso quedó en duda — en sesión posterior, esa
+misma IP pública respondió con hostname `rp-f0fbda`, es decir, esta placa de banco. No
+está confirmado si alguna vez hubo una placa de campo físicamente distinta, o si
+siempre fue esta misma llevada afuera. No dar por sentado que son dos equipos
+separados sin volver a verificar el hostname.
 
 **Síntoma:** al pedir `on`, el relé prendía y a los pocos segundos se apagaba solo, sin
 que ningún script lo pidiera. Con analizador lógico sobre `PS_MIO10` se confirmaron
@@ -385,6 +391,41 @@ objetivo ya coincida con la caché. `PATRON_CAPTURA` (antes solo en
 en vez de duplicado.
 
 **Desplegado en la placa (`10.42.0.180`), con backups de los tres archivos tocados
-(`*.bak_pre_invertido`, `*.bak_pre_statefile_fix`). Pendiente: validar un ciclo completo
-del reconciliador corrigiendo un drift real sin intervención manual (se verificó
-sintaxis y las líneas clave desplegadas, no un ciclo de 5 min de punta a punta).**
+(`*.bak_pre_invertido`, `*.bak_pre_statefile_fix`). Commiteado el 2026-07-31 (`1a8a3bc`).**
+
+### Fix de `STATE_FILE` validado con un drift real inyectado, y horario real aplicado (2026-08-03)
+
+**Prueba rápida de los timers on/off, en banco (`10.42.0.180`):** el relé había quedado
+`on` por un modo manual viejo de una sesión anterior, con `hora_on`/`hora_off` invertidos
+(`12:35`/`12:05`, on > off — con esa combinación el horario puro nunca da "on", solo el
+manual lo sostenía). Se limpió el manual (`auto-starlink`) y el relé pasó a `off` al
+instante, **confirmado por HW** (no por caché, gracias al fix de arriba). Se forzó
+`hora_on` a +5 min y se corrió `aplicar_horario.sh`: al llegar la hora,
+`starlink-rele-on.timer` disparó en punto y `aplicar_objetivo.sh` confirmó `on` por HW en
+el log, sin intervención manual. Después se aplicó el horario real de producción,
+`hora_on=08:55`/`hora_off=17:00`.
+
+**Validación del fix de `STATE_FILE` con un drift real inyectado — el pendiente que
+quedaba abierto desde la sección anterior:** para simular un pulso espurio real sin
+depender de que ocurra solo, se inyectó un pulso externo directo sobre `DATA_REG`/
+`PS_BIT` (mismos valores de `mux_ps10_common.sh`) por SSH, **bypaseando a propósito**
+`control_starlink.sh`/`aplicar_objetivo.sh` — así el relé cambia de estado real pero
+`STATE_FILE` queda desactualizado, igual que haría un pulso de ruido real. Sin captura
+activa corriendo (precondición necesaria: con captura activa el atajo de caché se
+activa a propósito y no verificaría por HW, eso no sería un bug).
+
+Hecho sobre la placa ya devuelta a un sitio con Starlink real conectado (ver nota de
+corrección más arriba sobre la identidad de esta placa), con el riesgo aceptado
+explícitamente por el usuario de perder el único acceso remoto al sitio si el
+reconciliador no corregía como se esperaba.
+
+**Resultado, confirmado por `journalctl`:**
+- `15:08:56 UTC` — corrida normal previa del reconciliador, relé ya en `on`, sin acción (antes del pulso).
+- `~15:13 UTC` — pulso externo inyectado; el relé se apagó de verdad (SSH y toda la conectividad se cortaron al toque, porque este mismo relé corta la alimentación/conexión de Starlink, no solo una señal de control).
+- `15:13:58–15:14:02 UTC` — la corrida programada del reconciliador (le tocó caer justo después del pulso) detectó el mismatch (objetivo `on` vs. HW real `off`) y lo corrigió sola en 4 segundos: `"rele ahora en 'on' (confirmado por HW)"`. Cero intervención manual.
+- `15:15:19 UTC` — SSH recuperado. Los ~77s extra después de la corrección del relé son el propio terminal Starlink reconectándose al satélite, no el mecanismo del relé.
+
+**Corte real de acceso remoto: ~2 minutos en total** — menos que el peor caso teórico de
+5 min, porque el pulso cayó justo antes de una corrida ya programada del reconciliador.
+Con esto, el fix de `STATE_FILE` de la sección anterior queda **validado en hardware
+real de punta a punta**, no solo por lectura de código.
