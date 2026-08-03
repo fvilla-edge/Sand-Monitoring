@@ -38,7 +38,7 @@ la práctica resulta ser CGNAT, este plan no alcanza y hace falta agregar esa ca
 
 ## Pendientes reales
 
-- Probar el rescate por modo manual vencido con los timers/reconciliador reales disparando solos (no solo invocación manual de `decidir_objetivo.sh`), y con un reboot en el medio — todo lo de arriba se probó invocando el script a mano y simulando el timestamp, no con el paso real de 24hs ni con timers reales.
+- ~~Probar el rescate por modo manual vencido con los timers/reconciliador reales disparando solos (no solo invocación manual de `decidir_objetivo.sh`), y con un reboot en el medio~~ — **cerrado (2026-08-03):** validado en placa real, ver sección correspondiente en "Historial de cambios".
 - ~~`starlink_manual.sh` escribe `modo_manual_file` sin `sync` explícito, a diferencia de `control_starlink.sh` (que sí tiene uno para `STATE_FILE` desde 2026-07-24)~~ — **cerrado (2026-07-29):** se agregó el mismo `sync` después del `printf`. No se repitió una prueba de corte de energía dedicada — usa el mismo mecanismo (`sync` sobre ext4) ya probado en sec.84 con un archivo genérico, que sí sobrevivió un reboot real.
 - ~~Confirmar el comportamiento fail-safe deseado del relé real (qué pasa sin señal de control)~~ — **cerrado (2026-07-28):** era una redacción vieja sin cruzar contra la decisión de relé biestable/latching, ver "Riesgos abiertos" arriba. Lo que sigue sin cubrir es un cuelgue de *software* (no del relé) — para eso ya hay un watchdog de hardware de systemd activo en la placa, `RuntimeWatchdogSec=5s` vía `cdns-wdt`/`/dev/watchdog0`, confirmado por SSH — resetea si systemd se cuelga, no decide nada sobre el estado del relé.
 - Decidir si esta carpeta se fusiona con `scripts_campo_comun/` (infraestructura compartida) una vez que el relé esté instalado en campo, o queda separada.
@@ -429,3 +429,31 @@ reconciliador no corregía como se esperaba.
 5 min, porque el pulso cayó justo antes de una corrida ya programada del reconciliador.
 Con esto, el fix de `STATE_FILE` de la sección anterior queda **validado en hardware
 real de punta a punta**, no solo por lectura de código.
+
+### Rescate por modo manual "off" vencido, validado con timers reales y reboot real (2026-08-03, misma sesión)
+
+**Motivo:** cierra el pendiente que quedaba desde la sección "Rescate por modo manual
+'off' vencido" — ahí solo se había probado invocando `decidir_objetivo.sh` a mano con un
+timestamp simulado (dry-run de lógica), nunca dejando que el propio
+`starlink-reconciliador.timer` o el arranque real lo detectaran y corrigieran solos, ni
+combinado con un reboot real en el medio de la ventana vencida.
+
+**Método, sin esperar las 24hs reales:** lo único que importa para el mecanismo es el
+timestamp guardado en `modo_manual_file`, no el tiempo real transcurrido. Se escribió
+directamente `off` + un timestamp ya "vencido" (epoch de ~25hs atrás) en ese archivo, se
+apagó el relé de verdad con `control_starlink.sh off` (simulando que alguien lo apagó a
+mano hace un día y nunca lo renovó), y se programó un reboot real desacoplado de la
+sesión SSH (`systemd-run --on-active=15s systemctl reboot --force --force` — necesario
+porque apagar el relé corta la conexión al toque, la placa no tiene Magic SysRq). Todo
+en una sola tanda de comandos, antes de perder la conexión.
+
+**Resultado, confirmado por `journalctl`:**
+- El reboot programado se disparó solo, sin depender de la sesión SSH (que ya estaba cortada).
+- Al arrancar, `starlink-mux-ps10.service` (que llama `aplicar_objetivo.sh --forzar`, ver sección "Migración del pulso de control a PS_MIO10") corrigió el relé a `on` en los primeros segundos del boot — pero en ese momento el NTP todavía no había sincronizado, así que técnicamente fue el rescate por "reloj no confiable" el que disparó primero, no el de manual vencido (los dos mecanismos conviven y el primero que evalúa gana). SSH recuperado en **~2 minutos** desde el corte.
+- El NTP tardó **~17 minutos** en sincronizar del todo después de este reboot — mucho más que el <1 minuto visto en banco (sec. "Reloj sin RTC", 2026-07-29); probablemente por tener que rearmar las asociaciones DNS/pool de `ntpd` desde cero sobre esta conexión. No es un bug, pero conviene tenerlo presente: en campo, el reloj puede tardar bastante más en volverse confiable después de un reboot que lo que la prueba de banco hacía suponer.
+- Una vez confirmado `NTPSynchronized=yes` (17:17:42 UTC), se esperó a la siguiente corrida ya programada del reconciliador (17:21:52 UTC, con el NTP sincronizado sin ninguna ambigüedad) — ahí el único camino posible para que decidir_objetivo.sh devuelva `on` es el de manual vencido (el chequeo de reloj no confiable ya no aplica). Confirmado: `"OK: el rele ya esta en 'on' (verificado por HW), no hago nada"`, y una verificación directa aparte con `control_starlink.sh on` lo reconfirmó. `modo_manual_file` siguió intacto en todo momento (no se borra, como corresponde al diseño).
+
+**Con esto, el camino de rescate por manual vencido queda validado en hardware real,
+disparando por su cuenta vía los timers/servicios reales (no invocación manual), y
+sobreviviendo correctamente un reboot real en el medio de la ventana vencida — aislado
+del rescate por reloj no confiable, que ya estaba validado desde antes.**
