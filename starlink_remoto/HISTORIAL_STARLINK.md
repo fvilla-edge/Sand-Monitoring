@@ -478,3 +478,21 @@ del rescate por reloj no confiable, que ya estaba validado desde antes.**
 **VPN (Tailscale/WireGuard) descartada explícitamente por el usuario** — no forma parte de este hardening.
 
 **Persistencia de logs validada con reboot real (2026-08-03, sesión posterior):** se dejó una marca en el journal (`logger -t journal-persist-test`), se forzó `journalctl --sync` y se reinició la placa de verdad (`reboot`, disparado vía `systemd-run` desacoplado de la sesión SSH, mismo patrón que otros reboots reales de esta placa). Tras reconectar (Starlink tardó ~13 min esta vez), `journalctl --list-boots` mostró el boot anterior con la marca intacta y el bind mount de `/etc/fstab` recreado solo (`findmnt /var/log/journal` → `/dev/mmcblk0p2[/var/lib/journal-persist]`). Pendiente cerrado, sin intervención manual de por medio.
+
+### Acceso SSH para otra persona (compañero de trabajo), tras el hardening (2026-08-03, sesión posterior)
+
+**Por qué hace falta esto:** desde el hardening de arriba, `PasswordAuthentication no` está activo — el flujo viejo de "`ssh root@<IP>` y tipear la password de root" **ya no funciona**, sin importar que la password sea correcta. Hoy `/root/.ssh/authorized_keys` tiene una sola clave cargada (la de `fvilla@edgeinst.com.ar`). Esto quedó anotado para el día que alguien más necesite entrar (ej. el usuario habitual no está disponible).
+
+**Opción A — clave propia para esa persona (recomendada, hay que hacerla *antes* de necesitarla):**
+1. Esa persona genera su propio par de claves si no tiene uno: `ssh-keygen -t ed25519 -C "su-email"`.
+2. Pasa el contenido de su `.pub` (no es sensible, se puede mandar por cualquier medio — el archivo privado nunca sale de su máquina).
+3. Se agrega esa línea al final de `/root/.ssh/authorized_keys` en la placa:
+   ```bash
+   ssh root@153.67.6.182 "echo '<contenido del .pub>' >> ~/.ssh/authorized_keys"
+   ```
+4. Confirmar: esa persona corre `ssh root@153.67.6.182` y entra directo, sin que se le pida nada.
+
+**Opción B — reactivar password temporalmente (solo como fallback de emergencia, no dejar así):**
+1. En la placa: `PasswordAuthentication yes` en `/etc/ssh/sshd_config`, `sshd -t` para validar, `systemctl restart sshd`.
+2. Compartir la password de root con esa persona por el medio que corresponda.
+3. **Apenas termine la necesidad puntual:** volver a `PasswordAuthentication no` y `systemctl restart sshd` — dejarlo en `yes` reabre exactamente el hueco de seguridad cerrado en este mismo hardening (root con password expuesto en la IP pública de Starlink, sin CGNAT de por medio).
