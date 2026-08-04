@@ -202,8 +202,11 @@ Instalación (una vez por placa, qué copiar y qué comandos correr):
 `scripts_campo/plan_campo/setup_placa.md` → paso 6.
 
 ```bash
-# correr a mano (no hay servicio systemd todavia, ver README)
-ssh root@<IP_PLACA> "cd /root/panel_solar_ble && .venv/bin/python -u leer_smartsolar_serial.py"
+# lectura por pantalla, para probar el puente (no hay servicio systemd todavia, ver README)
+ssh root@<IP_PLACA> "cd /root/panel_solar_ble && .venv/bin/python3 -u leer_smartsolar_serial.py"
+
+# publicar en Losant (no correr junto con el publicador de la notebook, mismo Device)
+ssh root@<IP_PLACA> "cd /root/panel_solar_ble && .venv/bin/python3 -u publicar_losant.py"
 ```
 
 `-u` es necesario para ver la salida en vivo por SSH (si no, Python bufferea todo y no

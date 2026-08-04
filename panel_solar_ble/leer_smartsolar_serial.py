@@ -1,8 +1,8 @@
 """
 Muestra por pantalla, en vivo, los datos del SmartSolar recibidos vía el
 ESP32 (que escanea BLE y manda la manufacturer data cruda por USB serial,
-ver esp32_victron_scan/). Mismo formato y throttling que leer_smartsolar.py,
-pero desencriptando en la PC en vez de leer Bluetooth directamente.
+ver esp32_victron_scan/). Desencripta acá (en quien lea este puerto —
+la Red Pitaya, en este proyecto) en vez de escuchar Bluetooth directo.
 
 Uso:
     .venv/bin/python leer_smartsolar_serial.py [puerto]
@@ -10,7 +10,6 @@ Uso:
 Por defecto usa /dev/ttyACM0.
 """
 
-import re
 import sys
 import time
 from datetime import datetime
@@ -18,9 +17,7 @@ from datetime import datetime
 import serial
 
 from config import DEVICES
-from victron_ble.devices import detect_device_type
-from victron_ble.exceptions import AdvertisementKeyMissingError, UnknownDeviceError
-from victron_scanner import parsed_to_dict
+from victron_scanner import SerialDecoder
 
 PUERTO = sys.argv[1] if len(sys.argv) > 1 else "/dev/ttyACM0"
 BAUDRATE = 115200
@@ -37,10 +34,7 @@ UNIDADES = {
     "external_device_load": "A",
 }
 
-LINEA_RE = re.compile(r"MAC=([0-9a-f:]+) RSSI=(-?\d+) LEN=(\d+) DATA=([0-9A-Fa-f]+)")
-
-_device_keys = {mac.lower(): key for mac, key in DEVICES.items()}
-_known_devices = {}
+_decoder = SerialDecoder(DEVICES)
 _last_shown = {}
 
 
@@ -58,35 +52,11 @@ def mostrar(address, rssi, data):
 
 
 def procesar_linea(linea):
-    m = LINEA_RE.search(linea)
-    if not m:
+    resultado = _decoder.procesar_linea(linea)
+    if resultado is None:
         return
-
-    address = m.group(1).lower()
-    rssi = int(m.group(2))
-    raw = bytes.fromhex(m.group(4))
-
-    if address not in _device_keys:
-        return
-
-    # Los primeros 2 bytes son el Company ID (0x02E1); victron-ble espera
-    # el payload sin eso, igual que bleak se lo entrega.
-    payload = raw[2:]
-
-    if address not in _known_devices:
-        device_klass = detect_device_type(payload)
-        if not device_klass:
-            return
-        _known_devices[address] = device_klass(_device_keys[address])
-
-    try:
-        parsed = _known_devices[address].parse(payload)
-    except AdvertisementKeyMissingError:
-        return
-    except UnknownDeviceError:
-        return
-
-    mostrar(address, rssi, parsed_to_dict(parsed))
+    address, rssi, data = resultado
+    mostrar(address, rssi, data)
 
 
 def main():

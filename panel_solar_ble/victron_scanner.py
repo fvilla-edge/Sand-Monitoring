@@ -6,10 +6,13 @@ MQTT, etc.) solo se ocupe de qué hacer con esos datos.
 """
 
 import inspect
+import re
 from enum import Enum
 
 from victron_ble.devices import DeviceData, detect_device_type
 from victron_ble.exceptions import AdvertisementKeyMissingError, UnknownDeviceError
+
+LINEA_SERIAL_RE = re.compile(r"MAC=([0-9a-f:]+) RSSI=(-?\d+) LEN=(\d+) DATA=([0-9A-Fa-f]+)")
 
 
 def parsed_to_dict(parsed: DeviceData) -> dict:
@@ -27,6 +30,53 @@ def parsed_to_dict(parsed: DeviceData) -> dict:
             if value is not None:
                 data[name[4:]] = value
     return data
+
+
+class SerialDecoder:
+    """
+    Desencripta las líneas que manda el ESP32 (ver esp32_victron_scan/) por
+    USB serial: `MAC=... RSSI=... LEN=... DATA=<hex>`. Mismo desencriptado
+    que VictronScanner pero sin escuchar Bluetooth directo — para equipos
+    (como la Red Pitaya) sin soporte de BLE propio.
+    """
+
+    def __init__(self, device_keys: dict):
+        self._device_keys = {k.lower(): v for k, v in device_keys.items()}
+        self._known_devices = {}
+
+    def procesar_linea(self, linea: str):
+        """Devuelve (address, rssi, data) o None si la línea no aporta nada."""
+        m = LINEA_SERIAL_RE.search(linea)
+        if not m:
+            return None
+
+        address = m.group(1).lower()
+        if address not in self._device_keys:
+            return None
+
+        rssi = int(m.group(2))
+        raw = bytes.fromhex(m.group(4))
+        # Los primeros 2 bytes son el Company ID (0x02E1); victron-ble
+        # espera el payload sin eso, igual que bleak se lo entrega.
+        payload = raw[2:]
+
+        if address not in self._known_devices:
+            device_klass = detect_device_type(payload)
+            if not device_klass:
+                return None
+            self._known_devices[address] = device_klass(self._device_keys[address])
+
+        try:
+            parsed = self._known_devices[address].parse(payload)
+        except AdvertisementKeyMissingError:
+            # La clave en config.py no es la correcta para este dispositivo.
+            return None
+        except UnknownDeviceError:
+            # Se descifró pero el modelo no tiene parser conocido en esta
+            # versión de victron-ble.
+            return None
+
+        return address, rssi, parsed_to_dict(parsed)
 
 
 def __getattr__(name):

@@ -15,3 +15,7 @@ __pycache__/
 .DS_Store
 
 /datos_campo/
+
+# Credenciales de Losant (panel_solar_ble/)
+losant_config.py
+access-key-*.txt

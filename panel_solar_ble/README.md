@@ -35,10 +35,17 @@ SmartSolar  --BLE (advertisement cifrado)-->  ESP32-C3  --USB serial (hex crudo)
 - `esp32_victron_scan/` — sketch del ESP32-C3 (ver su propio README para
   compilar/flashear).
 - `victron_scanner.py` — desencriptado AES-CTR (usa el paquete
-  `victron-ble`), compartido con el proyecto de la notebook.
+  `victron-ble`) + `SerialDecoder`, que parsea las líneas `MAC=... DATA=...`
+  del ESP32. Compartido entre `leer_smartsolar_serial.py` y
+  `publicar_losant.py`.
 - `config.py` — MAC + clave de encriptación del SmartSolar.
 - `leer_smartsolar_serial.py` — lee `/dev/ttyACM0`, desencripta y muestra
-  por pantalla. Es el único script que corre en la Pitaya.
+  por pantalla. Para probar que el puente ESP32→Pitaya funciona.
+- `publicar_losant.py` — lo mismo, pero publica por MQTT en Losant en vez
+  de mostrar por pantalla (throttling de 30s, mismos atributos que la
+  versión de la notebook).
+- `losant_config.py` — Device ID + credenciales de Losant. **No está en
+  git** (ver `.gitignore`) — hay que crearlo a mano en la placa (paso 5).
 
 ## Setup en la Red Pitaya
 
@@ -57,10 +64,13 @@ llevarlo a la placa).
 ### 2. Copiar los scripts a la placa
 
 ```bash
-scp config.py victron_scanner.py leer_smartsolar_serial.py root@<IP_PLACA>:/root/panel_solar_ble/
+scp config.py victron_scanner.py leer_smartsolar_serial.py publicar_losant.py root@<IP_PLACA>:/root/panel_solar_ble/
 ```
 
 (crear el directorio antes si no existe: `ssh root@<IP_PLACA> "mkdir -p /root/panel_solar_ble"`)
+
+`losant_config.py` (credenciales) va aparte — ver paso 5, no hace falta si
+solo se quiere probar la lectura (`leer_smartsolar_serial.py`).
 
 ### 3. Instalar dependencias — **ojo con `bleak`**
 
@@ -75,15 +85,17 @@ esto: solo se usa para escuchar Bluetooth en vivo (lo que hacen
 `leer_smartsolar.py`/`publicar_losant.py` en la notebook), no para leer
 por serial.
 
-Instalar así, en orden, evitando que `bleak` se instale:
+Instalar así, en orden, evitando que `bleak` se instale (usar
+`python -m pip`, no el binario `.venv/bin/pip` — ver nota al final de
+este paso):
 
 ```bash
 ssh root@<IP_PLACA> "
   cd /root/panel_solar_ble
   python3 -m venv .venv
-  .venv/bin/pip install --upgrade pip -q
-  .venv/bin/pip install victron-ble --no-deps -q
-  .venv/bin/pip install pycryptodome click pyserial -q
+  .venv/bin/python3 -m pip install --upgrade pip -q
+  .venv/bin/python3 -m pip install victron-ble --no-deps -q
+  .venv/bin/python3 -m pip install pycryptodome click pyserial -q
 "
 ```
 
@@ -94,16 +106,42 @@ de una sola vez por placa — si se reflashea el firmware, repetir.
 
 `victron_scanner.py` está preparado para esto: el import de `bleak` (via
 `victron_ble.scanner.BaseScanner`) es diferido — solo se dispara si algo
-pide `VictronScanner` (la clase que escucha Bluetooth en vivo), que
-`leer_smartsolar_serial.py` nunca usa. Si en el futuro se agrega algo a
+pide `VictronScanner` (la clase que escucha Bluetooth en vivo), que ni
+`leer_smartsolar_serial.py` ni `publicar_losant.py` usan (ambos usan
+`SerialDecoder`, que no la necesita). Si en el futuro se agrega algo a
 esta carpeta que sí necesite escuchar Bluetooth directo desde la Pitaya,
 va a fallar de nuevo con el mismo error de memoria — no es un problema
 resuelto en general, solo esquivado para este camino (serial).
 
-### 4. Correr
+**Si `publicar_losant.py` va a correr en esta placa**, instalar además:
 
 ```bash
-ssh root@<IP_PLACA> "cd /root/panel_solar_ble && .venv/bin/python -u leer_smartsolar_serial.py"
+ssh root@<IP_PLACA> "
+  cd /root/panel_solar_ble
+  .venv/bin/python3 -m pip install losant-mqtt -q
+  .venv/bin/python3 -m pip install 'setuptools<81' -q
+"
+```
+
+El pin de `setuptools<81` es necesario: `losantmqtt` todavía importa
+`pkg_resources`, que las versiones de `setuptools` 81+ ya no incluyen
+(deprecado por upstream, no es un problema de esta placa). Sin el pin,
+falla con `ModuleNotFoundError: No module named 'pkg_resources'`. Con la
+versión vieja anda, solo tira un `UserWarning` de deprecación al importar
+— ignorable por ahora.
+
+**Nota sobre `.venv/bin/pip` vs `python -m pip`:** el script `pip` del
+venv tiene el path del venv *hardcodeado* en su primera línea (shebang).
+Si la carpeta del venv se renombra o mueve después de crearlo (como pasó
+acá: `ble_panel_solar` → `panel_solar_ble`), `.venv/bin/pip` deja de
+ejecutar con `cannot execute: required file not found`, aunque el venv
+en sí siga sano. `python -m pip` no tiene ese problema porque no depende
+del shebang — por eso todos los comandos de este README lo usan así.
+
+### 4. Correr (lectura por pantalla, para probar el puente)
+
+```bash
+ssh root@<IP_PLACA> "cd /root/panel_solar_ble && .venv/bin/python3 -u leer_smartsolar_serial.py"
 ```
 
 El `-u` (salida sin buffer) es necesario para ver algo en vivo por SSH —
@@ -125,13 +163,39 @@ en el script):
     yield_today: 0 Wh
 ```
 
-Si el puerto es otro: `.venv/bin/python -u leer_smartsolar_serial.py /dev/ttyUSB0`.
+Si el puerto es otro: `.venv/bin/python3 -u leer_smartsolar_serial.py /dev/ttyUSB0`.
 
-Ctrl+C para cortar. **Pendiente sin decidir:** esto corre a mano en una
-sesión SSH — no hay todavía un servicio systemd para dejarlo corriendo
-solo (arrancar con la placa, reiniciarse si se cae, etc.). Si hace falta
-eso, seguir el mismo patrón que `starlink_remoto/systemd/` cuando se
-decida.
+Ctrl+C para cortar.
+
+### 5. Publicar en Losant
+
+`losant_config.py` no está en git — crearlo a mano en la placa (mismo
+contenido que el de la notebook, `BLe panel solar/losant_config.py`, o
+copiarlo desde ahí):
+
+```bash
+scp "/home/facu-edge/BLe panel solar/losant_config.py" root@<IP_PLACA>:/root/panel_solar_ble/
+```
+
+Correr:
+
+```bash
+ssh root@<IP_PLACA> "cd /root/panel_solar_ble && .venv/bin/python3 -u publicar_losant.py"
+```
+
+Publica cada 30s por dispositivo (`INTERVALO_PUBLICACION` en el script),
+para no gastar de golpe la cuota mensual de mensajes de Losant.
+
+**No correr esto al mismo tiempo que `publicar_losant.py` de la
+notebook** — usan el mismo `DEVICE_ID` de Losant (es el mismo SmartSolar
+físico), así que publicarían por duplicado al mismo dispositivo. Este
+camino (Pitaya + ESP32) reemplaza al de la notebook, no lo complementa.
+
+**Pendiente sin decidir:** tanto este script como `leer_smartsolar_serial.py`
+corren a mano en una sesión SSH — no hay todavía un servicio systemd para
+dejarlos corriendo solos (arrancar con la placa, reiniciarse si se caen,
+etc.). Si hace falta eso, seguir el mismo patrón que
+`starlink_remoto/systemd/` cuando se decida.
 
 ## Actualizar la clave de encriptación
 

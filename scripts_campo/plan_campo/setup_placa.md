@@ -196,4 +196,6 @@ en el kernel) y el detalle de qué copiar/instalar/correr: `../../panel_solar_bl
 Punto no obvio, documentado ahí con más detalle: instalar dependencias con
 `pip install victron-ble` a secas rompe por falta de RAM en esta placa (intenta compilar
 `bleak`/`dbus-fast` desde código fuente) — usar `--no-deps` + instalar las dependencias
-reales sueltas, como indica ese README.
+reales sueltas, como indica ese README. Lo mismo para publicar en Losant
+(`publicar_losant.py`): necesita un pin de `setuptools<81` (`pkg_resources` deprecado en
+versiones nuevas), también documentado ahí.
