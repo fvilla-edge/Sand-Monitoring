@@ -187,3 +187,13 @@ corra a mano — sin ningún aviso.
 
 Uso día a día (prender/apagar a mano, cambiar horario, etc.): ver `COMANDOS.md` →
 "Starlink / control remoto del relé".
+
+## 6. Panel solar por BLE (ESP32-C3, si esta placa lo lee)
+
+Arquitectura, por qué hace falta un ESP32-C3 como puente (la Pitaya no tiene Bluetooth
+en el kernel) y el detalle de qué copiar/instalar/correr: `../../panel_solar_ble/README.md`.
+
+Punto no obvio, documentado ahí con más detalle: instalar dependencias con
+`pip install victron-ble` a secas rompe por falta de RAM en esta placa (intenta compilar
+`bleak`/`dbus-fast` desde código fuente) — usar `--no-deps` + instalar las dependencias
+reales sueltas, como indica ese README.

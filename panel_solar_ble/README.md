@@ -1,0 +1,141 @@
+# Panel solar por BLE (Victron SmartSolar) en la Red Pitaya
+
+Lee en vivo los datos del cargador solar **Victron SmartSolar Charger MPPT
+75/15 rev2** (voltaje/corriente de batería, potencia solar, estado de
+carga, etc.) directamente en la Red Pitaya, sin que la placa necesite
+soporte de Bluetooth.
+
+## Por qué existe esto
+
+La Red Pitaya (`rp-f0fbda`) **no tiene soporte de Bluetooth en el
+kernel** (sin `CONFIG_BT`, sin módulo `btusb`, ni con un dongle BLE USB
+enchufado — se probó y no hay forma de habilitarlo sin recompilar el
+kernel completo con el toolchain de Red Pitaya). El SmartSolar transmite
+sus datos como "Instant Readout": un advertisement BLE cifrado
+(AES-CTR con clave de 16 bytes) que cualquier equipo cercano puede leer
+sin emparejar — pero hace falta radio BLE para escucharlo, y la Pitaya no
+tiene.
+
+La solución: un **ESP32-C3** (que sí tiene BLE) hace de puente. Corre un
+sketch mínimo que escucha los advertisements del SmartSolar y los manda
+**crudos, sin desencriptar**, por USB serial. Conectado por USB a la
+Red Pitaya, aparece ahí como `/dev/ttyACM0` — un script Python en la
+Pitaya lee esas líneas y hace el desencriptado (mismo algoritmo y misma
+clave que se usaba para leerlo por Bluetooth directo en la notebook,
+proyecto separado `BLe panel solar` en la notebook — este es el camino
+alternativo para cuando el que escucha no tiene Bluetooth propio).
+
+```
+SmartSolar  --BLE (advertisement cifrado)-->  ESP32-C3  --USB serial (hex crudo)-->  Red Pitaya
+                                                                                      (desencripta y muestra)
+```
+
+## Qué hay en esta carpeta
+
+- `esp32_victron_scan/` — sketch del ESP32-C3 (ver su propio README para
+  compilar/flashear).
+- `victron_scanner.py` — desencriptado AES-CTR (usa el paquete
+  `victron-ble`), compartido con el proyecto de la notebook.
+- `config.py` — MAC + clave de encriptación del SmartSolar.
+- `leer_smartsolar_serial.py` — lee `/dev/ttyACM0`, desencripta y muestra
+  por pantalla. Es el único script que corre en la Pitaya.
+
+## Setup en la Red Pitaya
+
+### 1. Conectar el ESP32 (ya flasheado) por USB
+
+Enchufarlo a un puerto USB de la Pitaya. Confirmar que aparece:
+
+```bash
+ssh root@<IP_PLACA> "ls -la /dev/ttyACM0 && lsusb | grep -i espressif"
+```
+
+Si el sketch todavía no está cargado en el ESP32, ver
+`esp32_victron_scan/README.md` (se flashea desde la notebook, antes de
+llevarlo a la placa).
+
+### 2. Copiar los scripts a la placa
+
+```bash
+scp config.py victron_scanner.py leer_smartsolar_serial.py root@<IP_PLACA>:/root/panel_solar_ble/
+```
+
+(crear el directorio antes si no existe: `ssh root@<IP_PLACA> "mkdir -p /root/panel_solar_ble"`)
+
+### 3. Instalar dependencias — **ojo con `bleak`**
+
+**No usar `pip install victron-ble` a secas.** `victron-ble` declara
+`bleak` como dependencia obligatoria (la librería para escuchar
+Bluetooth), y `bleak` arrastra `dbus-fast`, que no tiene wheel
+precompilada para esta arquitectura (ARMv7l) — pip intenta compilarla
+desde código fuente, y esa compilación **se queda sin memoria y el
+kernel mata el proceso** (la placa tiene ~460 MB de RAM y sin swap;
+confirmado con `dmesg | grep -i oom`). No hace falta `bleak` para nada de
+esto: solo se usa para escuchar Bluetooth en vivo (lo que hacen
+`leer_smartsolar.py`/`publicar_losant.py` en la notebook), no para leer
+por serial.
+
+Instalar así, en orden, evitando que `bleak` se instale:
+
+```bash
+ssh root@<IP_PLACA> "
+  cd /root/panel_solar_ble
+  python3 -m venv .venv
+  .venv/bin/pip install --upgrade pip -q
+  .venv/bin/pip install victron-ble --no-deps -q
+  .venv/bin/pip install pycryptodome click pyserial -q
+"
+```
+
+`--no-deps` en la primera línea es lo que evita que se intente traer
+`bleak`. `pycryptodome`, `click` y `pyserial` son las dependencias reales
+que sí hacen falta (y sí compilan bien en esta placa). Esto es un setup
+de una sola vez por placa — si se reflashea el firmware, repetir.
+
+`victron_scanner.py` está preparado para esto: el import de `bleak` (via
+`victron_ble.scanner.BaseScanner`) es diferido — solo se dispara si algo
+pide `VictronScanner` (la clase que escucha Bluetooth en vivo), que
+`leer_smartsolar_serial.py` nunca usa. Si en el futuro se agrega algo a
+esta carpeta que sí necesite escuchar Bluetooth directo desde la Pitaya,
+va a fallar de nuevo con el mismo error de memoria — no es un problema
+resuelto en general, solo esquivado para este camino (serial).
+
+### 4. Correr
+
+```bash
+ssh root@<IP_PLACA> "cd /root/panel_solar_ble && .venv/bin/python -u leer_smartsolar_serial.py"
+```
+
+El `-u` (salida sin buffer) es necesario para ver algo en vivo por SSH —
+sin eso, Python bufferea la salida por completo porque no hay terminal
+del otro lado, y no se ve nada hasta que el proceso corta.
+
+Salida esperada, una lectura cada 20s (ajustable con `INTERVALO_PANTALLA`
+en el script):
+
+```
+[18:35:20] cb:ea:5b:96:33:6c  RSSI: -61 dBm
+    battery_charging_current: -2.4 A
+    battery_voltage: 12.64 V
+    charge_state: bulk
+    charger_error: no_error
+    external_device_load: 2.7 A
+    model_name: SmartSolar Charger MPPT 75/15 rev2
+    solar_power: 2 W
+    yield_today: 0 Wh
+```
+
+Si el puerto es otro: `.venv/bin/python -u leer_smartsolar_serial.py /dev/ttyUSB0`.
+
+Ctrl+C para cortar. **Pendiente sin decidir:** esto corre a mano en una
+sesión SSH — no hay todavía un servicio systemd para dejarlo corriendo
+solo (arrancar con la placa, reiniciarse si se cae, etc.). Si hace falta
+eso, seguir el mismo patrón que `starlink_remoto/systemd/` cuando se
+decida.
+
+## Actualizar la clave de encriptación
+
+Si el SmartSolar se resetea o se regenera la clave desde VictronConnect,
+`config.py` queda desactualizado. Ver el `README.md` del proyecto en la
+notebook (`BLe panel solar/`) para el procedimiento de renovarla — es el
+mismo `config.py`, solo hay que volver a copiarlo a la placa (paso 2).

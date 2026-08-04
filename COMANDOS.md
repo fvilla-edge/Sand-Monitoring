@@ -193,9 +193,28 @@ timer esté activo.
 
 ---
 
+## Panel solar por BLE (`panel_solar_ble/`)
+
+Qué es, por qué hace falta un ESP32-C3 como puente y el detalle de
+instalación (ojo con `bleak` — ver el README): `panel_solar_ble/README.md`.
+
+Instalación (una vez por placa, qué copiar y qué comandos correr):
+`scripts_campo/plan_campo/setup_placa.md` → paso 6.
+
+```bash
+# correr a mano (no hay servicio systemd todavia, ver README)
+ssh root@<IP_PLACA> "cd /root/panel_solar_ble && .venv/bin/python -u leer_smartsolar_serial.py"
+```
+
+`-u` es necesario para ver la salida en vivo por SSH (si no, Python bufferea todo y no
+se ve nada hasta que el proceso corta). Ctrl+C para cortar.
+
+---
+
 ## Referencias
 
 - Guía operativa completa (setup, topologías de red, troubleshooting): `scripts_campo/PLAN_CAMPO.md`
 - Interpretación de métricas con valores reales medidos: `analisis/INTERPRETACION_RESULTADOS.md`
 - Historial y arquitectura del relé de Starlink: `starlink_remoto/HISTORIAL_STARLINK.md`
+- Panel solar por BLE (ESP32-C3 como puente): `panel_solar_ble/README.md`
 - Plan de proyecto vigente: `docs/roadmap_deteccion_arena.md`
