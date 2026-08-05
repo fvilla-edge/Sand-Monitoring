@@ -72,6 +72,7 @@ if [ -s "$MODO_MANUAL_FILE" ]; then
 
   if [ "$MANUAL" = "off" ]; then
     if [ "$NTP_SYNC" != "yes" ]; then
+      echo "AVISO: reloj (NTP) no sincronizado desde el boot, se ignora el modo manual '$MANUAL' y se fuerza 'on' (rescate)" >&2
       echo "on"   # rescate: reloj todavia no sincronizado, no se puede confiar en el timestamp guardado (ver header)
       exit 0
     fi
@@ -82,6 +83,7 @@ if [ -s "$MODO_MANUAL_FILE" ]; then
       HORAS_TRANSCURRIDAS=$(( (AHORA_EPOCH - MANUAL_TS) / 3600 ))
     fi
     if [ "$HORAS_TRANSCURRIDAS" -ge "$RESCATE_MANUAL_HORAS" ]; then
+      echo "AVISO: modo manual 'off' vencido hace ${HORAS_TRANSCURRIDAS}hs (>=${RESCATE_MANUAL_HORAS}), se ignora y se fuerza 'on' (rescate)" >&2
       echo "on"   # rescate: manual="off" vencido, se ignora sin borrar el archivo (ver header)
       exit 0
     fi
