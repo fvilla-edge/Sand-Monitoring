@@ -42,8 +42,11 @@ SmartSolar  --BLE (advertisement cifrado)-->  ESP32-C3  --USB serial (hex crudo)
 - `leer_smartsolar_serial.py` — lee `/dev/ttyACM0`, desencripta y muestra
   por pantalla. Para probar que el puente ESP32→Pitaya funciona.
 - `publicar_losant.py` — lo mismo, pero publica por MQTT en Losant en vez
-  de mostrar por pantalla (throttling de 30s, mismos atributos que la
-  versión de la notebook).
+  de mostrar por pantalla. No publica cada N segundos: publica un informe
+  una sola vez por cada vez que detecta conexión real a Losant (evento
+  `connect`/`reconnect` de losantmqtt), y no vuelve a publicar solo hasta
+  la próxima reconexión — pensado para cuando la única ventana de red
+  disponible es la del rele de Starlink (ver `starlink_remoto/`).
 - `losant_config.py` — Device ID + credenciales de Losant. **No está en
   git** (ver `.gitignore`) — hay que crearlo a mano en la placa (paso 5).
 
@@ -183,19 +186,31 @@ Correr:
 ssh root@<IP_PLACA> "cd /root/panel_solar_ble && .venv/bin/python3 -u publicar_losant.py"
 ```
 
-Publica cada 30s por dispositivo (`INTERVALO_PUBLICACION` en el script),
-para no gastar de golpe la cuota mensual de mensajes de Losant.
+No publica en un intervalo fijo: apenas el script logra conectarse a
+Losant (evento `connect`, o `reconnect` si ya se había conectado antes y
+se cortó), manda un único informe con la última lectura conocida del
+SmartSolar — si todavía no llegó ninguna lectura por serial en ese
+momento, espera a la próxima línea que mande el ESP32 (1-3s) y recién ahí
+publica. Mientras la conexión siga en pie no vuelve a publicar solo; hace
+falta una desconexión real (Starlink se apaga por horario) y una
+reconexión para el próximo informe. Si todavía no hay red al arrancar
+(lo normal la mayor parte del día), reintenta conectar cada 30s
+(`REINTENTO_CONEXION_S`) sin caerse.
 
 **No correr esto al mismo tiempo que `publicar_losant.py` de la
 notebook** — usan el mismo `DEVICE_ID` de Losant (es el mismo SmartSolar
 físico), así que publicarían por duplicado al mismo dispositivo. Este
 camino (Pitaya + ESP32) reemplaza al de la notebook, no lo complementa.
 
-**Pendiente sin decidir:** tanto este script como `leer_smartsolar_serial.py`
-corren a mano en una sesión SSH — no hay todavía un servicio systemd para
-dejarlos corriendo solos (arrancar con la placa, reiniciarse si se caen,
-etc.). Si hace falta eso, seguir el mismo patrón que
-`starlink_remoto/systemd/` cuando se decida.
+**Servicio systemd:** `publicar_losant.py` corre como servicio
+(`systemd/panel-solar-informe.service`, instalación en
+`scripts_campo/plan_campo/setup_placa.md` → paso 6) — arranca solo con la
+placa y se reinicia si se cae, sin esperar a que haya red (ver
+comentarios del propio archivo `.service` para el porqué). No correrlo a
+mano mientras el servicio esté activo (competirían por el mismo puerto
+serie) — pararlo primero (`systemctl stop panel-solar-informe.service`)
+si hace falta debuggear a mano. `leer_smartsolar_serial.py` sigue siendo
+solo para probar el puente manualmente, no tiene servicio propio.
 
 ## Actualizar la clave de encriptación
 

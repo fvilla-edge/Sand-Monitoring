@@ -1,0 +1,19 @@
+# Sin After=/Wants=network-online.target a proposito: tiene que estar
+# corriendo YA al bootear, antes de que Starlink conecte, para poder
+# reaccionar en el instante en que aparece la red (ver publicar_losant.py
+# — el reintento de conexion es interno al script, no de systemd).
+# Restart=always tambien cubre el caso de que el ESP32 no este conectado
+# al bootear: serial.Serial() tira una excepcion sin capturar, el proceso
+# corta, y systemd lo reintenta solo hasta que el puerto exista.
+[Unit]
+Description=Informa por MQTT a Losant el estado del panel solar cada vez que hay conexion (SmartSolar via ESP32 serial)
+
+[Service]
+Type=simple
+WorkingDirectory=/root/panel_solar_ble
+ExecStart=/root/panel_solar_ble/.venv/bin/python3 -u /root/panel_solar_ble/publicar_losant.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

@@ -199,3 +199,26 @@ Punto no obvio, documentado ahí con más detalle: instalar dependencias con
 reales sueltas, como indica ese README. Lo mismo para publicar en Losant
 (`publicar_losant.py`): necesita un pin de `setuptools<81` (`pkg_resources` deprecado en
 versiones nuevas), también documentado ahí.
+
+Servicio systemd que publica el informe a Losant cada vez que hay conexión (arranca solo
+con la placa, se reinicia si se cae — ver comentarios de
+`panel_solar_ble/systemd/panel-solar-informe.service` para el porqué de sus opciones):
+
+```bash
+cd panel_solar_ble
+
+# scripts (config.py y losant_config.py se copian aparte, ver README paso 2/5)
+scp victron_scanner.py leer_smartsolar_serial.py publicar_losant.py \
+    root@<IP_PLACA>:/root/panel_solar_ble/
+
+# unidad systemd
+scp systemd/panel-solar-informe.service root@<IP_PLACA>:/etc/systemd/system/
+
+ssh root@<IP_PLACA> "
+  systemctl daemon-reload
+  systemctl enable --now panel-solar-informe.service
+"
+```
+
+Uso día a día (ver estado, logs, correr a mano para debuggear): ver `COMANDOS.md` →
+"Panel solar por BLE".

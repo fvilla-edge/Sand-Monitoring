@@ -1,9 +1,17 @@
 """
-Publica por MQTT en Losant los datos del SmartSolar recibidos vía el
-ESP32 (que escanea BLE y manda la manufacturer data cruda por USB serial,
-ver esp32_victron_scan/), desencriptando acá (la Red Pitaya) en vez de
-escuchar Bluetooth directo — adaptado de publicar_losant.py del proyecto
-en la notebook (`BLe panel solar/`), que sí escucha Bluetooth en vivo.
+Publica por MQTT en Losant un informe del estado del SmartSolar cada vez
+que la placa recupera conexión a internet, recibido vía el ESP32 (que
+escanea BLE y manda la manufacturer data cruda por USB serial, ver
+esp32_victron_scan/), desencriptando acá (la Red Pitaya) — adaptado de
+publicar_losant.py del proyecto en la notebook (`BLe panel solar/`), que
+sí escucha Bluetooth directo.
+
+No publica cada N segundos: publica UNA vez por cada vez que se detecta
+conexión real a Losant (eventos "connect"/"reconnect" de losantmqtt, que
+disparan justo cuando el cliente MQTT logra conectarse — es la señal más
+directa de "hay internet y llega a destino", no una aproximación tipo
+ping). Mientras siga conectado no vuelve a publicar solo; hace falta una
+desconexión real y una reconexión para el próximo informe.
 
 Uso:
     .venv/bin/python publicar_losant.py [puerto]
@@ -38,59 +46,94 @@ ATRIBUTOS = {
     "model_name",
 }
 
-# Cada cuántos segundos se publica un estado por MQTT. El ESP32 sigue
-# mandando datos cada 1-3s; publicar tan seguido no aporta y consume
-# rápido la cuota mensual de mensajes de Losant.
-INTERVALO_PUBLICACION = 30
+# Direcciones conocidas (en minúscula) — para saber qué dispositivos hay
+# que informar apenas se detecta conexión, aunque todavía no haya llegado
+# ninguna lectura por serial.
+DIRECCIONES = {d.lower() for d in DEVICES}
 
-# Representa el dispositivo dentro de Losant. Todavía no conecta nada acá,
-# solo queda armado con las credenciales.
-device = Device(DEVICE_ID, ACCESS_KEY, ACCESS_SECRET)
+# Si el intento de conexión falla (sin red todavía — lo normal la mayor
+# parte del día, fuera de la ventana de Starlink), cada cuántos segundos
+# se reintenta.
+REINTENTO_CONEXION_S = 30
 
 _decoder = SerialDecoder(DEVICES)
-_last_sent = {}
+_ultima_lectura = {}   # address -> (rssi, data), la más reciente decodificada
+_pendientes = set()    # addresses a informar en cuanto llegue una lectura nueva
 
 
-def publicar(address, rssi, data):
-    ahora = time.monotonic()
-    if ahora - _last_sent.get(address, 0) < INTERVALO_PUBLICACION:
-        return
+def _crear_dispositivo():
+    """
+    Arma un Device nuevo de losantmqtt con los observers ya enganchados.
 
+    Se usa tanto al arrancar como para reintentar tras un connect()
+    fallido: la librería deja `_mqtt_client` asignado (truthy) apenas
+    arranca el intento, aunque el connect() sincrono de más adentro tire
+    una excepción por falta de red — un segundo llamado a connect() sobre
+    el MISMO objeto no reintenta nada (corta antes, ve _mqtt_client ya
+    puesto). Por eso, ante una excepción, se descarta el objeto y se arma
+    uno de cero en vez de reintentar sobre el mismo.
+    """
+    dispositivo = Device(DEVICE_ID, ACCESS_KEY, ACCESS_SECRET)
+    dispositivo.add_event_observer("connect", _al_conectar)
+    dispositivo.add_event_observer("reconnect", _al_conectar)
+    return dispositivo
+
+
+def _publicar_informe(dispositivo, address, rssi, data):
     # Solo se manda lo que está en ATRIBUTOS; el resto de los campos que
     # trae el anuncio Bluetooth se descarta.
     estado = {clave: valor for clave, valor in data.items() if clave in ATRIBUTOS}
-    if estado and device.is_connected():
-        estado["rssi"] = rssi
-        device.send_state(estado)
-        _last_sent[address] = ahora
-        print(f"Publicado: {estado}")
+    if not estado:
+        return
+    estado["rssi"] = rssi
+    dispositivo.send_state(estado)
+    _pendientes.discard(address)
+    print(f"Informe publicado ({address}): {estado}")
 
 
-def procesar_linea(linea):
+def _al_conectar(dispositivo):
+    print("Conectado a Losant.")
+    if _ultima_lectura:
+        for address, (rssi, data) in list(_ultima_lectura.items()):
+            _publicar_informe(dispositivo, address, rssi, data)
+    else:
+        # No hay lectura todavía (recién arrancado, el ESP32 no mandó
+        # nada aún) - se marca pendiente y se informa con la próxima
+        # línea que llegue por serial (ver procesar_linea).
+        _pendientes.update(DIRECCIONES)
+
+
+def procesar_linea(linea, device):
     resultado = _decoder.procesar_linea(linea)
     if resultado is None:
         return
     address, rssi, data = resultado
-    publicar(address, rssi, data)
+    _ultima_lectura[address] = (rssi, data)
+    if address in _pendientes and device.is_connected():
+        _publicar_informe(device, address, rssi, data)
 
 
 def main():
-    print("Conectando a Losant...")
-    # blocking=False: la conexión se establece en segundo plano, sin
-    # trabar la lectura del puerto serie mientras se conecta.
-    device.connect(blocking=False)
-    print(f"Leyendo {PUERTO} @ {BAUDRATE}... Ctrl+C para salir")
+    device = _crear_dispositivo()
+    proximo_intento = 0.0
+
+    print(f"Leyendo {PUERTO} @ {BAUDRATE}. Informa por MQTT cada vez que detecta conexión a Losant... Ctrl+C para salir")
     with serial.Serial(PUERTO, BAUDRATE, timeout=1) as ser:
         while True:
+            ahora = time.monotonic()
+            if not device.is_connected() and ahora >= proximo_intento:
+                try:
+                    device.connect(blocking=False)
+                except OSError as e:
+                    print(f"Sin red todavía ({e}), reintento en {REINTENTO_CONEXION_S}s...")
+                    device = _crear_dispositivo()
+                proximo_intento = ahora + REINTENTO_CONEXION_S
+
             linea = ser.readline().decode(errors="replace").strip()
             if linea:
-                procesar_linea(linea)
-            # device.loop() mantiene viva la conexión MQTT y efectivamente
-            # envía lo que send_state dejó pendiente. Sin este llamado
-            # periódico, send_state no llega a salir por la red. Se llama
-            # una vez por vuelta (cada ~1s, por el timeout del serial de
-            # arriba) en vez de necesitar un sleep propio.
-            device.loop()
+                procesar_linea(linea, device)
+
+            device.loop(timeout=0.1)
 
 
 if __name__ == "__main__":

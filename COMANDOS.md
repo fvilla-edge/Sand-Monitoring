@@ -201,16 +201,28 @@ instalación (ojo con `bleak` — ver el README): `panel_solar_ble/README.md`.
 Instalación (una vez por placa, qué copiar y qué comandos correr):
 `scripts_campo/plan_campo/setup_placa.md` → paso 6.
 
-```bash
-# lectura por pantalla, para probar el puente (no hay servicio systemd todavia, ver README)
-ssh root@<IP_PLACA> "cd /root/panel_solar_ble && .venv/bin/python3 -u leer_smartsolar_serial.py"
+Corre como servicio systemd (`panel-solar-informe.service`): publica un informe por MQTT
+a Losant cada vez que detecta conexión real (no cada N segundos) — pensado para la
+ventana en la que el relé de `starlink_remoto/` da paso a Starlink.
 
-# publicar en Losant (no correr junto con el publicador de la notebook, mismo Device)
-ssh root@<IP_PLACA> "cd /root/panel_solar_ble && .venv/bin/python3 -u publicar_losant.py"
+```bash
+# ver si esta corriendo / reiniciar / logs en vivo
+ssh root@<IP_PLACA> "systemctl status panel-solar-informe.service"
+ssh root@<IP_PLACA> "systemctl restart panel-solar-informe.service"
+ssh root@<IP_PLACA> "journalctl -u panel-solar-informe.service -f"
+
+# lectura por pantalla, para probar el puente ESP32->Pitaya a mano (no toca Losant)
+ssh root@<IP_PLACA> "cd /root/panel_solar_ble && .venv/bin/python3 -u leer_smartsolar_serial.py"
 ```
 
 `-u` es necesario para ver la salida en vivo por SSH (si no, Python bufferea todo y no
 se ve nada hasta que el proceso corta). Ctrl+C para cortar.
+
+No correr `publicar_losant.py` a mano mientras el servicio systemd esté activo — los dos
+abrirían `/dev/ttyACM0` a la vez y competirían por publicar el mismo informe. Pararlo
+primero (`systemctl stop panel-solar-informe.service`) si hace falta correrlo a mano para
+debuggear (no correr junto con el publicador de la notebook tampoco, mismo Device de
+Losant).
 
 ---
 
