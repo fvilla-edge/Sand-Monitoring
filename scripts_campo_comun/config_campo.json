@@ -15,6 +15,9 @@
     "hora_off": "17:00",
     "rescate_manual_horas": 24
   },
+  "panel_solar": {
+    "informe_intervalo_min": 15
+  },
   "captura_defaults": {
     "decimacion": 32,
     "duracion_chunk_min": 1.0,

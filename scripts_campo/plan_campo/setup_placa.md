@@ -200,9 +200,13 @@ reales sueltas, como indica ese README. Lo mismo para publicar en Losant
 (`publicar_losant.py`): necesita un pin de `setuptools<81` (`pkg_resources` deprecado en
 versiones nuevas), también documentado ahí.
 
-Servicio systemd que publica el informe a Losant cada vez que hay conexión (arranca solo
-con la placa, se reinicia si se cae — ver comentarios de
-`panel_solar_ble/systemd/panel-solar-informe.service` para el porqué de sus opciones):
+Servicio systemd que publica el informe a Losant cuando hay conexión y cada
+`panel_solar.informe_intervalo_min` mientras siga conectado (arranca solo con la placa,
+se reinicia si se cae — ver comentarios de
+`panel_solar_ble/systemd/panel-solar-informe.service` para el porqué de sus opciones).
+Depende de `cfg.py`/`config_campo.json` del paso 1 (mismo archivo que usa
+`starlink_remoto/`) — no hace falta copiarlos de nuevo salvo que `config_campo.json` se
+haya editado desde entonces:
 
 ```bash
 cd panel_solar_ble

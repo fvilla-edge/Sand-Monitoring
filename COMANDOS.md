@@ -202,8 +202,9 @@ Instalación (una vez por placa, qué copiar y qué comandos correr):
 `scripts_campo/plan_campo/setup_placa.md` → paso 6.
 
 Corre como servicio systemd (`panel-solar-informe.service`): publica un informe por MQTT
-a Losant cada vez que detecta conexión real (no cada N segundos) — pensado para la
-ventana en la que el relé de `starlink_remoto/` da paso a Starlink.
+a Losant cuando detecta conexión real, y además cada `panel_solar.informe_intervalo_min`
+mientras siga conectado — pensado para la ventana en la que el relé de
+`starlink_remoto/` da paso a Starlink.
 
 ```bash
 # ver si esta corriendo / reiniciar / logs en vivo
@@ -217,6 +218,15 @@ ssh root@<IP_PLACA> "cd /root/panel_solar_ble && .venv/bin/python3 -u leer_smart
 
 `-u` es necesario para ver la salida en vivo por SSH (si no, Python bufferea todo y no
 se ve nada hasta que el proceso corta). Ctrl+C para cortar.
+
+### Cambiar el intervalo del informe periódico
+
+Vive en `scripts_campo_comun/config_campo.json` → `panel_solar.informe_intervalo_min`
+(minutos). Después de cambiarlo, reiniciar el servicio para que tome el valor nuevo:
+
+```bash
+ssh root@<IP_PLACA> "systemctl restart panel-solar-informe.service"
+```
 
 No correr `publicar_losant.py` a mano mientras el servicio systemd esté activo — los dos
 abrirían `/dev/ttyACM0` a la vez y competirían por publicar el mismo informe. Pararlo

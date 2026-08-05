@@ -42,11 +42,12 @@ SmartSolar  --BLE (advertisement cifrado)-->  ESP32-C3  --USB serial (hex crudo)
 - `leer_smartsolar_serial.py` — lee `/dev/ttyACM0`, desencripta y muestra
   por pantalla. Para probar que el puente ESP32→Pitaya funciona.
 - `publicar_losant.py` — lo mismo, pero publica por MQTT en Losant en vez
-  de mostrar por pantalla. No publica cada N segundos: publica un informe
-  una sola vez por cada vez que detecta conexión real a Losant (evento
-  `connect`/`reconnect` de losantmqtt), y no vuelve a publicar solo hasta
-  la próxima reconexión — pensado para cuando la única ventana de red
-  disponible es la del rele de Starlink (ver `starlink_remoto/`).
+  de mostrar por pantalla. Publica un informe cuando detecta conexión real
+  a Losant (evento `connect`/`reconnect` de losantmqtt) y además cada
+  `panel_solar.informe_intervalo_min` (`config_campo.json`, en minutos)
+  mientras la conexión siga en pie — no hay streaming cada N segundos fijo.
+  Pensado para cuando la única ventana de red disponible es la del rele de
+  Starlink (ver `starlink_remoto/`).
 - `losant_config.py` — Device ID + credenciales de Losant. **No está en
   git** (ver `.gitignore`) — hay que crearlo a mano en la placa (paso 5).
 
@@ -186,14 +187,18 @@ Correr:
 ssh root@<IP_PLACA> "cd /root/panel_solar_ble && .venv/bin/python3 -u publicar_losant.py"
 ```
 
-No publica en un intervalo fijo: apenas el script logra conectarse a
-Losant (evento `connect`, o `reconnect` si ya se había conectado antes y
-se cortó), manda un único informe con la última lectura conocida del
-SmartSolar — si todavía no llegó ninguna lectura por serial en ese
-momento, espera a la próxima línea que mande el ESP32 (1-3s) y recién ahí
-publica. Mientras la conexión siga en pie no vuelve a publicar solo; hace
-falta una desconexión real (Starlink se apaga por horario) y una
-reconexión para el próximo informe. Si todavía no hay red al arrancar
+Publica en dos momentos, mientras haya conexión con Losant:
+- Apenas el script logra conectarse (evento `connect`, o `reconnect` si ya
+  se había conectado antes y se cortó) — manda un único informe con la
+  última lectura conocida del SmartSolar; si todavía no llegó ninguna
+  lectura por serial en ese momento, espera a la próxima línea que mande
+  el ESP32 (1-3s) y recién ahí publica.
+- Cada `panel_solar.informe_intervalo_min` minutos (`config_campo.json`
+  del paso 1, mismo archivo que usa `starlink_remoto/`) mientras la
+  conexión siga en pie, para tener un reporte de batería periódico y no
+  solo el del instante de conectar.
+
+No hay streaming cada N segundos fijo. Si todavía no hay red al arrancar
 (lo normal la mayor parte del día), reintenta conectar cada 30s
 (`REINTENTO_CONEXION_S`) sin caerse.
 

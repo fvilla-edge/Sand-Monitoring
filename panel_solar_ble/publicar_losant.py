@@ -6,12 +6,15 @@ esp32_victron_scan/), desencriptando acá (la Red Pitaya) — adaptado de
 publicar_losant.py del proyecto en la notebook (`BLe panel solar/`), que
 sí escucha Bluetooth directo.
 
-No publica cada N segundos: publica UNA vez por cada vez que se detecta
-conexión real a Losant (eventos "connect"/"reconnect" de losantmqtt, que
-disparan justo cuando el cliente MQTT logra conectarse — es la señal más
-directa de "hay internet y llega a destino", no una aproximación tipo
-ping). Mientras siga conectado no vuelve a publicar solo; hace falta una
-desconexión real y una reconexión para el próximo informe.
+Publica un informe en dos casos, mientras haya conexión con Losant:
+- Apenas se detecta conexión real (eventos "connect"/"reconnect" de
+  losantmqtt, que disparan justo cuando el cliente MQTT logra
+  conectarse — es la señal más directa de "hay internet y llega a
+  destino", no una aproximación tipo ping).
+- Cada `panel_solar.informe_intervalo_min` (config_campo.json) mientras
+  la conexión se mantenga en pie, para tener un reporte de batería
+  periódico y no solo en el instante de conectar.
+No publica más seguido que eso: no hay streaming cada N segundos fijo.
 
 Uso:
     .venv/bin/python publicar_losant.py [puerto]
@@ -24,6 +27,9 @@ import time
 
 import serial
 from losantmqtt import Device
+
+sys.path.insert(0, "/root/scripts_campo_comun")
+import cfg  # noqa: E402 (import tardio, necesita el sys.path de arriba)
 
 from config import DEVICES
 # Device ID, Access Key y Access Secret del dispositivo en Losant.
@@ -56,9 +62,16 @@ DIRECCIONES = {d.lower() for d in DEVICES}
 # se reintenta.
 REINTENTO_CONEXION_S = 30
 
+# Cada cuánto se publica un informe mientras la conexión sigue en pie,
+# ademas del que dispara el evento connect/reconnect. Configurable en
+# config_campo.json, en minutos (unidad de campo), convertido acá a
+# segundos para comparar contra time.monotonic().
+INTERVALO_INFORME_S = cfg.obtener("panel_solar.informe_intervalo_min") * 60
+
 _decoder = SerialDecoder(DEVICES)
-_ultima_lectura = {}   # address -> (rssi, data), la más reciente decodificada
-_pendientes = set()    # addresses a informar en cuanto llegue una lectura nueva
+_ultima_lectura = {}      # address -> (rssi, data), la más reciente decodificada
+_pendientes = set()       # addresses a informar en cuanto llegue una lectura nueva
+_ultima_publicacion = {}  # address -> time.monotonic() de la última vez que se publicó
 
 
 def _crear_dispositivo():
@@ -88,6 +101,7 @@ def _publicar_informe(dispositivo, address, rssi, data):
     estado["rssi"] = rssi
     dispositivo.send_state(estado)
     _pendientes.discard(address)
+    _ultima_publicacion[address] = time.monotonic()
     print(f"Informe publicado ({address}): {estado}")
 
 
@@ -113,11 +127,25 @@ def procesar_linea(linea, device):
         _publicar_informe(device, address, rssi, data)
 
 
+def revisar_periodico(device):
+    # Si nunca se publicó nada para esta dirección todavía (recién
+    # conectado, el evento connect ya se encargó o está pendiente en
+    # procesar_linea), no hay nada que este chequeo deba adelantar.
+    if not device.is_connected():
+        return
+    ahora = time.monotonic()
+    for address, (rssi, data) in list(_ultima_lectura.items()):
+        ultima = _ultima_publicacion.get(address)
+        if ultima is not None and ahora - ultima >= INTERVALO_INFORME_S:
+            _publicar_informe(device, address, rssi, data)
+
+
 def main():
     device = _crear_dispositivo()
     proximo_intento = 0.0
 
-    print(f"Leyendo {PUERTO} @ {BAUDRATE}. Informa por MQTT cada vez que detecta conexión a Losant... Ctrl+C para salir")
+    print(f"Leyendo {PUERTO} @ {BAUDRATE}. Informa por MQTT al conectar y cada "
+          f"{INTERVALO_INFORME_S // 60} min mientras siga conectado... Ctrl+C para salir")
     with serial.Serial(PUERTO, BAUDRATE, timeout=1) as ser:
         while True:
             ahora = time.monotonic()
@@ -133,6 +161,7 @@ def main():
             if linea:
                 procesar_linea(linea, device)
 
+            revisar_periodico(device)
             device.loop(timeout=0.1)
 
 
