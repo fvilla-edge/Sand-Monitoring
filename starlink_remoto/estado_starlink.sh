@@ -16,21 +16,21 @@ MODO_MANUAL_FILE=$(python3 "$CFG" rutas.modo_manual_file)
 
 if [ -s "$STATE_FILE" ]; then
   ESTADO=$(cat "$STATE_FILE")
-  echo "${ESTADO^^}"
+  echo "Rele: ${ESTADO^}"
 else
-  echo "DESCONOCIDO (nunca se registro un estado)"
+  echo "Rele: DESCONOCIDO (nunca se registro un estado)"
 fi
 
-# Detalle extra (mtime, modo manual, sincronizacion de reloj) — comentado a
-# pedido para no saturar la salida en demos. Descomentar para volver a verlo.
+if [ -s "$MODO_MANUAL_FILE" ]; then
+  echo "Modo: MANUAL"
+else
+  echo "Modo: automatico"
+fi
+
+# Detalle extra (mtime, sincronizacion de reloj) — comentado a pedido para
+# no saturar la salida en demos. Descomentar para volver a verlo.
 # MTIME=$(stat -c '%y' "$STATE_FILE" 2>/dev/null | cut -d. -f1)
 # echo "ultima confirmacion real por HW: ${MTIME}"
-#
-# if [ -s "$MODO_MANUAL_FILE" ]; then
-#   echo "Modo: MANUAL ($(cat "$MODO_MANUAL_FILE")) — se autolimpia cuando reloj/horario coincidan solos, o 'starlink_manual.sh auto' fuerza la vuelta ya"
-# else
-#   echo "Modo: automatico (reloj + horario)"
-# fi
 #
 # if [ "$(timedatectl show -p NTPSynchronized --value)" = "yes" ]; then
 #   echo "Reloj sincronizado: si"
