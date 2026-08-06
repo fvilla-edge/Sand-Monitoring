@@ -1,0 +1,10 @@
+[Unit]
+Description=Configura PS_MIO11 como GPIO de salida para el indicador de estado (una vez por boot)
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/root/indicador_estado/asegurar_mux_ps11.sh
+
+[Install]
+WantedBy=multi-user.target

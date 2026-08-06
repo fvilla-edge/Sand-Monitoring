@@ -1,0 +1,12 @@
+[Unit]
+Description=Pulsa PS_MIO11 como indicador de estado de la placa (captura/transmision/standby)
+Requires=pitaya-mux-ps11.service
+After=pitaya-mux-ps11.service
+
+[Service]
+Type=simple
+ExecStart=/root/indicador_estado/indicador_estado.sh
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
