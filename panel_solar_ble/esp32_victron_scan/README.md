@@ -87,7 +87,8 @@ de arriba, no hace falta (ni conviene) versionarlos.
 ### 1. Copiar el binario a la Pitaya
 
 ```bash
-scp panel_solar_ble/esp32_victron_scan/build/esp32.esp32.esp32c3/esp32_victron_scan.ino.merged.bin root@<IP_PLACA>:/root/esp32_victron_scan.ino.merged.bin
+ssh root@<IP_PLACA> "mkdir -p /root/panel_solar_ble/esp32_victron_scan"
+scp panel_solar_ble/esp32_victron_scan/build/esp32.esp32.esp32c3/esp32_victron_scan.ino.merged.bin root@<IP_PLACA>:/root/panel_solar_ble/esp32_victron_scan/esp32_victron_scan.ino.merged.bin
 ```
 
 ### 2. Liberar el puerto serie
@@ -106,7 +107,7 @@ arduino-cli, ver la sección de limpieza más abajo). Ubicación esperada:
 `/root/bin/esptool`.
 
 ```bash
-ssh root@<IP_PLACA> "/root/bin/esptool --chip esp32c3 --port /dev/ttyACM0 write_flash 0x0 /root/esp32_victron_scan.ino.merged.bin"
+ssh root@<IP_PLACA> "/root/bin/esptool --chip esp32c3 --port /dev/ttyACM0 write_flash 0x0 /root/panel_solar_ble/esp32_victron_scan/esp32_victron_scan.ino.merged.bin"
 ```
 
 Tarda ~25s. Al final hace un reset automático ("Hard resetting via RTS
