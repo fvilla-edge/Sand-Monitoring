@@ -212,7 +212,7 @@ haya editado desde entonces:
 cd panel_solar_ble
 
 # scripts (config.py y losant_config.py se copian aparte, ver README paso 2/5)
-scp victron_scanner.py leer_smartsolar_serial.py publicar_losant.py \
+scp puerto.py victron_scanner.py leer_smartsolar_serial.py publicar_losant.py \
     root@<IP_PLACA>:/root/panel_solar_ble/
 
 # unidad systemd

@@ -7,19 +7,20 @@ la Red Pitaya, en este proyecto) en vez de escuchar Bluetooth directo.
 Uso:
     .venv/bin/python leer_smartsolar_serial.py [puerto]
 
-Por defecto usa /dev/ttyACM0.
+Por defecto se resuelve solo (ver puerto.py) — pasar un puerto explícito
+solo hace falta si el ESP32 no aparece con el VID:PID esperado.
 """
 
-import sys
 import time
 from datetime import datetime
 
 import serial
 
 from config import DEVICES
+from puerto import resolver_puerto
 from victron_scanner import SerialDecoder
 
-PUERTO = sys.argv[1] if len(sys.argv) > 1 else "/dev/ttyACM0"
+PUERTO = resolver_puerto()
 BAUDRATE = 115200
 
 # Cada cuántos segundos se muestra por pantalla un mismo dispositivo.

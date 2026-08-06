@@ -19,11 +19,16 @@ tiene.
 La solución: un **ESP32-C3** (que sí tiene BLE) hace de puente. Corre un
 sketch mínimo que escucha los advertisements del SmartSolar y los manda
 **crudos, sin desencriptar**, por USB serial. Conectado por USB a la
-Red Pitaya, aparece ahí como `/dev/ttyACM0` — un script Python en la
-Pitaya lee esas líneas y hace el desencriptado (mismo algoritmo y misma
-clave que se usaba para leerlo por Bluetooth directo en la notebook,
-proyecto separado `BLe panel solar` en la notebook — este es el camino
-alternativo para cuando el que escucha no tiene Bluetooth propio).
+Red Pitaya, aparece ahí típicamente como `/dev/ttyACM0` — un script
+Python en la Pitaya lee esas líneas y hace el desencriptado (mismo
+algoritmo y misma clave que se usaba para leerlo por Bluetooth directo en
+la notebook, proyecto separado `BLe panel solar` en la notebook — este es
+el camino alternativo para cuando el que escucha no tiene Bluetooth
+propio). Ese nombre lo asigna el kernel por orden de enumeración y no
+está garantizado si algún día hay otro dispositivo serial USB enchufado
+a la misma placa: los scripts no lo hardcodean, lo resuelven solos por
+VID:PID vía `/dev/serial/by-id/` (ver `puerto.py`), con `ttyACM0` como
+último recurso si no lo encuentran.
 
 ```
 SmartSolar  --BLE (advertisement cifrado)-->  ESP32-C3  --USB serial (hex crudo)-->  Red Pitaya
@@ -39,8 +44,11 @@ SmartSolar  --BLE (advertisement cifrado)-->  ESP32-C3  --USB serial (hex crudo)
   del ESP32. Compartido entre `leer_smartsolar_serial.py` y
   `publicar_losant.py`.
 - `config.py` — MAC + clave de encriptación del SmartSolar.
-- `leer_smartsolar_serial.py` — lee `/dev/ttyACM0`, desencripta y muestra
-  por pantalla. Para probar que el puente ESP32→Pitaya funciona.
+- `puerto.py` — resuelve el puerto serial del ESP32 por VID:PID en vez de
+  asumir `/dev/ttyACM0` fijo. Compartido entre `leer_smartsolar_serial.py`
+  y `publicar_losant.py`.
+- `leer_smartsolar_serial.py` — lee el puerto del ESP32, desencripta y
+  muestra por pantalla. Para probar que el puente ESP32→Pitaya funciona.
 - `publicar_losant.py` — lo mismo, pero publica por MQTT en Losant en vez
   de mostrar por pantalla. Publica un informe cuando detecta conexión real
   a Losant (evento `connect`/`reconnect` de losantmqtt) y además cada
@@ -69,7 +77,7 @@ la placa).
 ### 2. Copiar los scripts a la placa
 
 ```bash
-scp config.py victron_scanner.py leer_smartsolar_serial.py publicar_losant.py root@<IP_PLACA>:/root/panel_solar_ble/
+scp config.py puerto.py victron_scanner.py leer_smartsolar_serial.py publicar_losant.py root@<IP_PLACA>:/root/panel_solar_ble/
 ```
 
 (crear el directorio antes si no existe: `ssh root@<IP_PLACA> "mkdir -p /root/panel_solar_ble"`)

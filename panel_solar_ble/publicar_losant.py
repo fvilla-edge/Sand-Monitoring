@@ -19,7 +19,8 @@ No publica más seguido que eso: no hay streaming cada N segundos fijo.
 Uso:
     .venv/bin/python publicar_losant.py [puerto]
 
-Por defecto usa /dev/ttyACM0.
+Por defecto se resuelve solo (ver puerto.py) — pasar un puerto explícito
+solo hace falta si el ESP32 no aparece con el VID:PID esperado.
 """
 
 import sys
@@ -34,9 +35,10 @@ import cfg  # noqa: E402 (import tardio, necesita el sys.path de arriba)
 from config import DEVICES
 # Device ID, Access Key y Access Secret del dispositivo en Losant.
 from losant_config import ACCESS_KEY, ACCESS_SECRET, DEVICE_ID
+from puerto import resolver_puerto
 from victron_scanner import SerialDecoder
 
-PUERTO = sys.argv[1] if len(sys.argv) > 1 else "/dev/ttyACM0"
+PUERTO = resolver_puerto()
 BAUDRATE = 115200
 
 # Atributos que interesa mandar a Losant. Hay que crear cada uno como
