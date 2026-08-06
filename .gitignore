@@ -19,3 +19,6 @@ __pycache__/
 # Credenciales de Losant (panel_solar_ble/)
 losant_config.py
 access-key-*.txt
+
+# Salida de compilacion de arduino-cli
+panel_solar_ble/esp32_victron_scan/build/

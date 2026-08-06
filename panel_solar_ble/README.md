@@ -62,8 +62,9 @@ ssh root@<IP_PLACA> "ls -la /dev/ttyACM0 && lsusb | grep -i espressif"
 ```
 
 Si el sketch todavía no está cargado en el ESP32, ver
-`esp32_victron_scan/README.md` (se flashea desde la notebook, antes de
-llevarlo a la placa).
+`esp32_victron_scan/README.md` — se compila en la notebook pero se
+flashea con el ESP32 ya conectado a la Pitaya (vía `esptool`, sin mover
+la placa).
 
 ### 2. Copiar los scripts a la placa
 
