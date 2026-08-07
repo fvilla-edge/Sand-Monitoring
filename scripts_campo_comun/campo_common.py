@@ -126,19 +126,32 @@ def instalar_manejador_stop():
 
 def asegurar_servidor(log_path, max_intentos=3):
     """
-    Carga bitstream stream_app e inicia streaming-server si no corre.
+    Mata cualquier streaming-server que haya quedado corriendo de una
+    sesion anterior y carga bitstream stream_app + arranca uno nuevo.
+
+    Antes se reusaba un servidor ya corriendo (pgrep positivo) sin
+    reiniciarlo — pero si una sesion nueva arrancaba poco despues de que
+    la anterior terminara, el servidor reusado quedaba en un estado que
+    hacia abortar la conexion del primer chunk casi al instante (ver
+    HISTORIAL_STARLINK.md / memoria de proyecto, sesion 2026-08-07).
+    Reiniciarlo siempre cuesta ~3-5s mas de arranque por sesion, pero
+    evita heredar ese estado.
 
     El streaming-server puede abortar (SIGABRT) casi al instante de
     arrancar si recibe comandos antes de terminar de inicializarse — se
     verifica que el proceso siga vivo unos segundos despues de lanzarlo y,
     si murio, se reintenta el bitstream+arranque desde cero.
-
-    Si ya hay un streaming-server corriendo (pgrep positivo), se retorna
-    de inmediato sin pasar por este chequeo.
     """
     r = subprocess.run(['pgrep', '-f', 'streaming-server'], capture_output=True)
     if r.returncode == 0:
-        return
+        log('INFO', '  Deteniendo streaming-server previo...')
+        subprocess.run(['pkill', '-f', 'streaming-server'])
+        for _ in range(10):  # ~5s de margen para que termine de morir
+            time.sleep(0.5)
+            if subprocess.run(['pgrep', '-f', 'streaming-server'], capture_output=True).returncode != 0:
+                break
+        else:
+            log('WARNING', '  [!] streaming-server previo no terminó de morir — se sigue igual')
 
     for intento in range(1, max_intentos + 1):
         log('INFO', f'  Cargando bitstream stream_app... (intento {intento}/{max_intentos})')
