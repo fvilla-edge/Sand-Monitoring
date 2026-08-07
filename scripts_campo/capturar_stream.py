@@ -413,6 +413,16 @@ def main():
         log_evento(f'Sesion terminada — {chunk_num - 1} chunks, '
                     f'{tiempo_capturado/60:.2f} min capturados')
 
+    # Solo se llega aca si el try/finally de arriba no termino por una
+    # excepcion (esa rama hace `raise` y se sale de la funcion antes) — un
+    # aviso de "ok" solo tiene sentido si la sesion termino de verdad, no en
+    # un crash a mitad de camino.
+    #
+    # Deja un archivo local nomas (sin red) — el POST real lo hace
+    # indicador_estado.sh fuera del modo captura, para que nada relacionado
+    # a la notificacion pueda interferir con la captura o su cierre.
+    cc.crear_aviso_pendiente(json_name, log_evento)
+
 
 if __name__ == '__main__':
     main()

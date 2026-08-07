@@ -32,6 +32,10 @@ STANDBY_PERIODO_S=3
 # argumento).
 PATRON_CAPTURA='python3.*capturar_stream\.py'
 
+AVISOS_DIR='/root/avisos_pendientes'
+# Placeholder de PRUEBA — reemplazar por el endpoint real de la nube cuando exista.
+URL_AVISO='https://webhook.site/db50fa86-b075-4e45-80cc-4cdedffe91aa'
+
 en_captura() {
   pgrep -f "$PATRON_CAPTURA" >/dev/null 2>&1
 }
@@ -41,13 +45,34 @@ en_transmision() {
   return 1
 }
 
+# Manda por POST cada aviso pendiente (dejado por capturar_stream.py al
+# terminar una sesion) y lo marca como enviado renombrandolo a .enviado —
+# mismo patron atomico que mover_a_usb/mover_a_red en campo_common.py. Si
+# el POST falla, el archivo .json queda igual y se reintenta solo en el
+# proximo ciclo — no hay perdida silenciosa, solo demora hasta que la red
+# ande. Nunca se llama mientras en_captura() es cierto (ver el loop).
+enviar_avisos_pendientes() {
+  local f
+  shopt -s nullglob
+  for f in "$AVISOS_DIR"/*.json; do
+    if curl -sf -X POST -H 'Content-Type: application/json' \
+         --max-time 5 -d "@$f" "$URL_AVISO" >/dev/null 2>&1; then
+      mv "$f" "${f%.json}.enviado"
+    fi
+  done
+  shopt -u nullglob
+}
+
 while true; do
   if en_captura; then
     periodo="$CAPTURA_PERIODO_S"
-  elif en_transmision; then
-    periodo="$TRANSMISION_PERIODO_S"
   else
-    periodo="$STANDBY_PERIODO_S"
+    if en_transmision; then
+      periodo="$TRANSMISION_PERIODO_S"
+    else
+      periodo="$STANDBY_PERIODO_S"
+    fi
+    enviar_avisos_pendientes
   fi
   pulsar_ps11
   sleep "$periodo"
