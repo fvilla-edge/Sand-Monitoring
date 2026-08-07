@@ -2,9 +2,9 @@
 # indicador_estado.sh — loop del pin de estado (PS_MIO11, ver
 # mux_ps11_common.sh). Un pulso cada N segundos, con N segun el estado real
 # de la placa:
-#   captura     -> pulso cada 0.75s   (TODO: en_captura() sin definir)
+#   captura     -> pulso cada 0.75s
 #   transmision -> pulso cada 0.25s   (TODO: en_transmision() sin definir)
-#   standby     -> pulso cada 3s      (unico estado activo por ahora)
+#   standby     -> pulso cada 3s      (default)
 #
 # El mux+salida ya se aseguraron al boot (pitaya-mux-ps11.service) — este
 # script solo pulsa, no vuelve a tocar el mux (mismo criterio que
@@ -26,11 +26,14 @@ CAPTURA_PERIODO_S=0.75
 TRANSMISION_PERIODO_S=0.25
 STANDBY_PERIODO_S=3
 
+# Mismo patron que PATRON_CAPTURA en starlink_remoto/mux_ps10_common.sh —
+# exige el prefijo "python3" para no matchear la propia linea de comando de
+# relanzar_captura.sh (que incluye la ruta a capturar_stream.py como
+# argumento).
+PATRON_CAPTURA='python3.*capturar_stream\.py'
+
 en_captura() {
-  # TODO: definir que constituye "en captura" para este indicador. Candidato
-  # natural: el mismo PATRON_CAPTURA que ya usa
-  # starlink_remoto/mux_ps10_common.sh ('python3.*capturar_stream\.py').
-  return 1
+  pgrep -f "$PATRON_CAPTURA" >/dev/null 2>&1
 }
 
 en_transmision() {
