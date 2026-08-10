@@ -17,6 +17,14 @@
 # porque habilitar el mux de PS_MIO10 puede togglear el rele solo (ver
 # HISTORIAL_STARLINK.md) — un mismatch entre STATE_FILE cacheado y el HW
 # real que la comparacion liviana de abajo no detectaria.
+#
+# starlink.sin_rele (config_campo.json, default false): este script es el
+# unico camino real hacia control_starlink.sh (timers de horario,
+# reconciliador, boot via --forzar, y starlink_manual.sh pasan todos por
+# aca) — con la bandera en true, no-opea de entrada, antes de calcular el
+# objetivo o mirar si hay captura activa. Para placa en banco sin rele
+# fisico conectado, donde el feedback por HW nunca puede confirmar el pulso
+# (ver control_starlink.sh) y por eso el reconciliador reintenta sin parar.
 
 set -euo pipefail
 
@@ -24,6 +32,11 @@ CFG=/root/scripts_campo_comun/cfg.py
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/mux_ps10_common.sh"   # PATRON_CAPTURA
 STATE_FILE=$(python3 "$CFG" rutas.state_file)
+
+if [ "$(python3 "$CFG" starlink.sin_rele)" = "True" ]; then
+  echo "starlink.sin_rele=true, no se controla el rele (placa en banco sin rele fisico)"
+  exit 0
+fi
 
 FORZAR=0
 [ "${1:-}" = "--forzar" ] && FORZAR=1

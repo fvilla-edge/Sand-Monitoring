@@ -13,7 +13,8 @@
     "timeout_stop_s": 150,
     "hora_on": "08:55",
     "hora_off": "17:00",
-    "rescate_manual_horas": 24
+    "rescate_manual_horas": 24,
+    "sin_rele": false
   },
   "panel_solar": {
     "informe_intervalo_min": 15
