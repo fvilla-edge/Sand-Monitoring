@@ -256,13 +256,19 @@ def verificar_usb(directorio, dev_id_esperado):
     return None
 
 
-def crear_aviso_pendiente(json_name, log_evento):
+def crear_aviso_pendiente(json_name, carpeta, log_evento):
     """
     Deja un aviso local (archivo, sin red) de que la sesion termino bien —
     usar solo una vez confirmado eso, nunca en un crash a mitad de camino.
     Un proceso aparte, fuera del modo captura (indicador_estado.sh), lo lee
     despues y hace el POST real; asi el POST nunca corre en el mismo
     proceso/momento que la captura, sin importar cuanto tarde la red.
+
+    `json_name` (siempre termina en `.json`) es solo el nombre del archivo
+    marcador local — indicador_estado.sh lo busca con un glob `*.json` y
+    despues lo renombra a `.enviado`. `carpeta` es el dato que de verdad se
+    manda en el POST: el nombre de la carpeta de la sesion (no el nombre
+    del JSON de metadata), para que la nube sepa directo que carpeta bajar.
 
     Escritura atomica (tmp + rename, mismo patron que mover_a_usb) para no
     dejar un aviso a medio escribir si algo interrumpe justo en este
@@ -273,7 +279,7 @@ def crear_aviso_pendiente(json_name, log_evento):
     destino_tmp = destino + '.tmp'
     try:
         with open(destino_tmp, 'w') as f:
-            json.dump({'archivo': json_name, 'estado': 'ok'}, f)
+            json.dump({'carpeta': carpeta, 'estado': 'ok'}, f)
         os.rename(destino_tmp, destino)
     except Exception as e:
         log_evento(f'[!] No se pudo crear el aviso pendiente para {json_name}: {e}', nivel='WARNING')

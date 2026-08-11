@@ -436,7 +436,7 @@ def main():
     # Deja un archivo local nomas (sin red) — el POST real lo hace
     # indicador_estado.sh fuera del modo captura, para que nada relacionado
     # a la notificacion pueda interferir con la captura o su cierre.
-    cc.crear_aviso_pendiente(json_name, log_evento)
+    cc.crear_aviso_pendiente(json_name, subdir_nombre, log_evento)
 
 
 if __name__ == '__main__':
