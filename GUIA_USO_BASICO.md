@@ -166,6 +166,7 @@ shutdown -h now
 | Caso | Qué cambia del flujo típico |
 |---|---|
 | **Sesión larga o de noche, sin supervisión** | Lanzar con el supervisor en vez de `capturar_stream.py` solo: `bash /root/scripts_campo_comun/relanzar_captura.sh /root/scripts_campo/capturar_stream.py --condicion reposo --directorio /mnt/usb`. Relanza sola si crashea (bug conocido de la librería), no si termina limpio. |
+| **Varias sesiones cortas en vez de una larga** (carpetas más livianas, más fáciles de transmitir) | `bash /root/scripts_campo_comun/repetir_captura.sh <repeticiones> <minutos_por_repeticion> /root/scripts_campo_comun/relanzar_captura.sh /root/scripts_campo/capturar_stream.py --condicion reposo --directorio /mnt/usb`. Cada repetición es una carpeta independiente con su propio timestamp — ver `COMANDOS.md`. |
 | **Sin pendrive, directo a la PC por red** | Agregar `--destino red --pc_host usuario@IP --pc_ruta /ruta/en/pc` al comando de captura. Los archivos llegan solos a la PC, se saltea el paso 6 completo. |
 | **Prueba rápida de banco (sin guardar nada)** | `probar_dual_stream.py` — captura corta de solo lectura para chequear que los 2 canales están bien mapeados, no toca el USB. Usar antes de confiar en una captura dual nueva. |
 | **Cambiar el horario del Starlink** | Editar `starlink.hora_on`/`hora_off` en `scripts_campo_comun/config_campo.json`, después correr `/root/starlink_remoto/aplicar_horario.sh` en la placa. No tocar los `.timer` a mano. |

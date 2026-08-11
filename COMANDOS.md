@@ -62,6 +62,26 @@ Primer argumento: ruta del script de captura. El resto se pasa tal cual a ese sc
 `--canales 2`). Constantes internas fijas: `MAX_REINTENTOS=10`, 5s de espera entre
 reintentos, mata `streaming-server` residual antes de cada reintento.
 
+### `scripts_campo_comun/repetir_captura.sh` — varias sesiones cortas en vez de una larga
+
+Repite una captura corta N veces (cada repetición es una sesión independiente, con su
+propia carpeta con timestamp propio) en vez de una sola sesión larga con una carpeta
+pesada. Pensado para envolver `relanzar_captura.sh` (así una falla intermitente dentro
+de una repetición se recupera sola).
+
+```bash
+bash scripts_campo_comun/repetir_captura.sh 5 10 \
+  scripts_campo_comun/relanzar_captura.sh scripts_campo/capturar_stream.py \
+  --condicion reposo --pad Pad-3 --pozo "Pozo A" --directorio /mnt/usb --duracion_chunk 1
+```
+
+Primer argumento: cantidad de repeticiones. Segundo argumento: minutos por repetición —
+se agrega como `--duracion_total` al final de cada llamada (obligatorio y separado a
+propósito: sin él, el default de `capturar_stream.py` es sin límite y la primera
+repetición no terminaría nunca). Tercer argumento en adelante: el comando completo a
+repetir, tal cual (no incluir `--duracion_total` ahí, se pisa). Si una repetición agota
+los reintentos del supervisor (falla dura), aborta el lote entero.
+
 ### `scripts_campo_comun/automount_usb.sh` — montaje automático de `/mnt/usb`
 
 No se ejecuta a mano: lo invoca `mnt-usb-automount@.service` (`scripts_campo_comun/udev-automount/`)
