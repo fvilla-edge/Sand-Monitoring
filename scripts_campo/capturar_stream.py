@@ -62,7 +62,7 @@ DEC_SEGURAS_DUAL = {64}   # unica probada sin perdida sostenida con 2 canales; v
 _stop = cc.instalar_manejador_stop()
 
 
-def _guardar_metadata(dest_dir, condicion, decimacion, fs_ef, session_ts, canales):
+def _guardar_metadata(dest_dir, condicion, decimacion, fs_ef, session_ts, canales, pad, pozo):
     """Escribe session_{condicion}_{ts}_info.json en el directorio destino."""
     if canales == 1:
         info = {
@@ -83,6 +83,8 @@ def _guardar_metadata(dest_dir, condicion, decimacion, fs_ef, session_ts, canale
         }
     info.update({
         'condicion':     condicion,
+        'pad':           pad,
+        'pozo':          pozo,
         'decimacion':    decimacion,
         'fs_hz_por_canal' if canales == 2 else 'fs_hz': fs_ef,
         'fs_base_hz':    FS_BASE,
@@ -251,6 +253,10 @@ def main():
                    help='Ruta en la PC donde guardar los archivos — solo con --destino red')
     p.add_argument('--verbosidad',     choices=['completo', 'minimo'], default='completo',
                    help='completo (default): todo, con color. minimo: solo warnings/errores')
+    p.add_argument('--pad',            default='0',
+                   help='Identificador de pad (default 0)')
+    p.add_argument('--pozo',           default='0',
+                   help='Identificador de pozo (default 0)')
     args = p.parse_args()
 
     cc.configurar_salida(args.verbosidad)
@@ -292,7 +298,8 @@ def main():
     except RuntimeError as e:
         sys.exit(f'ERROR: {e}')
 
-    json_name = _guardar_metadata(dest_usb, args.condicion, args.decimacion, fs_ef, session_ts, args.canales)
+    json_name = _guardar_metadata(dest_usb, args.condicion, args.decimacion, fs_ef, session_ts, args.canales,
+                                   args.pad, args.pozo)
 
     if args.destino == 'red':
         subprocess.run(
