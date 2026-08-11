@@ -46,6 +46,7 @@ import datetime
 import threading
 import subprocess
 import json
+import re
 
 sys.path.insert(0, '/root/rpsa_client/python_lib')
 sys.path.insert(0, '/root/scripts_campo_comun')
@@ -60,6 +61,11 @@ SERVER_BIN       = cc.SERVER_BIN
 DEC_SEGURAS_DUAL = {64}   # unica probada sin perdida sostenida con 2 canales; ver docstring
 
 _stop = cc.instalar_manejador_stop()
+
+
+def _sanear_para_carpeta(valor):
+    """pad/pozo son texto libre — evita que un '/' se cuele en el nombre de carpeta."""
+    return re.sub(r'[\\/]+', '_', str(valor))
 
 
 def _guardar_metadata(dest_dir, condicion, decimacion, fs_ef, session_ts, canales, pad, pozo):
@@ -283,7 +289,9 @@ def main():
     cc.log('INFO', f'  Log (solo errores/eventos) → {log_path}')
 
     cc.asegurar_servidor('/tmp/sstream_campo.log')
-    dest_usb   = cc.preparar_dirs(args.directorio, 'stream_adc')
+    subdir_nombre = (f'{_sanear_para_carpeta(args.pad)}_{_sanear_para_carpeta(args.pozo)}_'
+                      f'{args.condicion}_{session_ts}')
+    dest_usb   = cc.preparar_dirs(args.directorio, subdir_nombre)
     usb_dev_id = cc.id_dispositivo(args.directorio)
 
     if args.destino == 'usb':

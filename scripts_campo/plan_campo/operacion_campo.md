@@ -215,7 +215,7 @@ relanzar a mano.
   condicion  : reposo
   decimacion : 32  →  fs = 3.9062 MHz
   chunk      : 1.0 min  (234,375,000 muestras | 469 MB)
-  destino    : /mnt/usb/stream_adc
+  destino    : /mnt/usb/0_0_reposo_20260630_141907
   total      : indefinido
 
 --- Chunk 0001 | USB 6.18 GB libres ---
@@ -233,7 +233,7 @@ relanzar a mano.
   condicion  : reposo
   decimacion : 64  →  fs = 1.9531 MHz por canal (3.9062 MHz combinado)
   chunk      : 1.0 min  (117,187,500 muestras/canal | 469 MB)
-  destino    : /mnt/usb/stream_adc
+  destino    : /mnt/usb/0_0_reposo_20260703_090000
   total      : indefinido
 
 --- Chunk 0001 | USB 6.18 GB libres ---
@@ -266,10 +266,12 @@ relanzar a mano.
 
 ## Archivos generados
 
-**Modo USB** — los archivos quedan en la memoria externa:
+**Modo USB** — cada sesión crea su propia carpeta (no una fija), nombrada
+`[pad]_[pozo]_[condicion]_[fecha_hora]` (`--pad`/`--pozo` son opcionales, texto libre,
+`0` por default — ver `../../COMANDOS.md`). Adentro quedan los archivos:
 
 ```
-/mnt/usb/stream_adc/
+/mnt/usb/0_0_reposo_20260630_134042/
   session_reposo_20260630_134042_info.json  ← parámetros de la sesión (leer primero)
   campo_reposo_20260630_134042_0001.bin     ← datos de la sesión
   campo_reposo_20260630_135042_0002.bin
@@ -299,7 +301,7 @@ separadas.
 
 ```bash
 # Revisar todo el directorio (USB o red) — mono y/o dual
-.venv/bin/python3 analisis/revisar.py /ruta/al/directorio/stream_adc/
+.venv/bin/python3 analisis/revisar.py /ruta/al/directorio/0_0_reposo_20260630_134042/
 
 # Revisar archivos específicos
 .venv/bin/python3 analisis/revisar.py campo_reposo_*.bin

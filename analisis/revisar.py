@@ -27,7 +27,7 @@ real, se marca en la salida). En mono, sin reposo en el lote se sigue
 mostrando N/A (sin fallback).
 
 Uso:
-  .venv/bin/python3 analisis/revisar.py /mnt/usb/stream_adc/
+  .venv/bin/python3 analisis/revisar.py /mnt/usb/0_0_reposo_20260630_134042/
   .venv/bin/python3 analisis/revisar.py campo_reposo_*.bin campo_con_arena_*.bin
 
 Formato del .bin: NO es raw plano — es un tren de segmentos [header][datos

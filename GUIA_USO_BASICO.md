@@ -64,6 +64,10 @@ hace que la sesión termine sola (acá, 2 minutos) — sin esto corre indefinido
 `Ctrl+C` (corta al terminar el chunk en curso). Para sesiones largas o sin supervisión
 (de noche), usar el supervisor en vez del script solo — ver "Otros casos de uso" abajo.
 
+Opcionalmente se puede identificar la sesión con `--pad` y `--pozo` (texto libre, default
+`0` si no se pasan) — se usan para nombrar la carpeta de destino (ver paso 6) y quedan
+guardados en el JSON de metadata. Ejemplo: `--pad Pad-3 --pozo "Pozo A"`.
+
 Detalle completo de parámetros y qué se ve en pantalla:
 `scripts_campo/plan_campo/operacion_campo.md`.
 
@@ -74,10 +78,12 @@ esperar a que cierre el chunk en curso (no matar el proceso a la fuerza).
 
 ### 6. Sacar los datos
 
-Quedan en:
+Cada sesión crea su propia carpeta (no una fija) — nombrada `[pad]_[pozo]_[condicion]_[fecha_hora]`,
+por ejemplo `Pad-3_Pozo A_reposo_20260811_133945/` si se lanzó con `--pad Pad-3 --pozo "Pozo A"`,
+o `0_0_reposo_20260811_133945/` si no se pasaron esos argumentos. Adentro:
 
 ```
-/mnt/usb/stream_adc/
+/mnt/usb/<pad>_<pozo>_<condicion>_<fecha_hora>/
   session_reposo_..._info.json
   campo_reposo_..._0001.bin
   campo_reposo_..._0002.bin
@@ -94,7 +100,7 @@ comando de umount manual. Conectarlo a la PC y copiar la carpeta directo.
   pública del Starlink sin CGNAT):
 
   ```bash
-  scp -r root@<IP_PLACA>:/mnt/usb/stream_adc/ /home/facu-edge/datos_campo/
+  scp -r root@<IP_PLACA>:/mnt/usb/<carpeta_de_la_sesion>/ /home/facu-edge/datos_campo/
   ```
 
 - **Por "agujero de gusano" (`magic-wormhole`)**, cuando no hay forma de alcanzar la
@@ -104,7 +110,7 @@ comando de umount manual. Conectarlo a la PC y copiar la carpeta directo.
 
   ```bash
   # en la placa (root@<IP_PLACA>)
-  wormhole send /mnt/usb/stream_adc/
+  wormhole send /mnt/usb/<carpeta_de_la_sesion>/
 
   # en la PC, con el código que imprime el comando anterior
   wormhole receive <codigo>
@@ -118,17 +124,18 @@ abajo.)
 ya están copiados y a salvo en la PC (este comando no tiene vuelta atrás):
 
 ```bash
-df -h /mnt/usb                        # confirmar que es el USB real antes de borrar
-rm -rf /mnt/usb/stream_adc/           # borra la carpeta entera y su contenido
+df -h /mnt/usb                              # confirmar que es el USB real antes de borrar
+rm -rf /mnt/usb/<carpeta_de_la_sesion>/     # borra esa carpeta de sesion y su contenido
 ```
 
-No hace falta volver a crear la carpeta a mano — `capturar_stream.py` la recrea sola en
-la próxima corrida.
+No hace falta crear ninguna carpeta a mano — `capturar_stream.py` crea una nueva en cada
+corrida, con nombre distinto (incluye la fecha y hora), así que sesiones viejas nunca se
+pisan entre sí.
 
 ### 7. Revisar los datos (en la PC)
 
 ```bash
-.venv/bin/python3 analisis/revisar.py /ruta/a/stream_adc/
+.venv/bin/python3 analisis/revisar.py /ruta/a/<carpeta_de_la_sesion>/
 ```
 
 Detecta solo si cada archivo es mono o dual y muestra kurtosis, crest factor, fracción
