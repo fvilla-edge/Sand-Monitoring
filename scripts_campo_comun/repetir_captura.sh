@@ -14,9 +14,9 @@
 # intermitente del streaming-server dentro de una repeticion se recupere
 # solo en vez de perderse esa repeticion entera:
 #
-#   bash /root/scripts_campo_comun/repetir_captura.sh 5 10 \
-#     /root/scripts_campo_comun/relanzar_captura.sh /root/scripts_campo/capturar_stream.py \
-#     --condicion reposo --pad Pad-3 --pozo "Pozo A" --directorio /mnt/usb --duracion_chunk 1
+#   bash /root/scripts_campo_comun/repetir_captura.sh 5 2 \
+#  /root/scripts_campo_comun/relanzar_captura.sh /root/scripts_campo/capturar_stream.py \
+#  --condicion reposo --directorio /mnt/usb --duracion_chunk 0.5
 #
 # --duracion_total se agrega solo, al final de cada llamada (pisa cualquier
 # --duracion_total puesto de mas en [args...], porque argparse se queda con
