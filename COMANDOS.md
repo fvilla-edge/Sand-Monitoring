@@ -28,6 +28,8 @@ python3 scripts_campo/capturar_stream.py --condicion reposo --directorio /mnt/us
 | `--pc_host` | — | `usuario@ip` de la PC — solo con `--destino red` |
 | `--pc_ruta` | — | Ruta destino en la PC — solo con `--destino red` |
 | `--verbosidad` | `completo` | `completo` (todo, con color) o `minimo` (solo warnings/errores) |
+| `--pad` | `0` | Identificador de pad, se guarda en el JSON de metadata |
+| `--pozo` | `0` | Identificador de pozo, se guarda en el JSON de metadata |
 
 ### `scripts_campo/probar_dual_stream.py` — prueba de banco
 
