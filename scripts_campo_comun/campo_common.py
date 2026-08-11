@@ -266,9 +266,10 @@ def crear_aviso_pendiente(json_name, carpeta, log_evento):
 
     `json_name` (siempre termina en `.json`) es solo el nombre del archivo
     marcador local — indicador_estado.sh lo busca con un glob `*.json` y
-    despues lo renombra a `.enviado`. `carpeta` es el dato que de verdad se
-    manda en el POST: el nombre de la carpeta de la sesion (no el nombre
-    del JSON de metadata), para que la nube sepa directo que carpeta bajar.
+    lo borra una vez confirmado el POST. `carpeta` es el dato que de verdad
+    se manda en el POST: el nombre de la carpeta de la sesion (no el
+    nombre del JSON de metadata), para que la nube sepa directo que
+    carpeta bajar.
 
     Escritura atomica (tmp + rename, mismo patron que mover_a_usb) para no
     dejar un aviso a medio escribir si algo interrumpe justo en este

@@ -46,18 +46,18 @@ en_transmision() {
 }
 
 # Manda por POST cada aviso pendiente (dejado por capturar_stream.py al
-# terminar una sesion) y lo marca como enviado renombrandolo a .enviado —
-# mismo patron atomico que mover_a_usb/mover_a_red en campo_common.py. Si
-# el POST falla, el archivo .json queda igual y se reintenta solo en el
-# proximo ciclo — no hay perdida silenciosa, solo demora hasta que la red
-# ande. Nunca se llama mientras en_captura() es cierto (ver el loop).
+# terminar una sesion) y lo borra una vez confirmado el envio (curl -f
+# trata cualquier respuesta no-2xx como fallo). Si el POST falla, el
+# archivo .json queda igual y se reintenta solo en el proximo ciclo — no
+# hay perdida silenciosa, solo demora hasta que la red ande. Nunca se
+# llama mientras en_captura() es cierto (ver el loop).
 enviar_avisos_pendientes() {
   local f
   shopt -s nullglob
   for f in "$AVISOS_DIR"/*.json; do
     if curl -sf -X POST -H 'Content-Type: application/json' \
          --max-time 5 -d "@$f" "$URL_AVISO" >/dev/null 2>&1; then
-      mv "$f" "${f%.json}.enviado"
+      rm -f "$f"
     fi
   done
   shopt -u nullglob
