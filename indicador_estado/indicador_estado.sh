@@ -34,7 +34,8 @@ PATRON_CAPTURA='python3.*capturar_stream\.py'
 
 AVISOS_DIR='/root/avisos_pendientes'
 # Placeholder de PRUEBA — reemplazar por el endpoint real de la nube cuando exista.
-URL_AVISO='https://webhook.site/db50fa86-b075-4e45-80cc-4cdedffe91aa'
+#URL_AVISO='https://webhook.site/db50fa86-b075-4e45-80cc-4cdedffe91aa'
+URL_AVISO='https://sample-download-trigger-788640759344.us-central1.run.app'
 
 en_captura() {
   pgrep -f "$PATRON_CAPTURA" >/dev/null 2>&1
