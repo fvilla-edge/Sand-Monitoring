@@ -21,7 +21,7 @@
     "informe_intervalo_min": 15
   },
   "indicador_estado": {
-    "url_aviso": "https://webhook.site/db50fa86-b075-4e45-80cc-4cdedffe91aa"
+    "url_aviso": "https://postman-echo.com/post"
   },
   "captura_defaults": {
     "decimacion": 32,
