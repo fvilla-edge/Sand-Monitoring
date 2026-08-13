@@ -14,7 +14,8 @@
     "hora_on": "08:55",
     "hora_off": "17:00",
     "rescate_manual_horas": 24,
-    "sin_rele": false
+    "sin_rele": false,
+    "alerta_fallos_consecutivos": 4
   },
   "panel_solar": {
     "informe_intervalo_min": 15
@@ -32,6 +33,7 @@
     "stream_dir": "/home/redpitaya/streaming_files/adc",
     "state_file": "/root/starlink_remoto/estado",
     "modo_manual_file": "/root/starlink_remoto/modo_manual",
-    "avisos_pendientes_dir": "/root/avisos_pendientes"
+    "avisos_pendientes_dir": "/root/avisos_pendientes",
+    "fallos_consecutivos_file": "/root/starlink_remoto/fallos_consecutivos"
   }
 }

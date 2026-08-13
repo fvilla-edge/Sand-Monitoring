@@ -41,6 +41,9 @@ PULSO_S=0.2   # ancho del pulso — 19ms ya alcanzo a togglear en la placa real,
 # Parametros operativos — ver scripts_campo_comun/config_campo.json
 STATE_FILE=$(python3 "$CFG" rutas.state_file)
 TIMEOUT_STOP=$(python3 "$CFG" starlink.timeout_stop_s)   # seg de margen para el corte limpio, mayor al chunk mas largo que se use en campo
+FALLOS_FILE=$(python3 "$CFG" rutas.fallos_consecutivos_file)
+UMBRAL_ALERTA=$(python3 "$CFG" starlink.alerta_fallos_consecutivos)
+AVISOS_DIR=$(python3 "$CFG" rutas.avisos_pendientes_dir)
 
 ACCION="${1:-}"
 case "$ACCION" in
@@ -101,6 +104,31 @@ pulsar_ps() {
   "$MONITOR" "$DATA_REG" "$(printf '0x%x' "$base")"
 }
 
+# Cuenta fallos consecutivos de este script en confirmar el estado pedido
+# (persistido en FALLOS_FILE, ver header — cada invocacion es un proceso
+# nuevo, sin esto no hay forma de distinguir entre invocaciones separadas el
+# glitch normal del boot (se autocorrige en el proximo tick del reconciliador)
+# de un rele trabado de verdad). Encola un aviso (mismo mecanismo que usa
+# capturar_stream.py) una sola vez, justo al cruzar el umbral — no en cada
+# tick posterior mientras siga fallando.
+actualizar_contador_fallos() {
+  local fallo="$1" actual
+  if [ "$fallo" -eq 0 ]; then
+    echo 0 > "$FALLOS_FILE"
+    return
+  fi
+  actual=$(cat "$FALLOS_FILE" 2>/dev/null || echo 0)
+  [[ "$actual" =~ ^[0-9]+$ ]] || actual=0
+  actual=$((actual + 1))
+  echo "$actual" > "$FALLOS_FILE"
+  if [ "$actual" -eq "$UMBRAL_ALERTA" ]; then
+    mkdir -p "$AVISOS_DIR"
+    echo "{\"evento\": \"rele_sin_confirmar\", \"objetivo\": \"$ACCION\", \"fallos_consecutivos\": $actual}" \
+      > "$AVISOS_DIR/alerta_rele_$(date +%Y%m%d_%H%M%S).json"
+    echo "ALERTA: $actual fallos consecutivos sin confirmar el rele, aviso encolado" >&2
+  fi
+}
+
 parar_captura_si_corre() {
   # SIGTERM = mismo handler que Ctrl+C: corta el chunk en curso y sale con
   # exit 0, para que relanzar_captura.sh no la relance. Si no corta a
@@ -147,6 +175,7 @@ ESTADO_REAL=$(leer_estado_real)
 if [ "$ESTADO_REAL" = "$ACCION" ]; then
   echo "OK: el rele ya esta en '$ACCION' (verificado por HW), no hago nada"
   echo "$ESTADO_REAL" > "$STATE_FILE"
+  actualizar_contador_fallos 0
   exit 0
 fi
 
@@ -164,6 +193,7 @@ if [ "$ESTADO_REAL" != "$ACCION" ]; then
 else
   echo "OK: rele ahora en '$ESTADO_REAL' (confirmado por HW)"
 fi
+actualizar_contador_fallos "$FALLO"
 
 if [ "$ACCION" = "on" ]; then
   systemctl restart ntpsec
