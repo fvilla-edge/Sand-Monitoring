@@ -20,6 +20,8 @@ set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/mux_ps11_common.sh"
 
+CFG=/root/scripts_campo_comun/cfg.py
+
 PULSO_S=0.15   # ancho del pulso — pensado para prender un LED de forma visible; techo real es el periodo mas corto (transmision, 0.25s)
 
 CAPTURA_PERIODO_S=0.75
@@ -33,9 +35,10 @@ STANDBY_PERIODO_S=3
 PATRON_CAPTURA='python3.*capturar_stream\.py'
 
 AVISOS_DIR='/root/avisos_pendientes'
-# Placeholder de PRUEBA — reemplazar por el endpoint real de la nube cuando exista.
-#URL_AVISO='https://webhook.site/db50fa86-b075-4e45-80cc-4cdedffe91aa'
-URL_AVISO='https://sample-download-trigger-788640759344.us-central1.run.app'
+# URL_AVISO vive en config_campo.json (indicador_estado.url_aviso), no acá
+# hardcodeada — se lee de nuevo en cada tanda de envío para no depender de
+# reiniciar este servicio (Restart=always, corre para siempre) cada vez que
+# el endpoint cambie.
 
 en_captura() {
   pgrep -f "$PATRON_CAPTURA" >/dev/null 2>&1
@@ -53,15 +56,18 @@ en_transmision() {
 # hay perdida silenciosa, solo demora hasta que la red ande. Nunca se
 # llama mientras en_captura() es cierto (ver el loop).
 enviar_avisos_pendientes() {
-  local f
+  local f url
   shopt -s nullglob
-  for f in "$AVISOS_DIR"/*.json; do
+  local pendientes=("$AVISOS_DIR"/*.json)
+  shopt -u nullglob
+  [ "${#pendientes[@]}" -eq 0 ] && return
+  url=$(python3 "$CFG" indicador_estado.url_aviso)
+  for f in "${pendientes[@]}"; do
     if curl -sf -X POST -H 'Content-Type: application/json' \
-         --max-time 5 -d "@$f" "$URL_AVISO" >/dev/null 2>&1; then
+         --max-time 5 -d "@$f" "$url" >/dev/null 2>&1; then
       rm -f "$f"
     fi
   done
-  shopt -u nullglob
 }
 
 while true; do
