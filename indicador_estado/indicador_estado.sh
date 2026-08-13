@@ -34,7 +34,7 @@ STANDBY_PERIODO_S=3
 # argumento).
 PATRON_CAPTURA='python3.*capturar_stream\.py'
 
-AVISOS_DIR='/root/avisos_pendientes'
+AVISOS_DIR=$(python3 "$CFG" rutas.avisos_pendientes_dir)
 # URL_AVISO vive en config_campo.json (indicador_estado.url_aviso), no acá
 # hardcodeada — se lee de nuevo en cada tanda de envío para no depender de
 # reiniciar este servicio (Restart=always, corre para siempre) cada vez que

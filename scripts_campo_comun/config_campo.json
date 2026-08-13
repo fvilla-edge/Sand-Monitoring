@@ -18,7 +18,8 @@
     "alerta_fallos_consecutivos": 4
   },
   "panel_solar": {
-    "informe_intervalo_min": 15
+    "informe_intervalo_min": 15,
+    "reintento_conexion_s": 30
   },
   "indicador_estado": {
     "url_aviso": "https://postman-echo.com/post"

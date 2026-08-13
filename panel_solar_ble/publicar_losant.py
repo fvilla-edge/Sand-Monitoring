@@ -61,8 +61,8 @@ DIRECCIONES = {d.lower() for d in DEVICES}
 
 # Si el intento de conexión falla (sin red todavía — lo normal la mayor
 # parte del día, fuera de la ventana de Starlink), cada cuántos segundos
-# se reintenta.
-REINTENTO_CONEXION_S = 30
+# se reintenta. Configurable en config_campo.json.
+REINTENTO_CONEXION_S = cfg.obtener("panel_solar.reintento_conexion_s")
 
 # Cada cuánto se publica un informe mientras la conexión sigue en pie,
 # ademas del que dispara el evento connect/reconnect. Configurable en

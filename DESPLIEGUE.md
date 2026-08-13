@@ -31,7 +31,7 @@ próxima vez que arranca.
 |---|---|---|
 | `indicador_estado/indicador_estado.sh`, `mux_ps11_common.sh` | `systemctl restart pitaya-indicador-estado.service` | Es un loop bash (`while true`) que ya está corriendo (`Type=simple`, `Restart=always`) — bash no relee el archivo desde disco mientras el loop sigue vivo |
 | `panel_solar_ble/publicar_losant.py` (y los módulos que importa: `victron_scanner.py`, `puerto.py`, `config.py`, `losant_config.py`) | `systemctl restart panel-solar-informe.service` | Mismo motivo: `Type=simple`, `Restart=always`, loop de por vida (`while True` en `main()`) |
-| `scripts_campo_comun/config_campo.json`, clave **`panel_solar.informe_intervalo_min`** únicamente | `systemctl restart panel-solar-informe.service` | Única excepción a la regla de "config se relee sola": `publicar_losant.py` la lee **una sola vez**, al importar el módulo (`INTERVALO_INFORME_S = cfg.obtener(...) * 60`, fuera del loop) y la cachea en una constante para toda la vida del proceso. Si se agrega una lectura nueva de `cfg.obtener()` a ese script fuera del `while True`, va a tener el mismo problema — dentro del loop, en cambio, se releería sola |
+| `scripts_campo_comun/config_campo.json`, claves **`panel_solar.informe_intervalo_min`** y **`panel_solar.reintento_conexion_s`** | `systemctl restart panel-solar-informe.service` | Excepción a la regla de "config se relee sola": `publicar_losant.py` las lee **una sola vez cada una**, al importar el módulo (fuera del loop) y las cachea en constantes para toda la vida del proceso. Cualquier lectura nueva de `cfg.obtener()` que se agregue a ese script fuera del `while True` va a tener el mismo problema — dentro del loop, en cambio, se releería sola |
 
 ---
 
