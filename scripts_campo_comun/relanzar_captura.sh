@@ -73,7 +73,8 @@ avisar_si_hay_datos_parciales() {
     local n_chunks
     n_chunks=$(find "$carpeta" -maxdepth 1 -name '*.bin' 2>/dev/null | wc -l)
     if [ "$n_chunks" -lt 1 ]; then
-        echo "[supervisor] sesion parcial sin chunks completos ($carpeta) — no se avisa."
+        echo "[supervisor] sesion parcial sin chunks completos ($carpeta) — no se avisa, se borra."
+        rm -rf "$carpeta"
         return
     fi
     local json_path json_name subdir_nombre
