@@ -23,7 +23,7 @@
     "reintento_conexion_s": 30
   },
   "indicador_estado": {
-    "url_aviso": "https://sample-download-trigger-788640759344.us-central1.run.app"
+    "url_aviso": "https://sample-download-trigger-788640759344.southamerica-west1.run.app"
   },
   "captura_defaults": {
     "decimacion": 32,
