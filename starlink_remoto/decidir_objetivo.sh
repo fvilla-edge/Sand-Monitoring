@@ -16,7 +16,11 @@
 #      control_starlink.sh), asi que si todavia no sincronizo desde el boot
 #      no hay forma de confiar en el horario. Se fuerza "on" para que
 #      Starlink suba y ntpsec pueda corregir el reloj.
-#   3. Horario normal (config_campo.json: starlink.hora_on/hora_off).
+#   3. Horario normal (config_campo.json: starlink.hora_on/hora_off,
+#      starlink.dias_habilitados). Fuera de un dia habilitado el resultado es
+#      "off" sin importar la hora — mismo nivel de prioridad que el chequeo
+#      de hora, no uno nuevo: un "prender-starlink" manual sigue ganando
+#      igual que ya gana sobre el horario (prioridad 1, mas arriba).
 #
 # Ver HISTORIAL_STARLINK.md, seccion "reloj sin RTC + Persistent=true", para
 # el porque de este orden (reproducido en placa real: con reloj atrasado,
@@ -51,6 +55,7 @@ TZ_CAMPO="America/Argentina/Buenos_Aires"
 MODO_MANUAL_FILE=$(python3 "$CFG" rutas.modo_manual_file)
 HORA_ON=$(python3 "$CFG" starlink.hora_on)
 HORA_OFF=$(python3 "$CFG" starlink.hora_off)
+DIAS_HABILITADOS=$(python3 "$CFG" starlink.dias_habilitados)   # ISO: 1=lunes .. 7=domingo, separados por coma
 RESCATE_MANUAL_HORAS=$(python3 "$CFG" starlink.rescate_manual_horas)
 
 NTP_SYNC=$(timedatectl show -p NTPSynchronized --value)
@@ -58,8 +63,9 @@ NTP_SYNC=$(timedatectl show -p NTPSynchronized --value)
 if [ "$NTP_SYNC" != "yes" ]; then
   RESCATE_U_HORARIO=on
 else
+  DIA_HOY=$(TZ="$TZ_CAMPO" date +%u)
   AHORA=$(TZ="$TZ_CAMPO" date +%H:%M)
-  if [[ ( "$AHORA" > "$HORA_ON" || "$AHORA" == "$HORA_ON" ) && "$AHORA" < "$HORA_OFF" ]]; then
+  if [[ ",$DIAS_HABILITADOS," == *",$DIA_HOY,"* ]] && [[ ( "$AHORA" > "$HORA_ON" || "$AHORA" == "$HORA_ON" ) && "$AHORA" < "$HORA_OFF" ]]; then
     RESCATE_U_HORARIO=on
   else
     RESCATE_U_HORARIO=off
