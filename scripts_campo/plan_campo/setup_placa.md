@@ -162,6 +162,7 @@ scp control_starlink.sh mux_ps10_common.sh asegurar_mux_ps10.sh aplicar_horario.
 
 # unidades systemd
 scp systemd/starlink-mux-ps10.service systemd/starlink-aplicar-objetivo.service \
+    systemd/starlink-reconciliador.service \
     systemd/starlink-rele-on.timer systemd/starlink-rele-off.timer \
     systemd/starlink-reconciliador.timer \
     root@<IP_PLACA>:/etc/systemd/system/

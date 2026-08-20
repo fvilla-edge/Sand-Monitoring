@@ -1,0 +1,8 @@
+[Unit]
+Description=Reevalua cada 5 min si el rele deberia estar on/off (manual/reloj/horario), con confirmacion doble antes de corregir un desacuerdo
+Requires=starlink-mux-ps10.service
+After=starlink-mux-ps10.service
+
+[Service]
+Type=oneshot
+ExecStart=/root/starlink_remoto/aplicar_objetivo.sh --reconciliar

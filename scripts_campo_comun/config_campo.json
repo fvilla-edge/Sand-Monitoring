@@ -36,6 +36,7 @@
     "state_file": "/root/starlink_remoto/estado",
     "modo_manual_file": "/root/starlink_remoto/modo_manual",
     "avisos_pendientes_dir": "/root/avisos_pendientes",
-    "fallos_consecutivos_file": "/root/starlink_remoto/fallos_consecutivos"
+    "fallos_consecutivos_file": "/root/starlink_remoto/fallos_consecutivos",
+    "reconciliador_pendiente_file": "/root/starlink_remoto/reconciliador_pendiente"
   }
 }

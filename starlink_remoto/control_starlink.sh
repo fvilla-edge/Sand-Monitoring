@@ -44,15 +44,19 @@ TIMEOUT_STOP=$(python3 "$CFG" starlink.timeout_stop_s)   # seg de margen para el
 FALLOS_FILE=$(python3 "$CFG" rutas.fallos_consecutivos_file)
 UMBRAL_ALERTA=$(python3 "$CFG" starlink.alerta_fallos_consecutivos)
 AVISOS_DIR=$(python3 "$CFG" rutas.avisos_pendientes_dir)
+MARKER_FILE=$(python3 "$CFG" rutas.reconciliador_pendiente_file)
 
 ACCION="${1:-}"
 case "$ACCION" in
   on|off) ;;
   *)
-    echo "uso: $0 {on|off}" >&2
+    echo "uso: $0 {on|off} [--reconciliar]" >&2
     exit 1
     ;;
 esac
+
+RECONCILIAR=0
+[ "${2:-}" = "--reconciliar" ] && RECONCILIAR=1
 
 # Serializa instancias concurrentes de este script (ej. los timers on/off
 # disparando juntos tras un salto de reloj, ver HISTORIAL_STARLINK.md) — sin
@@ -175,8 +179,27 @@ ESTADO_REAL=$(leer_estado_real)
 if [ "$ESTADO_REAL" = "$ACCION" ]; then
   echo "OK: el rele ya esta en '$ACCION' (verificado por HW), no hago nada"
   echo "$ESTADO_REAL" > "$STATE_FILE"
+  rm -f "$MARKER_FILE"
   actualizar_contador_fallos 0
   exit 0
+fi
+
+# Confirmacion doble, solo para el reconciliador de 5 min (--reconciliar):
+# ante un boton fisico usado fuera de horario, corregir de una en el primer
+# ciclo le deja a quien lo uso casi cero margen antes de poder entrar por
+# SSH (necesita que Starlink levante, ~2-3min, mas el tiempo de conectarse)
+# y fijar modo manual. Los timers de horario y los comandos manuales NO
+# pasan este flag, siguen corrigiendo de inmediato como siempre.
+if [ "$RECONCILIAR" -eq 1 ]; then
+  PENDIENTE=$(cat "$MARKER_FILE" 2>/dev/null || echo '')
+  if [ "$PENDIENTE" != "$ACCION" ]; then
+    echo "$ACCION" > "$MARKER_FILE"
+    mkdir -p "$(dirname "$STATE_FILE")"
+    echo "$ESTADO_REAL" > "$STATE_FILE"
+    echo "desacuerdo detectado (se pidio '$ACCION', HW en '$ESTADO_REAL') — se pospone la correccion al proximo ciclo del reconciliador"
+    exit 0
+  fi
+  rm -f "$MARKER_FILE"
 fi
 
 asegurar_mux_gpio   # no-op normalmente (ver header) — starlink-mux-ps10.service ya lo hizo al boot

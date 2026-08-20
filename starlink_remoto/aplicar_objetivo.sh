@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# aplicar_objetivo.sh [--forzar] — decide (decidir_objetivo.sh) que deberia
-# tener el rele ahora y lo aplica.
+# aplicar_objetivo.sh [--forzar] [--reconciliar] — decide (decidir_objetivo.sh)
+# que deberia tener el rele ahora y lo aplica.
 #
 # Sin --forzar (uso normal: los dos timers diarios y el reconciliador de 5
 # min): si hay una captura activa Y el objetivo ya coincide con STATE_FILE (la
@@ -17,6 +17,13 @@
 # porque habilitar el mux de PS_MIO10 puede togglear el rele solo (ver
 # HISTORIAL_STARLINK.md) — un mismatch entre STATE_FILE cacheado y el HW
 # real que la comparacion liviana de abajo no detectaria.
+#
+# Con --reconciliar (uso: solo starlink-reconciliador.service): reenvia el
+# flag a control_starlink.sh, que exige ver el mismo desacuerdo en dos
+# ciclos seguidos (~10 min) antes de corregirlo — le da margen a alguien que
+# uso el boton fisico fuera de horario a entrar por SSH y fijar modo manual
+# antes de que se revierta solo. Los timers de horario y los comandos
+# manuales NO pasan este flag, corrigen de inmediato como siempre.
 #
 # starlink.sin_rele (config_campo.json, default false): este script es el
 # unico camino real hacia control_starlink.sh (timers de horario,
@@ -39,7 +46,13 @@ if [ "$(python3 "$CFG" starlink.sin_rele)" = "True" ]; then
 fi
 
 FORZAR=0
-[ "${1:-}" = "--forzar" ] && FORZAR=1
+RECONCILIAR=0
+for arg in "$@"; do
+  case "$arg" in
+    --forzar) FORZAR=1 ;;
+    --reconciliar) RECONCILIAR=1 ;;
+  esac
+done
 
 OBJETIVO=$("$DIR/decidir_objetivo.sh")
 
@@ -51,4 +64,6 @@ if [ "$FORZAR" -eq 0 ] && [ "$CAPTURA_ACTIVA" -eq 1 ] && [ "$(cat "$STATE_FILE" 
   exit 0
 fi
 
-exec "$DIR/control_starlink.sh" "$OBJETIVO"
+ARGS=("$OBJETIVO")
+[ "$RECONCILIAR" -eq 1 ] && ARGS+=(--reconciliar)
+exec "$DIR/control_starlink.sh" "${ARGS[@]}"
