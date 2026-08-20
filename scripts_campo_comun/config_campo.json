@@ -12,7 +12,7 @@
   "starlink": {
     "timeout_stop_s": 150,
     "hora_on": "08:55",
-    "hora_off": "17:00",
+    "hora_off": "17:15",
     "dias_habilitados": "1,2,3,4,5",
     "rescate_manual_horas": 24,
     "sin_rele": false,
