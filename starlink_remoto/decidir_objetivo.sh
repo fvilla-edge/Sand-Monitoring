@@ -12,10 +12,11 @@
 #      necesita acordarse de "auto-starlink" despues: en cuanto pasa el
 #      hora_off real, el horario puro ya dice "off" solo, coincide, y el
 #      manual se borra.
-#   2. Reloj no confiable (NTPSynchronized=no) — la placa no tiene RTC (ver
-#      control_starlink.sh), asi que si todavia no sincronizo desde el boot
-#      no hay forma de confiar en el horario. Se fuerza "on" para que
-#      Starlink suba y ntpsec pueda corregir el reloj.
+#   2. Reloj no confiable (ni NTPSynchronized=yes ni el RTC DS3231 restaurado
+#      con exito en este boot, ver /run/rtc_ds3231_ok mas abajo) — sin
+#      ninguna de las dos fuentes no hay forma de confiar en el horario. Se
+#      fuerza "on" para que Starlink suba y ntpsec (o el RTC en el proximo
+#      boot) puedan corregir el reloj.
 #   3. Horario normal (config_campo.json: starlink.hora_on/hora_off,
 #      starlink.dias_habilitados). Fuera de un dia habilitado el resultado es
 #      "off" sin importar la hora — mismo nivel de prioridad que el chequeo
@@ -41,11 +42,14 @@
 # Formato viejo de modo_manual_file (una sola linea, sin timestamp, de antes
 # de este mecanismo): se trata como timestamp desconocido y el rescate se
 # considera vencido de entrada (fuerza "on") — mas seguro asumir "no se sabe
-# hace cuanto" que confiar en que es reciente. Mismo criterio si el reloj
-# todavia no sincronizo por NTP (sin RTC, ver control_starlink.sh): sin RTC
-# el "date +%s" post-reboot puede estar atrasado, y la resta contra el
+# hace cuanto" que confiar en que es reciente. Mismo criterio si el reloj no
+# es confiable (ni NTP sincronizado ni RTC DS3231 restaurado en este boot,
+# ver /run/rtc_ds3231_ok mas abajo): sin ninguna de las dos fuentes el
+# "date +%s" post-reboot puede estar atrasado, y la resta contra el
 # timestamp guardado daria horas de menos (o negativo) justo cuando mas
 # importa el rescate — se trata como vencido de entrada por la misma razon.
+# Con el RTC restaurado con exito, en cambio, la resta es confiable desde el
+# primer segundo del boot aunque ntpsec todavia no haya sincronizado por red.
 
 set -euo pipefail
 
@@ -59,8 +63,15 @@ DIAS_HABILITADOS=$(python3 "$CFG" starlink.dias_habilitados)   # ISO: 1=lunes ..
 RESCATE_MANUAL_HORAS=$(python3 "$CFG" starlink.rescate_manual_horas)
 
 NTP_SYNC=$(timedatectl show -p NTPSynchronized --value)
+RTC_FLAG_OK=/run/rtc_ds3231_ok
 
-if [ "$NTP_SYNC" != "yes" ]; then
+if [ "$NTP_SYNC" = "yes" ] || [ -e "$RTC_FLAG_OK" ]; then
+  RELOJ_CONFIABLE=yes
+else
+  RELOJ_CONFIABLE=no
+fi
+
+if [ "$RELOJ_CONFIABLE" != "yes" ]; then
   RESCATE_U_HORARIO=on
 else
   DIA_HOY=$(TZ="$TZ_CAMPO" date +%u)
@@ -77,9 +88,9 @@ if [ -s "$MODO_MANUAL_FILE" ]; then
   MANUAL_TS=$(sed -n '2p' "$MODO_MANUAL_FILE")
 
   if [ "$MANUAL" = "off" ]; then
-    if [ "$NTP_SYNC" != "yes" ]; then
-      echo "AVISO: reloj (NTP) no sincronizado desde el boot, se ignora el modo manual '$MANUAL' y se fuerza 'on' (rescate)" >&2
-      echo "on"   # rescate: reloj todavia no sincronizado, no se puede confiar en el timestamp guardado (ver header)
+    if [ "$RELOJ_CONFIABLE" != "yes" ]; then
+      echo "AVISO: reloj no confiable desde el boot (ni NTP ni RTC), se ignora el modo manual '$MANUAL' y se fuerza 'on' (rescate)" >&2
+      echo "on"   # rescate: reloj no confiable, no se puede confiar en el timestamp guardado (ver header)
       exit 0
     fi
     AHORA_EPOCH=$(date +%s)
