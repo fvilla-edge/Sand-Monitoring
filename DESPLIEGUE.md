@@ -41,8 +41,9 @@ próxima vez que arranca.
 |---|---|---|
 | `indicador_estado/asegurar_mux_ps11.sh` | `pitaya-mux-ps11.service` | `systemctl restart pitaya-mux-ps11.service` |
 | `starlink_remoto/asegurar_mux_ps10.sh` | `starlink-mux-ps10.service` | `systemctl restart starlink-mux-ps10.service` — con cuidado, esto reconfigura el mux de PS_MIO10 y puede togglear el relé solo (glitch conocido, ver `control_starlink.sh`) |
+| `rtc_ds3231/restaurar_hora.sh`, `leer_epoch.py`, `ds3231.py` | `rtc-restaurar.service` | `systemctl restart rtc-restaurar.service` — sin riesgo de HW, a diferencia de los dos de arriba (solo lee el RTC y hace `date -s`) |
 
-Estos dos scripts están pensados para correr una única vez por boot (configuran un mux
-de hardware). `RemainAfterExit=yes` hace que systemd los marque `active` sin
-volver a ejecutarlos — un `restart` sí los vuelve a correr, pero un reboot es la
-forma normal en que esto pasa.
+Estos tres scripts están pensados para correr una única vez por boot (los dos primeros
+configuran un mux de hardware, el tercero setea el reloj antes de que arranque nada más).
+`RemainAfterExit=yes` hace que systemd los marque `active` sin volver a ejecutarlos —
+un `restart` sí los vuelve a correr, pero un reboot es la forma normal en que esto pasa.

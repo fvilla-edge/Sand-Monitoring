@@ -1,0 +1,13 @@
+[Unit]
+Description=Restaura la hora del sistema desde el RTC DS3231 (antes de ntpsec y Starlink)
+DefaultDependencies=no
+After=local-fs.target
+Before=sysinit.target ntpsec.service starlink-mux-ps10.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/root/rtc_ds3231/restaurar_hora.sh
+
+[Install]
+WantedBy=sysinit.target

@@ -189,6 +189,49 @@ corra a mano — sin ningún aviso.
 Uso día a día (prender/apagar a mano, cambiar horario, etc.): ver `COMANDOS.md` →
 "Starlink / control remoto del relé".
 
+## 5b. RTC DS3231 (si esta placa lo tiene cableado)
+
+Cableado real en `rp-f0fbda`: bus I2C 0 (compartido con la EEPROM de identificación de
+modelo, dirección `0x50` — agregar el DS3231 en paralelo por las mismas líneas SDA/SCL
+no la afecta, verificado en HW), dirección `0x68`. Detalle completo, por qué terminó en
+ese bus y las pruebas hechas: `rtc_ds3231/probar_rtc.py` (script de diagnóstico manual)
+y la memoria del proyecto, sec. RTC DS3231.
+
+Depende de `cfg.py`/`config_campo.json` del paso 1 (clave nueva `rtc_ds3231.bus`/
+`rtc_ds3231.direccion`) — no hace falta copiarlos de nuevo salvo que se haya editado
+`config_campo.json` desde entonces.
+
+```bash
+cd rtc_ds3231
+
+scp ds3231.py leer_epoch.py restaurar_hora.sh probar_rtc.py \
+    root@<IP_PLACA>:/root/rtc_ds3231/
+
+scp systemd/rtc-restaurar.service \
+    root@<IP_PLACA>:/etc/systemd/system/
+
+ssh root@<IP_PLACA> "
+  chmod +x /root/rtc_ds3231/*.sh /root/rtc_ds3231/*.py
+  systemctl daemon-reload
+  systemctl enable --now rtc-restaurar.service
+"
+```
+
+No hay guardado periódico del sistema hacia el RTC (se evaluó y se descartó a propósito:
+el DS3231 ya tiene compensación de temperatura, ~1 min/año de desfasaje típico según su
+datasheet — insignificante contra un horario que se maneja en ventanas de HH:MM y que el
+reconciliador reevalúa cada 5 min. No vale la pena el mecanismo extra).
+
+Verificar que el chip responde antes de instalar el servicio (si no, `rtc-restaurar`
+loguea una advertencia y no bloquea el boot, pero conviene saberlo de entrada):
+
+```bash
+ssh root@<IP_PLACA> "i2cdetect -y 0; python3 /root/rtc_ds3231/probar_rtc.py"
+```
+
+**No toca** `decidir_objetivo.sh` ni la lógica de rescate del relé (`NTPSynchronized`)
+— eso sigue funcionando exactamente igual que sin RTC, es una fase aparte.
+
 ## 6. Panel solar por BLE (ESP32-C3, si esta placa lo lee)
 
 Arquitectura, por qué hace falta un ESP32-C3 como puente (la Pitaya no tiene Bluetooth

@@ -25,6 +25,10 @@
   "indicador_estado": {
     "url_aviso": "https://sample-download-trigger-788640759344.southamerica-west1.run.app"
   },
+  "rtc_ds3231": {
+    "bus": 0,
+    "direccion": "0x68"
+  },
   "captura_defaults": {
     "decimacion": 32,
     "duracion_chunk_min": 1.0,
