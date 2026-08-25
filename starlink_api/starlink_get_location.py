@@ -185,7 +185,7 @@ def to_losant_data(payload: dict) -> dict:
         "downlink_bps": link.get("downlink_bps"),
         "uplink_bps": link.get("uplink_bps"),
         "obstruction_fraction": payload.get("obstruction_fraction"),
-        "alerts": ",".join(payload.get("alerts", [])) or "none",
+        "alerts": ",".join(payload.get("alerts", [])) or None,
         "uptime_s": payload.get("uptime_s"),
         "hardware_version": payload.get("hardware_version"),
         "software_version": payload.get("software_version"),
