@@ -69,6 +69,9 @@ HARDCODED_TELEMETRY = {
     "uptime_s": 1330,
     "hardware_version": "mini1_pez_proto1",
     "software_version": "2026.07.24.mr83021",
+    "software_update_state": "IDLE",
+    "software_update_progress": 1.0,
+    "disablement_code": "OKAY",
 }
 
 
@@ -140,6 +143,7 @@ def build_telemetry_payload(target: str, timeout: float) -> dict:
     gps = status.get("gpsStats", {})
     obstruction = status.get("obstructionStats", {})
     alerts = status.get("alerts", {})
+    software_update = status.get("softwareUpdateStats", {})
 
     alt = coords.get("alt")
 
@@ -164,6 +168,9 @@ def build_telemetry_payload(target: str, timeout: float) -> dict:
         "uptime_s": int(status.get("deviceState", {}).get("uptimeS", 0)),
         "hardware_version": device_info.get("hardwareVersion"),
         "software_version": device_info.get("softwareVersion"),
+        "software_update_state": software_update.get("softwareUpdateState"),
+        "software_update_progress": software_update.get("softwareUpdateProgress"),
+        "disablement_code": status.get("disablementCode"),
     }
 
 
@@ -190,6 +197,9 @@ def to_losant_data(payload: dict) -> dict:
         "hardware_version": payload.get("hardware_version"),
         "software_version": payload.get("software_version"),
         "starlink_device_id": payload.get("device_id"),
+        "software_update_state": payload.get("software_update_state"),
+        "software_update_progress": payload.get("software_update_progress"),
+        "disablement_code": payload.get("disablement_code"),
     }
 
 

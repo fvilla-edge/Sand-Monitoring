@@ -84,10 +84,41 @@ Mismo Device que panel solar. Nombre → tipo, segun `to_losant_data()`:
 | `hardware_version` | string |
 | `software_version` | string |
 | `starlink_device_id` | string |
+| `software_update_state` | string |
+| `software_update_progress` | number |
+| `disablement_code` | string |
 | `starlink_error` | string |
 
 Si no existen en el Device antes del primer publish, Losant probablemente
 los descarta silenciosamente.
+
+**`disablement_code`** — por que el dish no esta dando servicio (viene de
+`dishGetStatus.disablementCode`, enum `SpaceX.API.Satellites.Network.UtDisablementCode`,
+confirmado contra el dish real via `grpcurl describe`). En operacion normal
+vale `OKAY`. Valores posibles:
+
+| Valor | Significado |
+|---|---|
+| `OKAY` | Sin problema, dando servicio normalmente |
+| `UNKNOWN_STATE` | Sin dato todavia (recien arrancando, etc.) |
+| `NO_ACTIVE_ACCOUNT` | La cuenta de Starlink asociada no esta activa |
+| `ACCOUNT_DISABLED` | Cuenta deshabilitada |
+| `TOO_FAR_FROM_SERVICE_ADDRESS` | El dish se movio lejos de la direccion de servicio registrada |
+| `IN_OCEAN` | Detectado en el oceano, fuera de zona de servicio |
+| `UNKNOWN_LOCATION` | No pudo determinar la ubicacion para validar el servicio |
+| `BLOCKED_COUNTRY` | Pais bloqueado por Starlink |
+| `BLOCKED_AREA` | Zona especifica bloqueada (aunque el pais no lo este) |
+| `ROAM_RESTRICTED` | Roaming no permitido para este plan/cuenta en esta ubicacion |
+| `DATA_OVERAGE_SANDBOX_POLICY` | Cortado por politica de exceso de datos |
+| `CELL_IS_DISABLED` | La celda satelital que le corresponde esta deshabilitada |
+| `MOVING_TOO_FAST_FOR_POLICY` | Se esta moviendo mas rapido de lo que permite la politica del plan |
+| `UNDER_AVIATION_FLYOVER_LIMITS` | Restringido por limites de sobrevuelo (uso aviacion) |
+| `UNSUPPORTED_VERSION` | Version de software del dish no soportada |
+
+Util para diagnostico remoto: si Losant deja de recibir datos, este campo
+(en el ultimo reporte que si llego) puede explicar si fue un corte de
+conectividad comun o si Starlink dejo de dar servicio por una causa
+puntual (cuenta, ubicacion, politica de uso).
 
 `starlink_error` no viene de `to_losant_data()` — lo agrega
 `publicar_losant.py` aparte: `None` cuando el informe salió bien, mensaje de
