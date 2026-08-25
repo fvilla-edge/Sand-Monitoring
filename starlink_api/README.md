@@ -30,29 +30,39 @@ reinicio de servicio que cualquier otra config leida asi, ver
 - **`live`**: llama a `build_telemetry_payload()`, que habla de verdad con el
   dish por gRPC.
 
-## Por que los imports de grpc estan diferidos
+## Por que `grpcurl` por subprocess y no la libreria `grpcio`
 
-`build_telemetry_payload`, `extract_lla` y `to_losant_data` son puro Python.
-Los imports de `grpc`/`grpc_reflection`/`google.protobuf` estan **dentro** de
-las funciones que los usan (`_open_dish`, `_collect_reflected_files`,
-`_call`, `main`), no a nivel de modulo — asi el modo `hardcoded` no toca esas
-librerias para nada.
+`pip install grpcio` en la placa (Red Pitaya, `armv7l`, Python 3.12) SI
+encuentra un wheel binario en PyPI (`grpcio-1.83.0-cp312-cp312-linux_armv7l.whl`)
+y se instala sin compilar nada — pero al importarlo tira `Illegal
+instruction`. El Cortex-A9 de esta placa no soporta alguna instruccion que
+ese wheel generico da por sentada (confirmado en la placa real, no una
+suposicion). `piwheels` tampoco sirve: no publica `grpcio` para esta
+combinacion de plataforma/version de Python.
 
-No es cosmetico: `pip install grpcio` en la placa (Red Pitaya, `armv7l`,
-Python 3.12) SI encuentra un wheel binario en PyPI
-(`grpcio-1.83.0-cp312-cp312-linux_armv7l.whl`) y se instala sin compilar
-nada — pero al importarlo tira `Illegal instruction`. El Cortex-A9 de esta
-placa no soporta alguna instruccion que ese wheel generico da por sentada
-(confirmado en la placa real, no una suposicion). `piwheels` tampoco sirve:
-no publica grpcio para esta combinacion de plataforma/version de Python.
+El binario estatico `grpcurl` (Go, build `linux_armv7`) corre limpio en esta
+misma placa — sin compilacion C, sin el problema de instrucciones del wheel
+de `grpcio`. `build_telemetry_payload()`/`get_dish_location()` lo invocan
+por `subprocess` (`bin/grpcurl`, o el del `PATH` si existe) y parsean su
+salida JSON — validado contra el dish real (ver mas abajo), incluyendo el
+modo `live` end-to-end.
 
-**Camino validado para `live`:** el binario estatico `grpcurl` (Go, build
-`linux_armv7`) corre limpio en esta placa (sin compilacion C, sin el
-problema de instrucciones del wheel de grpcio). La implementacion de
-`_open_dish()`/`build_telemetry_payload()` para modo `live` tiene que
-invocarlo por `subprocess` y parsear su salida JSON en vez de usar la
-libreria `grpcio` de Python — **todavia no implementado**, queda para
-cuando se prueba contra la antena real.
+**Ojo con las claves:** `grpcurl` devuelve JSON en **camelCase**
+(`getLocation`, `dishGetStatus`, `gpsStats`, `popPingLatencyMs`, etc. — el
+mapeo estandar de proto3 a JSON), no en snake_case como devolvia
+`MessageToDict(..., preserving_proto_field_name=True)` de la libreria
+`grpcio` que se uso originalmente. El parseo de `starlink_get_location.py`
+ya usa los nombres camelCase correctos — si el dish cambia de firmware y el
+esquema cambia, `grpcurl -plaintext <host> describe SpaceX.API.Device.Response`
+sirve para volver a inspeccionarlo.
+
+**Instalar el binario en una placa nueva** (no viene en git, es un binario
+externo):
+```bash
+mkdir -p /root/starlink_api/bin && cd /root/starlink_api/bin
+curl -sL -o grpcurl.tar.gz https://github.com/fullstorydev/grpcurl/releases/download/v1.9.3/grpcurl_1.9.3_linux_armv7.tar.gz
+tar xzf grpcurl.tar.gz grpcurl && rm grpcurl.tar.gz && chmod +x grpcurl
+```
 
 ## Atributos que hay que crear en Losant
 

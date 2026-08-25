@@ -6,38 +6,44 @@ Requisitos:
     (por defecto el router Starlink escucha en 192.168.100.1:9200).
   - "Location Sharing" debe estar habilitado para ese dish en la app
     de Starlink; si no, get_location responde sin datos de posicion.
+  - El binario `grpcurl` (ver bin/, o en el PATH) - ver mas abajo por que.
 
-Esta API no es publica ni documentada por SpaceX: se obtiene el esquema
-de los mensajes en tiempo real via gRPC Server Reflection, que el dish
-expone. Por eso el script no trae .proto embebidos: los descarga del
-propio dish en cada ejecucion.
+Esta API no es publica ni documentada por SpaceX. En vez de la libreria
+`grpcio` de Python, este script invoca el binario `grpcurl` (Go) por
+`subprocess` y parsea su salida JSON - `grpcurl` resuelve el esquema de los
+mensajes en tiempo real via gRPC Server Reflection, que el dish expone, asi
+que no hace falta ningun .proto embebido ni tampoco `grpcio` instalado.
 
-Los imports de grpc/protobuf estan diferidos (dentro de las funciones que
-los usan, no a nivel de modulo): permite importar este archivo y usar
-build_telemetry_payload()/to_losant_data() con HARDCODED_TELEMETRY sin
-tener esas librerias instaladas. Motivo real, no cosmetico: el wheel de
-grpcio en PyPI para esta placa (armv7l, cp312) instala pero tira
-"Illegal instruction" al importarlo (Cortex-A9 sin soporte de alguna
-instruccion que el wheel generico da por sentada) - confirmado en la
-placa real. El camino validado para el modo --live es invocar el binario
-`grpcurl` (Go, sin compilacion C, corre limpio en esta CPU) via
-subprocess en vez de esta libreria - pendiente de implementar cuando se
-pruebe contra la antena real.
+Motivo real, no cosmetico: el wheel de grpcio en PyPI para la placa donde
+corre esto (armv7l, cp312) instala pero tira "Illegal instruction" al
+importarlo (Cortex-A9 sin soporte de alguna instruccion que el wheel
+generico da por sentada) - confirmado en la placa real, ver README.
+`grpcurl` (binario estatico de Go, build linux_armv7, sin compilacion C)
+corre limpio en esa misma CPU. Validado tambien contra el dish real:
+`grpcurl` devuelve las claves en camelCase (mapeo JSON estandar de proto3:
+"getLocation", "dishGetStatus", "gpsStats", etc.), no en snake_case - el
+parseo de abajo usa esos nombres.
 
 Uso:
-    pip install -r requirements.txt
     python3 starlink_get_location.py
     python3 starlink_get_location.py --host 192.168.100.1:9200 --json
 """
 
 import argparse
 import json
+import shutil
+import subprocess
 import sys
 from datetime import datetime, timezone
+from pathlib import Path
 
 SERVICE = "SpaceX.API.Device.Device"
 METHOD = "Handle"
-PACKAGE = "SpaceX.API.Device"
+
+# grpcurl no viene por pip: se descarga aparte (ver README, "por que grpcurl
+# y no grpcio"). Primero busca en el PATH, y si no, en bin/ junto a este
+# archivo (donde se lo deja al desplegar en la placa).
+GRPCURL_BIN = shutil.which("grpcurl") or str(Path(__file__).parent / "bin" / "grpcurl")
 
 # Mismo shape que build_telemetry_payload(), con un ejemplo real (Starlink Mini)
 # capturado el 2026-08-24, para poder probar la integracion (Losant, atributos,
@@ -66,98 +72,47 @@ HARDCODED_TELEMETRY = {
 }
 
 
-def _collect_reflected_files(stub, pool, seen, symbol=None, filename=None):
-    """Descarga (recursivamente) los FileDescriptorProto que definen `symbol` o `filename`."""
-    from google.protobuf.descriptor_pb2 import FileDescriptorProto
-    from grpc_reflection.v1alpha import reflection_pb2
-
-    if filename is not None:
-        request = reflection_pb2.ServerReflectionRequest(file_by_filename=filename)
-    else:
-        request = reflection_pb2.ServerReflectionRequest(file_containing_symbol=symbol)
-    responses = stub.ServerReflectionInfo(iter([request]))
-
-    for resp in responses:
-        if resp.HasField("error_response"):
-            raise RuntimeError(
-                f"El dish rechazo la consulta de reflection para '{symbol or filename}': "
-                f"{resp.error_response.error_message}"
-            )
-        for fdp_bytes in resp.file_descriptor_response.file_descriptor_proto:
-            fdp = FileDescriptorProto()
-            fdp.ParseFromString(fdp_bytes)
-            if fdp.name in seen:
-                continue
-            seen.add(fdp.name)
-            for dep in fdp.dependency:
-                if dep not in seen:
-                    _collect_reflected_files(stub, pool, seen, filename=dep)
-            try:
-                pool.Add(fdp)
-            except TypeError:
-                pass  # ya estaba registrado en el pool por defecto (p.ej. tipos google/protobuf)
-
-
-def _open_dish(target: str, timeout: float):
-    """Abre el canal y descubre el esquema (Request/Response) por reflection una sola vez."""
-    import grpc
-    from google.protobuf import descriptor_pool, message_factory
-    from grpc_reflection.v1alpha import reflection_pb2_grpc
-
-    channel = grpc.insecure_channel(target)
-    grpc.channel_ready_future(channel).result(timeout=timeout)
-
-    reflection_stub = reflection_pb2_grpc.ServerReflectionStub(channel)
-    pool = descriptor_pool.Default()
-    _collect_reflected_files(reflection_stub, pool, seen=set(), symbol=SERVICE)
-
+def _call(target: str, field: str, timeout: float) -> dict:
+    """Invoca SpaceX.API.Device.Device/Handle con el campo `field` seteado
+    (ej. "get_location", "get_status") via grpcurl, y devuelve el JSON
+    (camelCase, ver docstring del modulo) ya parseado."""
+    body = json.dumps({field: {}})
     try:
-        request_cls = message_factory.GetMessageClass(
-            pool.FindMessageTypeByName(f"{PACKAGE}.Request")
+        resultado = subprocess.run(
+            [
+                GRPCURL_BIN,
+                "-plaintext",
+                "-connect-timeout", str(timeout),
+                "-max-time", str(timeout),
+                "-d", body,
+                target,
+                f"{SERVICE}/{METHOD}",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=timeout + 2,
         )
-        response_cls = message_factory.GetMessageClass(
-            pool.FindMessageTypeByName(f"{PACKAGE}.Response")
-        )
-    except KeyError as exc:
+    except FileNotFoundError as exc:
         raise RuntimeError(
-            "No se encontraron los mensajes Request/Response esperados. "
-            "El esquema interno de la antena puede haber cambiado; "
-            "inspeccionalo con 'grpcurl -plaintext "
-            f"{target} list {SERVICE}'."
+            f"No se encontro el binario grpcurl ({GRPCURL_BIN}). Ver README de starlink_api/."
         ) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"grpcurl no respondio en {timeout}s contra {target}.") from exc
 
-    return channel, request_cls, response_cls
+    if resultado.returncode != 0:
+        raise RuntimeError(f"grpcurl fallo contra {target}: {resultado.stderr.strip()}")
 
-
-def _call(channel, request_cls, response_cls, field: str, timeout: float) -> dict:
-    from google.protobuf.json_format import MessageToDict
-
-    req = request_cls()
-    if not hasattr(req, field):
-        raise RuntimeError(
-            f"El mensaje Request no tiene el campo '{field}'. "
-            "Revisa el esquema actual del dish con grpcurl."
-        )
-    getattr(req, field).SetInParent()
-
-    call = channel.unary_unary(
-        f"/{SERVICE}/{METHOD}",
-        request_serializer=req.SerializeToString,
-        response_deserializer=response_cls.FromString,
-    )
-    resp = call(req, timeout=timeout)
-    return MessageToDict(resp, preserving_proto_field_name=True)
+    return json.loads(resultado.stdout)
 
 
 def get_dish_location(target: str, timeout: float) -> dict:
-    channel, request_cls, response_cls = _open_dish(target, timeout)
-    return _call(channel, request_cls, response_cls, "get_location", timeout)
+    return _call(target, "get_location", timeout)
 
 
 def extract_lla(response_dict: dict):
     """Intenta ubicar lat/lon/alt dentro de la respuesta, tolerando variaciones
     de esquema (la API no es oficial y puede cambiar entre firmwares)."""
-    location = response_dict.get("get_location") or {}
+    location = response_dict.get("getLocation") or {}
     lla = location.get("lla")
     if lla and all(k in lla for k in ("lat", "lon")):
         return {
@@ -171,19 +126,19 @@ def extract_lla(response_dict: dict):
 def build_telemetry_payload(target: str, timeout: float) -> dict:
     """Combina get_location + get_status en un paquete compacto para publicar por MQTT.
 
-    Solo una conexion/reflection (via _open_dish) para las dos llamadas: el dish
-    esta marcado 'treat_as_metered', asi que conviene evitar trafico de mas.
+    Dos invocaciones de grpcurl (una por llamada) en vez de compartir un canal:
+    mas simple, a costa de resolver la reflection dos veces en vez de una. El
+    dish esta marcado 'treatAsMetered' (confirmado contra el dish real) -
+    trafico extra minimo (un par de KB), aceptable por la simplicidad.
     """
-    channel, request_cls, response_cls = _open_dish(target, timeout)
-
-    location_resp = _call(channel, request_cls, response_cls, "get_location", timeout)
-    status_resp = _call(channel, request_cls, response_cls, "get_status", timeout)
+    location_resp = _call(target, "get_location", timeout)
+    status_resp = _call(target, "get_status", timeout)
 
     coords = extract_lla(location_resp) or {}
-    status = status_resp.get("dish_get_status", {})
-    device_info = status.get("device_info", {})
-    gps = status.get("gps_stats", {})
-    obstruction = status.get("obstruction_stats", {})
+    status = status_resp.get("dishGetStatus", {})
+    device_info = status.get("deviceInfo", {})
+    gps = status.get("gpsStats", {})
+    obstruction = status.get("obstructionStats", {})
     alerts = status.get("alerts", {})
 
     alt = coords.get("alt")
@@ -195,20 +150,20 @@ def build_telemetry_payload(target: str, timeout: float) -> dict:
             "lat": coords.get("lat"),
             "lon": coords.get("lon"),
             "alt": round(alt, 1) if alt is not None else None,
-            "gps_valid": gps.get("gps_valid", False),
-            "gps_sats": gps.get("gps_sats"),
+            "gps_valid": gps.get("gpsValid", False),
+            "gps_sats": gps.get("gpsSats"),
         },
         "link": {
-            "ping_ms": round(status.get("pop_ping_latency_ms", 0.0), 1),
-            "ping_drop_rate": round(status.get("pop_ping_drop_rate", 0.0), 3),
-            "downlink_bps": int(status.get("downlink_throughput_bps", 0)),
-            "uplink_bps": int(status.get("uplink_throughput_bps", 0)),
+            "ping_ms": round(float(status.get("popPingLatencyMs", 0.0)), 1),
+            "ping_drop_rate": round(float(status.get("popPingDropRate", 0.0)), 3),
+            "downlink_bps": int(float(status.get("downlinkThroughputBps", 0))),
+            "uplink_bps": int(float(status.get("uplinkThroughputBps", 0))),
         },
-        "obstruction_fraction": round(obstruction.get("fraction_obstructed", 0.0), 4),
+        "obstruction_fraction": round(float(obstruction.get("fractionObstructed", 0.0)), 4),
         "alerts": [name for name, active in alerts.items() if active],
-        "uptime_s": int(status.get("device_state", {}).get("uptime_s", 0)),
-        "hardware_version": device_info.get("hardware_version"),
-        "software_version": device_info.get("software_version"),
+        "uptime_s": int(status.get("deviceState", {}).get("uptimeS", 0)),
+        "hardware_version": device_info.get("hardwareVersion"),
+        "software_version": device_info.get("softwareVersion"),
     }
 
 
@@ -239,8 +194,6 @@ def to_losant_data(payload: dict) -> dict:
 
 
 def main():
-    import grpc
-
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
         "--host",
@@ -261,16 +214,6 @@ def main():
     if args.telemetry:
         try:
             payload = build_telemetry_payload(args.host, args.timeout)
-        except grpc.FutureTimeoutError:
-            print(
-                f"No se pudo conectar a {args.host}. "
-                "Verifica que esta maquina este conectada a la red del router Starlink.",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-        except grpc.RpcError as exc:
-            print(f"Error gRPC: {exc.details() if hasattr(exc, 'details') else exc}", file=sys.stderr)
-            sys.exit(1)
         except RuntimeError as exc:
             print(f"Error: {exc}", file=sys.stderr)
             sys.exit(1)
@@ -279,16 +222,6 @@ def main():
 
     try:
         data = get_dish_location(args.host, args.timeout)
-    except grpc.FutureTimeoutError:
-        print(
-            f"No se pudo conectar a {args.host}. "
-            "Verifica que esta maquina este conectada a la red WiFi de la antena.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-    except grpc.RpcError as exc:
-        print(f"Error gRPC: {exc.details() if hasattr(exc, 'details') else exc}", file=sys.stderr)
-        sys.exit(1)
     except RuntimeError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(1)
