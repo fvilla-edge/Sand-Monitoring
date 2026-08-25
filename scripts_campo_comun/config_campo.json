@@ -22,6 +22,11 @@
     "informe_intervalo_min": 15,
     "reintento_conexion_s": 30
   },
+  "starlink_api": {
+    "modo": "live",
+    "host": "192.168.100.1:9200",
+    "timeout_s": 8
+  },
   "indicador_estado": {
     "url_aviso": "https://sample-download-trigger-788640759344.southamerica-west1.run.app"
   },

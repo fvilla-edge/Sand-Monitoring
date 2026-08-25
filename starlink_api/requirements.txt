@@ -1,0 +1,3 @@
+# Sin dependencias de pip: starlink_get_location.py usa solo la libreria
+# estandar de Python (subprocess) + el binario externo `grpcurl` (ver
+# README.md, "por que grpcurl y no la libreria grpcio") en vez de grpcio.

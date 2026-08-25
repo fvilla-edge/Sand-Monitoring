@@ -16,6 +16,14 @@ Publica un informe en dos casos, mientras haya conexión con Losant:
   periódico y no solo en el instante de conectar.
 No publica más seguido que eso: no hay streaming cada N segundos fijo.
 
+Además, en ese mismo evento connect/reconnect, publica un informe de
+telemetría del dish Starlink (GPS + estado del link, ver
+`starlink_api/`) — una sola vez por conexión, sin repetición periódica.
+Va al mismo Device de Losant que el panel solar (a propósito, ver
+`losant_config.py`): por eso vive en este mismo proceso en vez de un
+servicio separado, no se puede tener dos conexiones MQTT distintas con
+el mismo Device ID al mismo tiempo.
+
 Uso:
     .venv/bin/python publicar_losant.py [puerto]
 
@@ -31,6 +39,13 @@ from losantmqtt import Device
 
 sys.path.insert(0, "/root/scripts_campo_comun")
 import cfg  # noqa: E402 (import tardio, necesita el sys.path de arriba)
+
+sys.path.insert(0, "/root/starlink_api")
+from starlink_get_location import (  # noqa: E402 (import tardio, necesita el sys.path de arriba)
+    HARDCODED_TELEMETRY,
+    build_telemetry_payload,
+    to_losant_data,
+)
 
 from config import DEVICES
 # Device ID, Access Key y Access Secret del dispositivo en Losant.
@@ -70,6 +85,14 @@ REINTENTO_CONEXION_S = cfg.obtener("panel_solar.reintento_conexion_s")
 # segundos para comparar contra time.monotonic().
 INTERVALO_INFORME_S = cfg.obtener("panel_solar.informe_intervalo_min") * 60
 
+# Telemetría del dish Starlink (ver starlink_api/) — "hardcoded" para probar
+# la integración sin estar conectado a la antena, "live" para hablar de
+# verdad con el dish por gRPC. Leído una sola vez al importar (igual que
+# REINTENTO_CONEXION_S/INTERVALO_INFORME_S arriba).
+MODO_STARLINK = cfg.obtener("starlink_api.modo")
+HOST_DISH_STARLINK = cfg.obtener("starlink_api.host")
+TIMEOUT_DISH_STARLINK = cfg.obtener("starlink_api.timeout_s")
+
 _decoder = SerialDecoder(DEVICES)
 _ultima_lectura = {}      # address -> (rssi, data), la más reciente decodificada
 _pendientes = set()       # addresses a informar en cuanto llegue una lectura nueva
@@ -107,6 +130,32 @@ def _publicar_informe(dispositivo, address, rssi, data):
     print(f"Informe publicado ({address}): {estado}")
 
 
+def _publicar_starlink(dispositivo):
+    # Amplio a propósito: este proceso también sostiene el reporte de panel
+    # solar (Restart=always, crítico en campo) — una falla del lado Starlink
+    # (dish inalcanzable, cambio de esquema gRPC, lo que sea) nunca debe
+    # tirar abajo ni bloquear el resto del proceso. Se manda igual un informe
+    # con "starlink_error" en vez de nada: en campo, sin SSH a mano, es la
+    # única forma de enterarse de que algo falló. None en el próximo connect
+    # exitoso, para que el dashboard no quede con un error viejo.
+    try:
+        if MODO_STARLINK == "live":
+            payload = build_telemetry_payload(HOST_DISH_STARLINK, TIMEOUT_DISH_STARLINK)
+        else:
+            payload = HARDCODED_TELEMETRY
+        estado = to_losant_data(payload)
+        estado["starlink_error"] = None
+    except Exception as exc:
+        estado = {"starlink_error": str(exc)}
+        print(f"Starlink: no se pudo obtener telemetria ({exc})", file=sys.stderr)
+
+    try:
+        dispositivo.send_state(estado)
+        print(f"Informe Starlink publicado: {estado}")
+    except Exception as exc:
+        print(f"Starlink: no se pudo publicar el informe a Losant ({exc})", file=sys.stderr)
+
+
 def _al_conectar(dispositivo):
     print("Conectado a Losant.")
     if _ultima_lectura:
@@ -117,6 +166,7 @@ def _al_conectar(dispositivo):
         # nada aún) - se marca pendiente y se informa con la próxima
         # línea que llegue por serial (ver procesar_linea).
         _pendientes.update(DIRECCIONES)
+    _publicar_starlink(dispositivo)
 
 
 def procesar_linea(linea, device):
