@@ -80,8 +80,8 @@ Si no existen en el Device antes del primer publish, Losant probablemente
 los descarta silenciosamente.
 
 `starlink_error` no viene de `to_losant_data()` — lo agrega
-`publicar_losant.py` aparte: vacío (`""`) cuando el informe salió bien,
-mensaje de la excepción cuando falló obtener o publicar la telemetría (ver
+`publicar_losant.py` aparte: `None` cuando el informe salió bien, mensaje de
+la excepción (string) cuando falló obtener o publicar la telemetría (ver
 `_publicar_starlink`). Es la forma de enterarse en campo, sin SSH a mano,
 de que algo del lado Starlink dejó de funcionar.
 

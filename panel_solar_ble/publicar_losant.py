@@ -136,15 +136,15 @@ def _publicar_starlink(dispositivo):
     # (dish inalcanzable, cambio de esquema gRPC, lo que sea) nunca debe
     # tirar abajo ni bloquear el resto del proceso. Se manda igual un informe
     # con "starlink_error" en vez de nada: en campo, sin SSH a mano, es la
-    # única forma de enterarse de que algo falló. Vacío en el próximo
-    # connect exitoso, para que el dashboard no quede con un error viejo.
+    # única forma de enterarse de que algo falló. None en el próximo connect
+    # exitoso, para que el dashboard no quede con un error viejo.
     try:
         if MODO_STARLINK == "live":
             payload = build_telemetry_payload(HOST_DISH_STARLINK, TIMEOUT_DISH_STARLINK)
         else:
             payload = HARDCODED_TELEMETRY
         estado = to_losant_data(payload)
-        estado["starlink_error"] = ""
+        estado["starlink_error"] = None
     except Exception as exc:
         estado = {"starlink_error": str(exc)}
         print(f"Starlink: no se pudo obtener telemetria ({exc})", file=sys.stderr)
