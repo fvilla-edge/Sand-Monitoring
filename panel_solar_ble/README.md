@@ -55,7 +55,10 @@ SmartSolar  --BLE (advertisement cifrado)-->  ESP32-C3  --USB serial (hex crudo)
   `panel_solar.informe_intervalo_min` (`config_campo.json`, en minutos)
   mientras la conexión siga en pie — no hay streaming cada N segundos fijo.
   Pensado para cuando la única ventana de red disponible es la del rele de
-  Starlink (ver `starlink_remoto/`).
+  Starlink (ver `starlink_remoto/`). En ese mismo evento connect/reconnect
+  también publica, una sola vez por conexión, la telemetría del dish
+  Starlink (GPS + estado del link) — ver `starlink_api/README.md`, va al
+  mismo Device de Losant que el panel solar, a propósito.
 - `losant_config.py` — Device ID + credenciales de Losant. **No está en
   git** (ver `.gitignore`) — hay que crearlo a mano en la placa (paso 5).
 
