@@ -7,10 +7,15 @@ MQTT, etc.) solo se ocupe de qué hacer con esos datos.
 
 import inspect
 import re
+import struct
 from enum import Enum
 
 from victron_ble.devices import DeviceData, detect_device_type
-from victron_ble.exceptions import AdvertisementKeyMissingError, UnknownDeviceError
+from victron_ble.exceptions import (
+    AdvertisementKeyMismatchError,
+    AdvertisementKeyMissingError,
+    UnknownDeviceError,
+)
 
 LINEA_SERIAL_RE = re.compile(r"MAC=([0-9a-f:]+) RSSI=(-?\d+) LEN=(\d+) DATA=([0-9A-Fa-f]+)")
 
@@ -55,25 +60,28 @@ class SerialDecoder:
             return None
 
         rssi = int(m.group(2))
-        raw = bytes.fromhex(m.group(4))
-        # Los primeros 2 bytes son el Company ID (0x02E1); victron-ble
-        # espera el payload sin eso, igual que bleak se lo entrega.
-        payload = raw[2:]
 
-        if address not in self._known_devices:
-            device_klass = detect_device_type(payload)
-            if not device_klass:
-                return None
-            self._known_devices[address] = device_klass(self._device_keys[address])
-
+        # Línea recibida por USB serial del ESP32 — puede llegar cortada o
+        # con bits corruptos (timeout de pyserial a mitad de un byte hex,
+        # firmware de un modelo mas nuevo con codigos que esta version de
+        # victron-ble no reconoce). Cualquiera de estos errores significa
+        # "la linea no aporta nada", igual que un LINEA_SERIAL_RE que no
+        # matchea — no que haya que tirar abajo el proceso entero.
         try:
+            raw = bytes.fromhex(m.group(4))
+            # Los primeros 2 bytes son el Company ID (0x02E1); victron-ble
+            # espera el payload sin eso, igual que bleak se lo entrega.
+            payload = raw[2:]
+
+            if address not in self._known_devices:
+                device_klass = detect_device_type(payload)
+                if not device_klass:
+                    return None
+                self._known_devices[address] = device_klass(self._device_keys[address])
+
             parsed = self._known_devices[address].parse(payload)
-        except AdvertisementKeyMissingError:
-            # La clave en config.py no es la correcta para este dispositivo.
-            return None
-        except UnknownDeviceError:
-            # Se descifró pero el modelo no tiene parser conocido en esta
-            # versión de victron-ble.
+        except (struct.error, ValueError, AdvertisementKeyMismatchError,
+                AdvertisementKeyMissingError, UnknownDeviceError):
             return None
 
         return address, rssi, parsed_to_dict(parsed)
