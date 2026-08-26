@@ -25,6 +25,10 @@ if [ $? -ne 0 ]; then
   exit 0
 fi
 
-date -u -s "@$EPOCH" >/dev/null
+if ! date -u -s "@$EPOCH" >/dev/null; then
+  echo "ADVERTENCIA: no se pudo poner la hora del sistema (date -s fallo con epoch=$EPOCH), se mantiene la hora actual" >&2
+  exit 0
+fi
+
 touch "$FLAG_OK"
 echo "Hora del sistema restaurada desde el RTC DS3231: $(date -u -Iseconds)"
