@@ -124,7 +124,15 @@ def _publicar_informe(dispositivo, address, rssi, data):
     if not estado:
         return
     estado["rssi"] = rssi
-    dispositivo.send_state(estado)
+    try:
+        dispositivo.send_state(estado)
+    except Exception as exc:
+        # Sin capturar acá, una falla de publish tira abajo el while True de
+        # main() entero (Restart=always relanza recien 10s despues). No se
+        # toca _pendientes/_ultima_publicacion: asi la proxima linea serial
+        # o el chequeo periodico reintentan solos.
+        print(f"Panel solar: no se pudo publicar el informe ({address}): {exc}", file=sys.stderr)
+        return
     _pendientes.discard(address)
     _ultima_publicacion[address] = time.monotonic()
     print(f"Informe publicado ({address}): {estado}")
