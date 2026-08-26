@@ -222,7 +222,19 @@ def main():
                 procesar_linea(linea, device)
 
             revisar_periodico(device)
-            device.loop(timeout=0.1)
+            try:
+                device.loop(timeout=0.1)
+            except Exception as exc:
+                # losantmqtt tira Exception pelada (no OSError) para
+                # credenciales invalidas/revocadas — la lanza desde adentro
+                # de este loop, no de connect(). Es permanente, no de red,
+                # pero se trata igual que el OSError de arriba: descartar el
+                # dispositivo y reintentar mas tarde, para no crashear el
+                # proceso entero ni quemar reintentos cada iteracion.
+                print(f"Losant: conexion abortada ({exc}), reintento en {REINTENTO_CONEXION_S}s...",
+                      file=sys.stderr)
+                device = _crear_dispositivo()
+                proximo_intento = time.monotonic() + REINTENTO_CONEXION_S
 
 
 if __name__ == "__main__":
