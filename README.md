@@ -24,6 +24,7 @@ tuberia  →  sensor(es) VS150-RI  →  Red Pitaya (ADC)  →  captura .bin en c
 | Relé biestable (`relay/`) | Corta/habilita alimentación del kit Starlink, pulsado desde `PS_MIO10` de la Red Pitaya — ver `starlink_remoto/` |
 | LED de estado (`indicador_estado/`) | Parpadeo distinto segun captura/transmision/standby, pulsado desde `PS_MIO11` |
 | Puente BLE→USB (`panel_solar_ble/`) | ESP32-C3 — la Red Pitaya no tiene soporte de Bluetooth en el kernel; lee el panel solar Victron SmartSolar por USB serial |
+| RTC DS3231 (`rtc_ds3231/`) | Por I2C (bus 0) — mantiene la hora durante cortes de energia; al boot restaura la hora del sistema antes de ntpsec y de la logica de Starlink |
 
 ## Estructura
 
@@ -49,7 +50,7 @@ Sand Monitoring/
 ├── indicador_estado/       # LED de estado (PS_MIO11) — parpadeo distinto en captura/transmision/standby
 ├── starlink_remoto/        # Control del rele que energiza el kit Starlink (PS_MIO10)
 │   ├── control_starlink.sh    # Prender/apagar, idempotente por feedback de HW
-│   ├── decidir_objetivo.sh    # Unica logica de decision (rescate > manual > reloj no confiable > horario)
+│   ├── decidir_objetivo.sh    # Unica logica de decision (rescate > manual > reloj no confiable > horario); reloj confiable = NTP sincronizado o RTC DS3231 restaurado en este boot
 │   ├── aplicar_objetivo.sh    # Aplica lo que decide decidir_objetivo.sh (reconciliador de 5 min)
 │   ├── aplicar_horario.sh     # Aplica hora_on/hora_off de config_campo.json a los timers
 │   ├── starlink_manual.sh     # Entrar/salir de modo manual
@@ -65,6 +66,12 @@ Sand Monitoring/
 │   ├── leer_smartsolar_serial.py  # Lectura por pantalla, para probar el puente
 │   ├── publicar_losant.py     # Publica por MQTT a Losant (por conexion y cada N minutos)
 │   └── systemd/                # Servicio que corre publicar_losant.py en la placa
+├── rtc_ds3231/             # RTC DS3231 por I2C — reloj confiable sin conectividad
+│   ├── ds3231.py               # Lectura/escritura por I2C via smbus2 (sin dependencias del proyecto)
+│   ├── leer_epoch.py           # Imprime el epoch Unix (UTC) leido del RTC
+│   ├── probar_rtc.py           # Prueba aislada por linea de comandos (lee, opcionalmente setea, compara con el sistema)
+│   ├── restaurar_hora.sh       # Al boot, setea la hora del sistema desde el RTC antes de ntpsec y Starlink
+│   └── systemd/                # Unit que corre restaurar_hora.sh en el boot (antes de ntpsec y del mux de PS_MIO10)
 ├── relay/                  # Foto/referencia del modulo de rele biestable
 ├── datos_campo/            # Capturas de campo (gitignoreado)
 ├── docs/                   # Roadmap del proyecto y notas tecnicas
