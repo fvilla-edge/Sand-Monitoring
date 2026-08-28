@@ -91,7 +91,7 @@ Los parámetros operativos que tiene sentido ajustar sin tocar código viven en
   "espacio":           { "minimo_mb_por_canal": 500 },
   "eficiencia":        { "umbral_bajo_pct": 80 },
   "reintentos":        { "max": 10, "espera_s": 5 },
-  "starlink":          { "timeout_stop_s": 150, "hora_on": "08:55", "hora_off": "17:00", "rescate_manual_horas": 24 },
+  "starlink":          { "timeout_stop_s": 150, "hora_on": "08:55", "hora_off": "17:15", "rescate_manual_horas": 24 },
   "captura_defaults":  { "decimacion": 32, "duracion_chunk_min": 1.0, "directorio": "/mnt/usb" },
   "rutas":             { "log_dir": "/root/logs_campo", "stream_dir": "...", "state_file": "...", "modo_manual_file": "..." }
 }
