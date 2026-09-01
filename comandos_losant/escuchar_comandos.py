@@ -22,9 +22,13 @@ def _al_conectar(dispositivo):
     print("Conectado a Losant.")
 
 
-def _al_recibir_comando(dispositivo, mensaje):
-    print(f"Comando recibido: nombre={mensaje['name']!r} payload={mensaje.get('payload')} "
-          f"time={mensaje.get('time')}")
+def _al_recibir_comando(dispositivo, comando):
+    nombre = comando["name"]
+    payload = comando.get("payload") or {}
+    if nombre == "test":
+        print(f"Comando 'test' recibido, mensaje: {payload.get('mensaje')}")
+    else:
+        print(f"Comando recibido: nombre={nombre!r} payload={payload} time={comando.get('time')}")
 
 
 def main():
