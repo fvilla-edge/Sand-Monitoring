@@ -289,8 +289,9 @@ def main():
     cc.log('INFO', f'  Log (solo errores/eventos) → {log_path}')
 
     cc.asegurar_servidor('/tmp/sstream_campo.log')
+    etiqueta_canales = 'mono' if args.canales == 1 else 'dual'
     subdir_nombre = (f'{_sanear_para_carpeta(args.pad)}_{_sanear_para_carpeta(args.pozo)}_'
-                      f'{args.condicion}_{session_ts}')
+                      f'{args.condicion}_{session_ts}_{etiqueta_canales}_dec{args.decimacion}')
     dest_usb   = cc.preparar_dirs(args.directorio, subdir_nombre)
     usb_dev_id = cc.id_dispositivo(args.directorio)
 
