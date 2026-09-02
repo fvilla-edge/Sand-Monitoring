@@ -31,6 +31,7 @@ Por defecto se resuelve solo (ver puerto.py) — pasar un puerto explícito
 solo hace falta si el ESP32 no aparece con el VID:PID esperado.
 """
 
+import shutil
 import subprocess
 import sys
 import time
@@ -102,6 +103,14 @@ SCRIPT_REPETIR_CAPTURA = "/root/scripts_campo_comun/repetir_captura.sh"
 SCRIPT_RELANZAR_CAPTURA = "/root/scripts_campo_comun/relanzar_captura.sh"
 SCRIPT_CAPTURAR_STREAM = "/root/scripts_campo/capturar_stream.py"
 
+# USB donde caen las capturas (mismo default que usa capturar_stream.py para
+# --directorio, ver config_campo.json: captura_defaults.directorio). Se
+# reporta su espacio libre a Losant porque capturar_stream.py ya corta una
+# captura en curso al quedarse sin espacio (ver ESPACIO_MIN ahi), pero eso
+# solo queda en el log local de la placa — sin esto no hay forma de verlo
+# remoto antes de que pase.
+DIRECTORIO_CAPTURA = cfg.obtener("captura_defaults.directorio")
+
 # Defaults = la invocación que más se repite en campo (ver COMANDOS.md), para
 # que un comando "capturar" sin payload (o con payload parcial) siga siendo
 # útil. Todo override por payload es opcional.
@@ -123,6 +132,7 @@ _ultima_publicacion = {}  # address -> time.monotonic() de la última vez que se
 _proceso_captura = None   # Popen de la captura "capturar" en curso, o None
 _estado_equipo = "standby"  # ultimo valor de "device_state" confirmado publicado a Losant
 _ultimo_envio_estado = 0.0  # time.monotonic() del ultimo publish exitoso (cambio o refresco periodico)
+_ultimo_envio_disco = 0.0   # time.monotonic() del ultimo publish exitoso de espacio libre en el USB
 
 
 def _crear_dispositivo():
@@ -250,6 +260,32 @@ def _revisar_estado_captura(dispositivo):
         print(f"Estado equipo: no se pudo publicar ({exc})", file=sys.stderr)
 
 
+def _revisar_espacio_disco(dispositivo):
+    # Se llama en cada vuelta del loop principal (~1s, ver main()), igual que
+    # _revisar_estado_captura, pero sin gate de "solo si cambio": el espacio
+    # libre es una magnitud continua (baja de a poco durante una captura), no
+    # un estado discreto, asi que alcanza con re-publicar cada
+    # INTERVALO_INFORME_S. _ultimo_envio_disco arranca en 0.0 a proposito
+    # (mismo truco que _ultimo_envio_estado): el primer tick despues de
+    # conectar ya dispara el primer publish, sin esperar el intervalo entero.
+    global _ultimo_envio_disco
+    if not dispositivo.is_connected():
+        return
+    ahora = time.monotonic()
+    if ahora - _ultimo_envio_disco < INTERVALO_INFORME_S:
+        return
+    try:
+        libre_mb = shutil.disk_usage(DIRECTORIO_CAPTURA).free // (1024 * 1024)
+        dispositivo.send_state({"usb_libre_mb": libre_mb})
+        print(f"Espacio libre en USB publicado: {libre_mb} MB")
+        _ultimo_envio_disco = ahora
+    except Exception as exc:
+        # Mismo criterio que el resto: no capturar mas arriba (tiraria abajo
+        # el while True de main()), y no tocar _ultimo_envio_disco para que
+        # el proximo tick reintente solo.
+        print(f"Espacio USB: no se pudo publicar ({exc})", file=sys.stderr)
+
+
 def _al_recibir_comando(dispositivo, comando):
     nombre = comando["name"].lower()
     payload = comando.get("payload") or {}
@@ -318,6 +354,7 @@ def main():
 
             revisar_periodico(device)
             _revisar_estado_captura(device)
+            _revisar_espacio_disco(device)
             try:
                 device.loop(timeout=0.1)
             except Exception as exc:
