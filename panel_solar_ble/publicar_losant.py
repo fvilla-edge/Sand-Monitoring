@@ -31,6 +31,7 @@ Por defecto se resuelve solo (ver puerto.py) — pasar un puerto explícito
 solo hace falta si el ESP32 no aparece con el VID:PID esperado.
 """
 
+import subprocess
 import sys
 import time
 
@@ -93,10 +94,33 @@ MODO_STARLINK = cfg.obtener("starlink_api.modo")
 HOST_DISH_STARLINK = cfg.obtener("starlink_api.host")
 TIMEOUT_DISH_STARLINK = cfg.obtener("starlink_api.timeout_s")
 
+# Comando "capturar" recibido por MQTT (ver COMANDOS.md para la cadena
+# equivalente corrida a mano). Rutas absolutas porque este proceso corre con
+# WorkingDirectory=/root/panel_solar_ble (ver el .service), no en la raíz del
+# repo — los mismos "/root/..." que ya usa el sys.path.insert de arriba.
+SCRIPT_REPETIR_CAPTURA = "/root/scripts_campo_comun/repetir_captura.sh"
+SCRIPT_RELANZAR_CAPTURA = "/root/scripts_campo_comun/relanzar_captura.sh"
+SCRIPT_CAPTURAR_STREAM = "/root/scripts_campo/capturar_stream.py"
+
+# Defaults = la invocación que más se repite en campo (ver COMANDOS.md), para
+# que un comando "capturar" sin payload (o con payload parcial) siga siendo
+# útil. Todo override por payload es opcional.
+DEFAULTS_CAPTURA = {
+    "repeticiones": 20,
+    "minutos": 0.5,
+    "condicion": "reposo",
+    "pad": "42",
+    "pozo": "1",
+    "duracion_chunk": 0.5,
+    "canales": 1,
+    "decimacion": 32,
+}
+
 _decoder = SerialDecoder(DEVICES)
 _ultima_lectura = {}      # address -> (rssi, data), la más reciente decodificada
 _pendientes = set()       # addresses a informar en cuanto llegue una lectura nueva
 _ultima_publicacion = {}  # address -> time.monotonic() de la última vez que se publicó
+_proceso_captura = None   # Popen de la captura "capturar" en curso, o None
 
 
 def _crear_dispositivo():
@@ -114,6 +138,7 @@ def _crear_dispositivo():
     dispositivo = Device(DEVICE_ID, ACCESS_KEY, ACCESS_SECRET)
     dispositivo.add_event_observer("connect", _al_conectar)
     dispositivo.add_event_observer("reconnect", _al_conectar)
+    dispositivo.add_event_observer("command", _al_recibir_comando)
     return dispositivo
 
 
@@ -162,6 +187,45 @@ def _publicar_starlink(dispositivo):
         print(f"Informe Starlink publicado: {estado}")
     except Exception as exc:
         print(f"Starlink: no se pudo publicar el informe a Losant ({exc})", file=sys.stderr)
+
+
+def _capturar(payload):
+    # Probado antes contra un Device de prueba separado (comandos_losant/,
+    # ver la rama comandos-losant-test) con un script dummy en vez de la
+    # cadena real, para validar el guard/no-bloqueo sin tocar este proceso
+    # ni el hardware de captura.
+    global _proceso_captura
+    if _proceso_captura is not None and _proceso_captura.poll() is None:
+        print("Comando 'capturar' ignorado: ya hay una captura en curso.")
+        return
+
+    parametros = {**DEFAULTS_CAPTURA, **payload}
+    argv = [
+        "bash", SCRIPT_REPETIR_CAPTURA,
+        str(parametros["repeticiones"]),
+        str(parametros["minutos"]),
+        SCRIPT_RELANZAR_CAPTURA,
+        SCRIPT_CAPTURAR_STREAM,
+        "--condicion", str(parametros["condicion"]),
+        "--pad", str(parametros["pad"]),
+        "--pozo", str(parametros["pozo"]),
+        "--duracion_chunk", str(parametros["duracion_chunk"]),
+        "--canales", str(parametros["canales"]),
+        "--decimacion", str(parametros["decimacion"]),
+    ]
+    print(f"Lanzando captura: {argv}")
+    # Popen (no .run()) a propósito: bloquear acá colgaría el reporte de
+    # panel solar/Starlink durante toda la captura, que puede durar minutos.
+    _proceso_captura = subprocess.Popen(argv)
+
+
+def _al_recibir_comando(dispositivo, comando):
+    nombre = comando["name"].lower()
+    payload = comando.get("payload") or {}
+    if nombre == "capturar":
+        _capturar(payload)
+    else:
+        print(f"Comando desconocido ignorado: nombre={nombre!r} payload={payload}")
 
 
 def _al_conectar(dispositivo):

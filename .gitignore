@@ -16,8 +16,9 @@ __pycache__/
 
 /datos_campo/
 
-# Credenciales de Losant (panel_solar_ble/)
+# Credenciales de Losant (panel_solar_ble/, comandos_losant/)
 losant_config.py
+losant_config_test.py
 access-key-*.txt
 
 # Salida de compilacion de arduino-cli
