@@ -112,8 +112,8 @@ DEFAULTS_CAPTURA = {
     "pad": "42",
     "pozo": "1",
     "duracion_chunk": 0.5,
-    "canales": 2,
-    "decimacion": 64,
+    "canales": 1,
+    "decimacion": 32,
 }
 
 _decoder = SerialDecoder(DEVICES)
