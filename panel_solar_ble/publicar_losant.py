@@ -121,6 +121,8 @@ _ultima_lectura = {}      # address -> (rssi, data), la más reciente decodifica
 _pendientes = set()       # addresses a informar en cuanto llegue una lectura nueva
 _ultima_publicacion = {}  # address -> time.monotonic() de la última vez que se publicó
 _proceso_captura = None   # Popen de la captura "capturar" en curso, o None
+_estado_equipo = "standby"  # ultimo valor de "device_state" confirmado publicado a Losant
+_ultimo_envio_estado = 0.0  # time.monotonic() del ultimo publish exitoso (cambio o refresco periodico)
 
 
 def _crear_dispositivo():
@@ -219,6 +221,35 @@ def _capturar(payload):
     _proceso_captura = subprocess.Popen(argv)
 
 
+def _revisar_estado_captura(dispositivo):
+    # Se llama en cada vuelta del loop principal (~1s, ver main()) en vez de
+    # publicar directo desde _capturar(): evita duplicar la lógica de
+    # publicación acá y en el arranque, y detecta tanto el inicio como el
+    # fin de la captura desde un único lugar. Se re-publica igual, aunque no
+    # haya cambio, cada INTERVALO_INFORME_S (mismo intervalo que el resto de
+    # los informes) — evita quedar reportando un valor viejo para siempre si
+    # el servicio se reinicia a mitad de una captura real (el proceso nuevo
+    # arranca sin forma de reengancharse al subprocess anterior). Si el
+    # send_state falla, ni _estado_equipo ni _ultimo_envio_estado se
+    # actualizan y el próximo tick reintenta solo (mismo patrón que
+    # _publicar_informe).
+    global _estado_equipo, _ultimo_envio_estado
+    if not dispositivo.is_connected():
+        return
+    en_curso = _proceso_captura is not None and _proceso_captura.poll() is None
+    deseado = "capturing" if en_curso else "standby"
+    ahora = time.monotonic()
+    if deseado == _estado_equipo and ahora - _ultimo_envio_estado < INTERVALO_INFORME_S:
+        return
+    try:
+        dispositivo.send_state({"device_state": deseado})
+        print(f"Estado del equipo publicado: {deseado}")
+        _estado_equipo = deseado
+        _ultimo_envio_estado = ahora
+    except Exception as exc:
+        print(f"Estado equipo: no se pudo publicar ({exc})", file=sys.stderr)
+
+
 def _al_recibir_comando(dispositivo, comando):
     nombre = comando["name"].lower()
     payload = comando.get("payload") or {}
@@ -286,6 +317,7 @@ def main():
                 procesar_linea(linea, device)
 
             revisar_periodico(device)
+            _revisar_estado_captura(device)
             try:
                 device.loop(timeout=0.1)
             except Exception as exc:
