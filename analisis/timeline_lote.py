@@ -24,6 +24,11 @@ Uso:
   .venv/bin/python3 analisis/timeline_lote.py "carpeta con lote"/*_mono_dec32/
   .venv/bin/python3 analisis/timeline_lote.py "carpeta con lote"/*_dual_dec64/
 
+Con --baseline analisis/baseline_confirmado.json (ver generar_baseline.py),
+el rms_diferencial usa ese baseline confirmado para la (canales, decimacion)
+del lote en vez del "reposo" del propio lote — mismo mecanismo que
+revisar.py, ver ahi para el porque (sec.151 de la memoria del proyecto).
+
 Guarda un PNG por lote (mono o dual) en analisis/outputs/timeline_lote/ con
 dos paneles — kurtosis y rms_diferencial, mismo baseline y formula que
 revisar.py (mediana del RMS de los archivos 'reposo' del lote) — e imprime
@@ -43,8 +48,8 @@ import matplotlib.dates as mdates
 
 sys.path.insert(0, str(Path(__file__).parent))
 from revisar import (  # noqa: E402
-    _leer_canales_bin, _bandpass, _cargar_info, _recopilar_rutas,
-    FA_WINDOW_S, FA_THRESH, V_REF,
+    _leer_canales_bin, _bandpass, _cargar_info, _recopilar_rutas, _clave_config,
+    FA_WINDOW_S, FA_THRESH, V_REF, cargar_baseline_externo,
 )
 
 ART = timezone(timedelta(hours=-3))
@@ -126,7 +131,7 @@ def _leer_lote(rutas):
 
         items.append({
             'archivo': ruta.name, 't_inicio': t_inicio, 'canales': canales,
-            'cond': str(info.get('condicion', '?')),
+            'cond': str(info.get('condicion', '?')), 'decimacion': info.get('decimacion'),
             'fs': fs, 'kurt': kurts, 'rms': rmss, 'rms_archivo': rms_archivo,
             'dur_real_s': meta.get('dur_real_s'),
         })
@@ -209,14 +214,27 @@ def _tramos_activos(tiempos, kurt, umbral=FA_THRESH, tolerancia_s=TOLERANCIA_FUS
     return [t[:4] for t in tramos]
 
 
-def _baseline_lote(items, canal_idx):
-    """Mismo criterio que revisar.py: mediana del RMS (por archivo) de las
-    capturas 'reposo' del lote. Si el lote entero es 'reposo' (caso comun
-    acá, todavia no se separaron condiciones), coincide con la mediana de
-    todos los archivos. Si el lote no tiene NINGUN archivo 'reposo' (ej. un
-    lote armado solo con 'con_arena'), cae a la mediana de todo el lote como
-    aproximacion — mismo espiritu que el fallback in-session de revisar.py,
-    marcado como tal para no confundirlo con un baseline real."""
+def _baseline_lote(items, canal_idx, canales, baseline_externo=None):
+    """Baseline preferido, en este orden:
+    1. baseline_externo (ver generar_baseline.py) para la (canales,
+       decimacion) del lote — el mas solido, viene de capturas confirmadas
+       sin arena por otra via (reporte de pozo, etc.), no del 'reposo' de
+       este mismo lote (que puede no estar confirmado de verdad, ver
+       sec.151 de la memoria del proyecto).
+    2. mediana del RMS (por archivo) de las capturas 'reposo' del lote —
+       mismo criterio que revisar.py. Si el lote entero es 'reposo' (caso
+       comun aca, todavia no se separaron condiciones), coincide con la
+       mediana de todos los archivos.
+    3. si el lote no tiene NINGUN archivo 'reposo', mediana de todo el lote
+       como aproximacion — mismo espiritu que el fallback in-session de
+       revisar.py, marcado como tal para no confundirlo con un baseline
+       real."""
+    dec = items[0].get('decimacion') if items else None
+    cfg = (baseline_externo or {}).get(_clave_config(canales, dec))
+    if cfg:
+        campo = 'rms' if canales == 1 else f'rms{canal_idx + 1}'
+        return float(cfg[campo]), 'confirmado'
+
     reposo = [it['rms_archivo'][canal_idx] for it in items if it['cond'] == 'reposo']
     if reposo:
         return float(np.median(reposo)), 'reposo'
@@ -241,7 +259,7 @@ def _reportar_tramos(nombre_canal, tramos):
         print(f'      {ini_art} - {fin_art} ART  ({dur_s:5.1f}s, kurtosis pico {pico:7.1f})')
 
 
-def _graficar(nombre_lote, items, canales):
+def _graficar(nombre_lote, items, canales, baseline_externo=None):
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     fig, (ax_k, ax_r) = plt.subplots(2, 1, figsize=(14, 8), sharex=True)
 
@@ -261,7 +279,7 @@ def _graficar(nombre_lote, items, canales):
             huecos_totales = huecos  # mismos huecos para ambos canales
             ax_k.plot(tiempos, kurt, color=color, linewidth=0.8, label=etiqueta)
 
-            baseline, modo = _baseline_lote(items, idx)
+            baseline, modo = _baseline_lote(items, idx, canales, baseline_externo)
             rms_dif = _rms_diferencial(rms, baseline)
             ax_r.plot(tiempos, rms_dif, color=color, linewidth=0.8, label=etiqueta)
             notas_baseline.append(f'{etiqueta}: baseline={baseline:.4f}V ({modo})')
@@ -278,7 +296,7 @@ def _graficar(nombre_lote, items, canales):
         huecos_totales = huecos
         ax_k.plot(tiempos, kurt, color=COLOR_K1, linewidth=0.8)
 
-        baseline, modo = _baseline_lote(items, 0)
+        baseline, modo = _baseline_lote(items, 0, canales, baseline_externo)
         rms_dif = _rms_diferencial(rms, baseline)
         ax_r.plot(tiempos, rms_dif, color=COLOR_K1, linewidth=0.8)
         notas_baseline.append(f'baseline={baseline:.4f}V ({modo})')
@@ -332,12 +350,30 @@ def _etiqueta_lote(prefijo, primero, ultimo):
     return f'{prefijo}_{ini}_a_{fin}'
 
 
+def _extraer_flag_baseline(argv):
+    """Saca '--baseline archivo.json' de argv (si esta) y devuelve el dict de
+    configs cargado, o None. Modifica argv in-place. Mismo mecanismo que
+    revisar.py — ver ahi para el detalle."""
+    if '--baseline' not in argv:
+        return None
+    i = argv.index('--baseline')
+    if i + 1 >= len(argv):
+        print('[!] --baseline requiere una ruta a un JSON (ver generar_baseline.py)')
+        sys.exit(1)
+    ruta = argv.pop(i + 1)
+    argv.pop(i)
+    return cargar_baseline_externo(ruta)
+
+
 def main():
-    if len(sys.argv) < 2:
+    argv = sys.argv[1:]
+    baseline_externo = _extraer_flag_baseline(argv)
+
+    if not argv:
         print(__doc__)
         sys.exit(1)
 
-    rutas = sorted(_recopilar_rutas(sys.argv[1:]), key=lambda p: p.name)
+    rutas = sorted(_recopilar_rutas(argv), key=lambda p: p.name)
     if not rutas:
         print('[!] No se encontraron archivos campo_*.bin')
         sys.exit(1)
@@ -350,10 +386,10 @@ def main():
 
     if mono:
         etiqueta = _etiqueta_lote('mono', mono[0]['archivo'], mono[-1]['archivo'])
-        _graficar(etiqueta, mono, canales=1)
+        _graficar(etiqueta, mono, canales=1, baseline_externo=baseline_externo)
     if dual:
         etiqueta = _etiqueta_lote('dual', dual[0]['archivo'], dual[-1]['archivo'])
-        _graficar(etiqueta, dual, canales=2)
+        _graficar(etiqueta, dual, canales=2, baseline_externo=baseline_externo)
 
 
 if __name__ == '__main__':

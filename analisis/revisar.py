@@ -30,6 +30,12 @@ Uso:
   .venv/bin/python3 analisis/revisar.py /mnt/usb/0_0_reposo_20260630_134042/
   .venv/bin/python3 analisis/revisar.py campo_reposo_*.bin campo_con_arena_*.bin
 
+Con --baseline analisis/baseline_confirmado.json (ver generar_baseline.py),
+rms_diferencial usa ese baseline confirmado en vez del "reposo" del propio
+lote para cualquier archivo cuya (canales, decimacion) este cubierta ahi —
+mas solido que el "reposo" de un lote que puede no estar confirmado de
+verdad (ver sec.151 de la memoria del proyecto).
+
 Formato del .bin: NO es raw plano — es un tren de segmentos [header][datos
 canal0][datos canal1][marcador fin, 12 bytes 0xFF]. El tamaño de header
 varia segun firmware (112 o 144 bytes) y se autodetecta por archivo — ver
@@ -267,6 +273,7 @@ def _calcular_mono(ruta, info):
     fs    = float(info['fs_hz'])
     cond  = str(info.get('condicion', '?'))
     chunk = _chunk_num_from_nombre(ruta.stem)
+    dec   = info.get('decimacion')
 
     raw, _, meta = _leer_canales_bin(ruta)
     signal = raw.astype(np.float32) * (V_REF / 32767.0)
@@ -286,7 +293,7 @@ def _calcular_mono(ruta, info):
 
     return {
         'archivo': ruta.name, 'cond': cond, 'chunk': chunk, 'dur_min': dur_s / 60,
-        'dur_real_min': dur_real_min,
+        'dur_real_min': dur_real_min, 'decimacion': dec,
         'rms': rms, 'kurt': kurt, 'crest': cf, 'fa_pct': fa, 'size_mb': size,
         'lost': meta['lost0'],
     }
@@ -326,7 +333,7 @@ def _calcular_dual(ruta, info):
 
     return {
         'archivo': ruta.name, 'cond': cond, 'chunk': chunk, 'dur_min': dur_s / 60,
-        'dur_real_min': dur_real_min,
+        'dur_real_min': dur_real_min, 'decimacion': dec,
         'session': _session_key_from_nombre(ruta.stem),
         'rms1': rms1, 'rms2': rms2, 'cf1': cf1, 'cf2': cf2,
         'k1': k1, 'k2': k2, 'dk': k1 - k2,
@@ -346,29 +353,74 @@ def _calcular(ruta):
     return r
 
 
-def _agregar_rms_diferencial_mono(resultados):
+def _clave_config(canales, decimacion):
+    return f"{'mono' if canales == 1 else 'dual'}_dec{decimacion}"
+
+
+def cargar_baseline_externo(ruta):
+    """Carga el JSON generado por generar_baseline.py (ver ese script para
+    como se arma). Devuelve el dict 'configs' (clave 'mono_dec32'/'dual_dec64'/
+    etc. -> {'rms': ...} o {'rms1':..., 'rms2':...}), o {} si el archivo no
+    tiene esa clave."""
+    with open(ruta) as f:
+        data = json.load(f)
+    return data.get('configs', {})
+
+
+def _agregar_rms_diferencial_mono(resultados, baseline_externo=None):
+    """rms_diferencial por archivo. Si hay un baseline_externo (ver
+    generar_baseline.py) con una entrada para la (canales=1, decimacion) de
+    un archivo, se usa ESE en vez del calculo in-lote de siempre — evita el
+    problema de confiar en el 'reposo' de un lote que en realidad no esta
+    confirmado (ver sec.151 de la memoria del proyecto: un lote entero
+    etiquetado 'reposo' cayo dentro de una hora de produccion real del
+    pozo). Si no hay baseline_externo, o no cubre esa combinacion, cae al
+    comportamiento de siempre (mediana de 'reposo' EN EL LOTE)."""
     reposo_rms = [r['rms'] for r in resultados if r['cond'] == 'reposo']
-    if not reposo_rms:
-        for r in resultados:
-            r['rms_dif'] = None
-        return None
+    baseline_lote = float(np.median(reposo_rms)) if reposo_rms else None
 
-    baseline = float(np.median(reposo_rms))
     for r in resultados:
+        cfg = (baseline_externo or {}).get(_clave_config(1, r.get('decimacion')))
+        if cfg:
+            baseline, modo = cfg['rms'], 'confirmado'
+        elif baseline_lote is not None:
+            baseline, modo = baseline_lote, 'reposo'
+        else:
+            r['rms_dif'] = None
+            r['baseline_modo'] = None
+            continue
         r['rms_dif'] = float(np.sqrt(max(0.0, r['rms'] ** 2 - baseline ** 2)) / baseline)
-    return baseline
+        r['baseline_modo'] = modo
+
+    return baseline_lote
 
 
-def _agregar_rms_diferencial_dual(resultados):
-    """rd1/rd2 por chunk. Baseline preferido: mediana del RMS de las capturas
-    'reposo' del mismo canal en TODO el lote (formula Gao 2015). Si el lote no
-    tiene ningun archivo 'reposo' (caso comun en pruebas de estudio que solo
-    graban 'con_arena'), cae a un fallback IN-SESSION: usa como baseline el
-    chunk de RMS minimo de cada canal DENTRO de la misma sesion (mismo
-    session_ts) — asume que el momento mas quieto observado en esa sesion es
-    una aproximacion razonable del piso de ruido del canal, no un reposo
-    dedicado. Menos solido que un reposo real: se marca 'in-session' en el
-    resultado para que quede claro en la salida."""
+def _agregar_rms_diferencial_dual(resultados, baseline_externo=None):
+    """rd1/rd2 por chunk. Baseline preferido, en este orden:
+    1. baseline_externo (ver generar_baseline.py) para la (canales=2,
+       decimacion) del lote, si esta presente — el mas solido, viene de
+       capturas confirmadas sin arena por otra via (reporte de pozo, etc.),
+       no del 'reposo' de este mismo lote.
+    2. mediana del RMS de las capturas 'reposo' del mismo canal en TODO el
+       lote (formula Gao 2015).
+    3. fallback IN-SESSION: si el lote no tiene ningun archivo 'reposo'
+       (comun en pruebas de estudio que solo graban 'con_arena'), usa como
+       baseline el chunk de RMS minimo de cada canal DENTRO de la misma
+       sesion (mismo session_ts) — el mas debil de los tres, se marca
+       'in-session' en el resultado para que quede claro en la salida.
+    Asume una sola (canales, decimacion) por invocacion para el baseline
+    externo — mismo supuesto que ya hacia el resto de este archivo con
+    lotes mixtos."""
+    dec = resultados[0].get('decimacion') if resultados else None
+    cfg = (baseline_externo or {}).get(_clave_config(2, dec))
+    if cfg:
+        base1, base2 = cfg['rms1'], cfg['rms2']
+        for r in resultados:
+            r['rd1'] = float(np.sqrt(max(0.0, r['rms1'] ** 2 - base1 ** 2)) / base1) if base1 > 0 else None
+            r['rd2'] = float(np.sqrt(max(0.0, r['rms2'] ** 2 - base2 ** 2)) / base2) if base2 > 0 else None
+            r['rd_modo'] = 'confirmado'
+        return base1, base2, 'confirmado'
+
     reposo1 = [r['rms1'] for r in resultados if r['cond'] == 'reposo']
     reposo2 = [r['rms2'] for r in resultados if r['cond'] == 'reposo']
     if reposo1 and reposo2:
@@ -422,10 +474,14 @@ def _recopilar_rutas(args):
     return rutas
 
 
-def _mostrar_mono(resultados):
-    baseline = _agregar_rms_diferencial_mono(resultados)
-    if baseline is None:
-        print('[!] Ningun archivo con condicion "reposo" en el lote — rms_diferencial se muestra como N/A')
+def _mostrar_mono(resultados, baseline_externo=None):
+    _agregar_rms_diferencial_mono(resultados, baseline_externo)
+    n_confirmado = sum(1 for r in resultados if r.get('baseline_modo') == 'confirmado')
+    n_na = sum(1 for r in resultados if r['rms_dif'] is None)
+    if n_confirmado:
+        print(f'[OK] rms_diferencial: {n_confirmado}/{len(resultados)} archivo(s) usando baseline CONFIRMADO externo')
+    if n_na:
+        print(f'[!] rms_diferencial: {n_na}/{len(resultados)} archivo(s) sin baseline (ni externo ni "reposo" en el lote) — N/A')
 
     ancho = max(len(r['archivo']) for r in resultados)
 
@@ -474,9 +530,11 @@ def _mostrar_mono(resultados):
     print('  oscRate del header se valida contra fs esperado — mismatch avisa por stderr, no aparece en la tabla.')
 
 
-def _mostrar_dual(resultados):
-    base1, base2, modo = _agregar_rms_diferencial_dual(resultados)
-    if modo == 'in-session':
+def _mostrar_dual(resultados, baseline_externo=None):
+    base1, base2, modo = _agregar_rms_diferencial_dual(resultados, baseline_externo)
+    if modo == 'confirmado':
+        print(f'[OK] rd1/rd2 usando baseline CONFIRMADO externo (rms1={base1:.4f}V, rms2={base2:.4f}V)')
+    elif modo == 'in-session':
         print('[!] Ningun archivo con condicion "reposo" en el lote — rd1/rd2 usan '
               'fallback in-session (rms minimo por canal DENTRO de cada sesion), '
               'menos solido que un reposo dedicado')
@@ -547,12 +605,30 @@ def _mostrar_dual(resultados):
     print('  oscRate del header se valida por canal contra fs esperado — mismatch avisa por stderr, no aparece en la tabla.')
 
 
+def _extraer_flag_baseline(argv):
+    """Saca '--baseline archivo.json' de argv (si esta) y devuelve el dict de
+    configs cargado, o None. Modifica argv in-place — lo que queda son solo
+    rutas de capturas, listo para _recopilar_rutas."""
+    if '--baseline' not in argv:
+        return None
+    i = argv.index('--baseline')
+    if i + 1 >= len(argv):
+        print('[!] --baseline requiere una ruta a un JSON (ver generar_baseline.py)')
+        sys.exit(1)
+    ruta = argv.pop(i + 1)
+    argv.pop(i)
+    return cargar_baseline_externo(ruta)
+
+
 def main():
-    if len(sys.argv) < 2:
+    argv = sys.argv[1:]
+    baseline_externo = _extraer_flag_baseline(argv)
+
+    if not argv:
         print(__doc__)
         sys.exit(1)
 
-    rutas = _recopilar_rutas(sys.argv[1:])
+    rutas = _recopilar_rutas(argv)
     if not rutas:
         print('[!] No se encontraron archivos campo_*.bin')
         sys.exit(1)
@@ -572,9 +648,9 @@ def main():
     dual = [r for r in resultados if r['canales'] == 2]
 
     if mono:
-        _mostrar_mono(mono)
+        _mostrar_mono(mono, baseline_externo)
     if dual:
-        _mostrar_dual(dual)
+        _mostrar_dual(dual, baseline_externo)
 
 
 if __name__ == '__main__':
