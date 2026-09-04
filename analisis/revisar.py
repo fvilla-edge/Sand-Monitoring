@@ -193,6 +193,10 @@ def _leer_canales_bin(ruta):
         'osc0': osc0,
         'osc1': osc1,
         'dur_real_s': dur_real_s,
+        # timeCapture del primer segmento (ns desde epoca Unix, reloj de HW) —
+        # None en header de 112 bytes. Usado por timeline_lote.py para ubicar
+        # cada archivo en un eje de tiempo absoluto real, no asumido.
+        't_inicio_ns': t_inicio if header_144 else None,
     }
     return ch0, ch1, meta
 
