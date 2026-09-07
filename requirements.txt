@@ -2,6 +2,9 @@
 numpy==2.5.0
 scipy==1.18.0
 
+# analisis/graficar.py y analisis/timeline_lote.py (graficos, no revisar.py en si)
+matplotlib==3.11.0
+
 # Solo para correr los tests (analisis/tests/) — no hace falta en campo.
 pytest==9.1.1
 
