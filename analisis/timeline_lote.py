@@ -66,7 +66,6 @@ OUT_DIR = Path(__file__).parent / 'outputs' / 'timeline_lote'
 
 COLOR_K1 = '#2a78d6'
 COLOR_K2 = '#1baf7a'
-COLOR_ARENA = '#eb6834'
 INK_MUTED = '#898781'
 INK_SECOND = '#52514e'
 
@@ -293,9 +292,6 @@ def _graficar(nombre_lote, items, canales, baseline_externo=None, ylim_rms=None)
             notas_baseline.append(f'{etiqueta}: baseline={baseline:.4f}V ({modo})')
 
             tramos = _tramos_activos(tiempos, kurt)
-            for t_ini, t_fin, _dur, _pico in tramos:
-                ax_k.axvspan(t_ini, t_fin, color=COLOR_ARENA, alpha=0.25, linewidth=0)
-                ax_r.axvspan(t_ini, t_fin, color=COLOR_ARENA, alpha=0.25, linewidth=0)
             _reportar_tramos(etiqueta, tramos)
         ax_k.legend(fontsize=9)
         ax_r.legend(fontsize=9)
@@ -310,12 +306,8 @@ def _graficar(nombre_lote, items, canales, baseline_externo=None, ylim_rms=None)
         notas_baseline.append(f'baseline={baseline:.4f}V ({modo})')
 
         tramos = _tramos_activos(tiempos, kurt)
-        for t_ini, t_fin, _dur, _pico in tramos:
-            ax_k.axvspan(t_ini, t_fin, color=COLOR_ARENA, alpha=0.25, linewidth=0)
-            ax_r.axvspan(t_ini, t_fin, color=COLOR_ARENA, alpha=0.25, linewidth=0)
         _reportar_tramos('mono', tramos)
 
-    ax_k.axhline(FA_THRESH, color=INK_SECOND, linestyle='--', linewidth=1, label=f'umbral arena ({FA_THRESH})')
     ax_k.set_yscale('symlog', linthresh=10)
     ax_k.set_ylabel('kurtosis (escala log)')
     ax_k.spines['top'].set_visible(False)
