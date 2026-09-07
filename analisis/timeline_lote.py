@@ -29,6 +29,14 @@ el rms_diferencial usa ese baseline confirmado para la (canales, decimacion)
 del lote en vez del "reposo" del propio lote — mismo mecanismo que
 revisar.py, ver ahi para el porque (sec.151 de la memoria del proyecto).
 
+Con --ylim-rms MAX, el panel de rms_diferencial usa ese limite fijo en vez
+de autoescalar al maximo de CADA corrida — sin esto, dos lotes con
+magnitudes muy distintas (un reposo confirmado vs uno con arena real)
+quedan cada uno estirado a su propio maximo, y el ruido de fondo del
+reposo (chico en valor absoluto) parece "tan grande" como los picos de
+arena del otro grafico solo por la escala. Usar el mismo valor en ambas
+corridas si van a compararse una al lado de la otra (ej. en un informe).
+
 Guarda un PNG por lote (mono o dual) en analisis/outputs/timeline_lote/ con
 dos paneles — kurtosis y rms_diferencial, mismo baseline y formula que
 revisar.py (mediana del RMS de los archivos 'reposo' del lote) — e imprime
@@ -259,7 +267,7 @@ def _reportar_tramos(nombre_canal, tramos):
         print(f'      {ini_art} - {fin_art} ART  ({dur_s:5.1f}s, kurtosis pico {pico:7.1f})')
 
 
-def _graficar(nombre_lote, items, canales, baseline_externo=None):
+def _graficar(nombre_lote, items, canales, baseline_externo=None, ylim_rms=None):
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     fig, (ax_k, ax_r) = plt.subplots(2, 1, figsize=(14, 8), sharex=True)
 
@@ -315,6 +323,16 @@ def _graficar(nombre_lote, items, canales, baseline_externo=None):
 
     ax_r.axhline(0.1, color=INK_MUTED, linestyle=':', linewidth=1)
     ax_r.axhline(0.4, color=INK_MUTED, linestyle=':', linewidth=1)
+    if ylim_rms is not None:
+        # Fijo, no autoescalado — sin esto, dos lotes con magnitudes muy
+        # distintas (un reposo confirmado vs uno con arena real) quedan cada
+        # uno estirado a SU propio maximo, y el ruido de fondo del reposo
+        # (que es chico en valor absoluto) parece "tan grande" como los
+        # picos de arena del otro grafico solo por la escala — mismo ruido,
+        # dos alturas de dibujo distintas. Pasar el mismo valor en ambas
+        # corridas para que sean comparables de verdad (ver conversacion,
+        # confusion real al mandar estos dos graficos a un informe).
+        ax_r.set_ylim(0, ylim_rms)
     ax_r.set_ylabel('rms diferencial')
     ax_r.set_xlabel('hora (ART)')
     ax_r.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M:%S', tz=ART))
@@ -365,9 +383,24 @@ def _extraer_flag_baseline(argv):
     return cargar_baseline_externo(ruta)
 
 
+def _extraer_flag_ylim_rms(argv):
+    """Saca '--ylim-rms MAX' de argv (si esta) y devuelve el float, o None
+    (autoescala, comportamiento de siempre). Modifica argv in-place."""
+    if '--ylim-rms' not in argv:
+        return None
+    i = argv.index('--ylim-rms')
+    if i + 1 >= len(argv):
+        print('[!] --ylim-rms requiere un numero (limite superior del eje rms_diferencial)')
+        sys.exit(1)
+    valor = argv.pop(i + 1)
+    argv.pop(i)
+    return float(valor)
+
+
 def main():
     argv = sys.argv[1:]
     baseline_externo = _extraer_flag_baseline(argv)
+    ylim_rms = _extraer_flag_ylim_rms(argv)
 
     if not argv:
         print(__doc__)
@@ -386,10 +419,10 @@ def main():
 
     if mono:
         etiqueta = _etiqueta_lote('mono', mono[0]['archivo'], mono[-1]['archivo'])
-        _graficar(etiqueta, mono, canales=1, baseline_externo=baseline_externo)
+        _graficar(etiqueta, mono, canales=1, baseline_externo=baseline_externo, ylim_rms=ylim_rms)
     if dual:
         etiqueta = _etiqueta_lote('dual', dual[0]['archivo'], dual[-1]['archivo'])
-        _graficar(etiqueta, dual, canales=2, baseline_externo=baseline_externo)
+        _graficar(etiqueta, dual, canales=2, baseline_externo=baseline_externo, ylim_rms=ylim_rms)
 
 
 if __name__ == '__main__':
