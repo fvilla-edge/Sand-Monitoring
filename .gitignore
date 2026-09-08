@@ -23,3 +23,6 @@ access-key-*.txt
 
 # Salida de compilacion de arduino-cli
 panel_solar_ble/esp32_victron_scan/build/
+
+# Planilla de ensayo del pozo (dato externo, no pertenece al repo)
+Planilla de Ensayo PAD-42E.xlsx - BPE-2421.csv

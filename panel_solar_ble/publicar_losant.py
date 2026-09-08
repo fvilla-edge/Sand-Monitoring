@@ -231,6 +231,21 @@ def _capturar(payload):
     _proceso_captura = subprocess.Popen(argv)
 
 
+def _hay_captura_externa():
+    """True si hay un capturar_stream.py corriendo que este servicio no lanzo
+    el mismo (ej. relanzado a mano por SSH, o via repetir_captura.sh) —
+    _proceso_captura solo cubre la captura disparada por el comando remoto
+    "capturar" de Losant, asi que sin esto una captura manual queda sin
+    reportarse nunca como "capturing"."""
+    try:
+        return subprocess.run(
+            ["pgrep", "-f", "capturar_stream.py"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        ).returncode == 0
+    except Exception:
+        return False
+
+
 def _revisar_estado_captura(dispositivo):
     # Se llama en cada vuelta del loop principal (~1s, ver main()) en vez de
     # publicar directo desde _capturar(): evita duplicar la lógica de
@@ -246,7 +261,7 @@ def _revisar_estado_captura(dispositivo):
     global _estado_equipo, _ultimo_envio_estado
     if not dispositivo.is_connected():
         return
-    en_curso = _proceso_captura is not None and _proceso_captura.poll() is None
+    en_curso = (_proceso_captura is not None and _proceso_captura.poll() is None) or _hay_captura_externa()
     deseado = "capturing" if en_curso else "standby"
     ahora = time.monotonic()
     if deseado == _estado_equipo and ahora - _ultimo_envio_estado < INTERVALO_INFORME_S:
