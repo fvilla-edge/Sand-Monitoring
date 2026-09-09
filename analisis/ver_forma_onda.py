@@ -18,14 +18,18 @@ ventana (50/100/200/500/1000ms) y recalcular al vuelo — por defecto
 AREA_VENTANA_S (50ms, igual a FA_WINDOW_S de revisar.py, para quedar
 alineada en el tiempo con la kurtosis/fracción activa de ese mismo
 archivo), y una pestaña combinada (señal filtrada arriba, kurtosis por
-ventana de AREA_VENTANA_S abajo, mismo eje de tiempo compartido — a
-diferencia de overview/zoom, acá SI tiene sentido porque ambas cubren el
-archivo completo) para comparar visualmente donde la kurtosis se dispara
-contra la forma de onda real. Kurtosis calculada sobre el filtrado de
-25-400kHz de este visor, NO la banda de 100-450kHz de revisar.py — el
-número no es directamente comparable con los umbrales ~3 reposo / >20
-arena de ese script. Paso previo a clasificar automaticamente ventanas de
-"señal" vs "fondo" por umbral de kurtosis (no implementado todavia).
+ventana de AREA_VENTANA_S al medio, RMS diferencial autocalibrado abajo,
+mismo eje de tiempo compartido — a diferencia de overview/zoom, acá SI
+tiene sentido porque las tres cubren el archivo completo). Kurtosis
+calculada sobre el filtrado de 25-400kHz de este visor, NO la banda de
+100-450kHz de revisar.py — el número no es directamente comparable con los
+umbrales ~3 reposo / >20 arena de ese script. Un slider de umbral de
+kurtosis (sin valor fijo adivinado — se calibra a ojo mirando la señal)
+clasifica cada ventana como "señal" o "fondo"; el RMS diferencial usa la
+mediana del RMS de las ventanas de FONDO del propio archivo como baseline
+(misma formula que rms_diferencial de revisar.py, sqrt(max(0,rms²-b²))/b,
+pero autocalibrado por archivo en vez de depender de una carpeta "reposo"
+externa).
 
 No reimplementa la lectura del formato .bin — usa _leer_canales_bin y
 _cargar_info de revisar.py (misma fuente de verdad que revisar.py y
@@ -121,6 +125,22 @@ def _kurtosis_por_ventana(volts, fs, ventana_s=AREA_VENTANA_S):
     kurt = (m4 / np.where(m2 > 0, m2 ** 2, 1e-30)).astype(np.float32)
     t = (np.arange(n_total) + 0.5) * ventana_s
     return t, kurt
+
+
+def _rms_por_ventana_directo(volts, fs, ventana_s=AREA_VENTANA_S):
+    """(t_centro_s, rms) en ventanas de ventana_s no superpuestas — RMS
+    verdadero (sqrt(mean(x^2))) de la señal filtrada, mismo criterio de
+    ventana que _kurtosis_por_ventana (mismo t_centro_s resultante) — base
+    para el baseline de fondo del RMS diferencial (ver _crear_tab_combinado):
+    NO es lo mismo que el area bajo |x| de _area_por_ventana."""
+    n_ventana = max(1, int(fs * ventana_s))
+    n_total = len(volts) // n_ventana
+    if n_total == 0:
+        return np.array([]), np.array([], dtype=np.float32)
+    mat = volts[: n_total * n_ventana].reshape(n_total, n_ventana).astype(np.float64)
+    rms = np.sqrt(np.mean(mat ** 2, axis=1)).astype(np.float32)
+    t = (np.arange(n_total) + 0.5) * ventana_s
+    return t, rms
 
 
 def _calcular_espectro(volts, fs, nperseg=FFT_NPERSEG):
@@ -330,17 +350,23 @@ class VisorFormaOnda:
     def _construir_canales(self, ruta: Path):
         """{"tiempo": [(nombre, volts_ndarray, fs), ...], "fft": [(nombre,
         freqs, psd_db), ...], "area": [(nombre, rms_ndarray, fs), ...],
-        "combinado": [(nombre, filtrado_ndarray, fs, t_s, kurt), ...]}. Por
-        cada canal real: crudo, filtrado (pasabanda 25kHz-400kHz), RMS del
-        filtrado (|x|, misma resolucion — solo le saca el signo), espectro
+        "combinado": [(nombre, filtrado_ndarray, fs, t_s, kurt, rms_w), ...]}.
+        Por cada canal real: crudo, filtrado (pasabanda 25kHz-400kHz), RMS
+        del filtrado (|x|, misma resolucion — solo le saca el signo), espectro
         (Welch) del crudo y del filtrado, el RMS de nuevo para el area bajo
         la curva (la pestaña de area recalcula la ventana al vuelo, ver
-        _crear_tab_area), y esa señal filtrada + su kurtosis por ventana de
-        AREA_VENTANA_S juntas para la pestaña combinada (señal arriba,
-        kurtosis abajo, mismo eje de tiempo — a diferencia de overview/zoom,
-        acá SI tiene sentido compartir el eje porque ambas cubren el archivo
-        completo). Cacheado por archivo porque filtrar+Welch sobre millones
-        de muestras tarda unos segundos por canal."""
+        _crear_tab_area), y esa señal filtrada + su kurtosis + su RMS
+        (directo, sqrt(mean(x^2)), no |x|) por ventana de AREA_VENTANA_S
+        juntas para la pestaña combinada (señal, kurtosis y RMS diferencial,
+        mismo eje de tiempo — a diferencia de overview/zoom, acá SI tiene
+        sentido compartir el eje porque las tres cubren el archivo completo).
+        El RMS por ventana es la base del RMS diferencial autocalibrado: el
+        umbral de kurtosis de la pestaña combinada clasifica cada ventana
+        como fondo o señal, y el baseline sale de la mediana del RMS de las
+        ventanas de FONDO del propio archivo (en vez de depender de una
+        carpeta "reposo" externa, ver _crear_tab_combinado). Cacheado por
+        archivo porque filtrar+Welch sobre millones de muestras tarda unos
+        segundos por canal."""
         if ruta in self.canales_graf_cache:
             return self.canales_graf_cache[ruta]
         ch0, ch1, fs, meta, info = self._cargar(ruta)
@@ -367,7 +393,8 @@ class VisorFormaOnda:
             ])
             area.append((f"{nombre} filtrado — Área", rms, fs))
             t_k, kurt_vals = _kurtosis_por_ventana(filtrado, fs)
-            combinado.append((f"{nombre} filtrado — Señal+Kurtosis", filtrado, fs, t_k, kurt_vals))
+            _, rms_w = _rms_por_ventana_directo(filtrado, fs)
+            combinado.append((f"{nombre} filtrado — Señal+Kurtosis", filtrado, fs, t_k, kurt_vals, rms_w))
 
         ch0_v = ch0.astype(np.float32) / 32767.0 * V_REF
         _agregar_canal("IN1", ch0_v)
@@ -396,8 +423,10 @@ class VisorFormaOnda:
             self._crear_tab_fft(nombre, freqs, psd_db)
         for nombre, rms, fs_canal in canales["area"]:
             self._crear_tab_area(nombre, rms, fs_canal)
-        for nombre, filtrado, fs_canal, t_k, kurt_vals in canales["combinado"]:
+        for nombre, filtrado, fs_canal, t_k, kurt_vals, rms_w in canales["combinado"]:
             self._crear_tab_combinado(nombre, filtrado, fs_canal, t_k, kurt_vals)
+            nombre_rd = nombre.replace("Señal+Kurtosis", "RMS diferencial")
+            self._crear_tab_rmsdif(nombre_rd, t_k, kurt_vals, rms_w)
         if self._tabs:
             self.notebook.select(0)
 
@@ -594,8 +623,7 @@ class VisorFormaOnda:
         fig = plt.Figure(figsize=(9, 7), tight_layout=True)
         # sharex=True aca SI es correcto (a diferencia de overview/zoom en
         # _crear_tab): las dos filas cubren el archivo completo con el mismo
-        # eje de tiempo, asi que hacer zoom/pan en una mueve la otra igual —
-        # es justamente lo que se busca para comparar señal vs kurtosis.
+        # eje de tiempo, asi que hacer zoom/pan en una mueve la otra igual.
         ax_signal, ax_kurt = fig.subplots(2, 1, sharex=True)
 
         t_env, ymin, ymax = _envolvente(filtrado, N_BINS_OVERVIEW)
@@ -625,48 +653,20 @@ class VisorFormaOnda:
         # numero fijo en el codigo (10, 15, 20...) seria arbitrario — mejor
         # un slider que se ajusta a ojo mirando donde la kurtosis se dispara
         # contra los picos reales de la señal de arriba.
-        clasificacion = {
-            "highlight_signal": None, "highlight_kurt": None, "linea_umbral": None,
-            "marcador_signal": None, "marcador_kurt": None,
-        }
+        linea_umbral = {"artista": None}
 
-        def _clasificar(umbral):
-            for clave, artista in clasificacion.items():
-                if artista is not None:
-                    artista.remove()
-                    clasificacion[clave] = None
+        def _al_mover_umbral(valor):
+            if linea_umbral["artista"] is not None:
+                linea_umbral["artista"].remove()
+            umbral = float(valor)
             if len(kurt):
-                mask = kurt > umbral
-                clasificacion["highlight_signal"] = ax_signal.fill_between(
-                    t_kurt, 0, 1, where=mask, step="mid", transform=ax_signal.get_xaxis_transform(),
-                    color="red", alpha=0.15, linewidth=0,
-                )
-                clasificacion["highlight_kurt"] = ax_kurt.fill_between(
-                    t_kurt, 0, 1, where=mask, step="mid", transform=ax_kurt.get_xaxis_transform(),
-                    color="red", alpha=0.15, linewidth=0,
-                )
-                # Marcadores de tamaño FIJO en pixeles (no en unidades de
-                # tiempo) — una ventana de 50ms aislada, sola en un archivo
-                # de decenas de segundos, ocupa una franja tan angosta con
-                # el fill_between de arriba que puede quedar practicamente
-                # invisible; el scatter siempre se ve, sin importar el zoom.
-                clasificacion["marcador_kurt"] = ax_kurt.scatter(
-                    t_kurt[mask], kurt[mask], color="red", s=14, zorder=5,
-                )
-                clasificacion["marcador_signal"] = ax_signal.scatter(
-                    t_kurt[mask], [0.97] * int(mask.sum()), transform=ax_signal.get_xaxis_transform(),
-                    color="red", marker="v", s=18, zorder=5, clip_on=False,
-                )
-                clasificacion["linea_umbral"] = ax_kurt.axhline(
+                n_senal = int((kurt > umbral).sum())
+                linea_umbral["artista"] = ax_kurt.axhline(
                     umbral, color="red", linestyle="--", linewidth=0.9, label=f"umbral={umbral:.1f}",
                 )
                 ax_kurt.legend(loc="upper right", fontsize=8)
-                n_senal = int(mask.sum())
                 label_conteo.config(text=f"{n_senal}/{len(kurt)} ventanas ≥ umbral ({100 * n_senal / len(kurt):.1f}%)")
             canvas.draw_idle()
-
-        def _al_mover_umbral(valor):
-            _clasificar(float(valor))
 
         umbral_max = max(20.0, float(np.ceil(kurt.max()))) if len(kurt) else 20.0
         umbral_inicial = min(10.0, umbral_max)
@@ -679,7 +679,107 @@ class VisorFormaOnda:
         label_conteo = tk.Label(controles, text="")
         label_conteo.pack(side="left")
 
-        _clasificar(umbral_inicial)
+        _al_mover_umbral(umbral_inicial)
+        canvas.draw()
+
+        self._tabs.append({"frame": frame, "fig": fig, "canvas": canvas})
+
+    def _crear_tab_rmsdif(self, nombre, t_kurt, kurt, rms_w):
+        """RMS diferencial autocalibrado + clasificador combinado. El
+        umbral de kurtosis define que ventanas son "fondo" (kurt <= umbral)
+        para calcular el baseline = mediana del RMS de esas ventanas de
+        fondo, en vez de depender de una carpeta "reposo" externa
+        (rms_diferencial de revisar.py usa la mediana de reposo del LOTE;
+        acá, del archivo mismo). Formula identica:
+        sqrt(max(0, rms^2 - baseline^2)) / baseline.
+
+        Kurtosis alta y rd alto NO siempre coinciden en la misma ventana
+        (kurtosis mide forma/picos, rd mide energia — confirmado con datos
+        reales del archivo 143538: una ventana con kurt=23.9 dio rd=1.05,
+        y otra con kurt=7.1 dio rd=1.9). Por eso el conteo final exige
+        pasar AMBOS umbrales a la vez (AND), no cualquiera de los dos solo."""
+        frame = tk.Frame(self.notebook)
+        self.notebook.add(frame, text=nombre)
+
+        controles = tk.Frame(frame)
+        controles.pack(side="top", fill="x", padx=4, pady=(4, 0))
+        tk.Label(controles, text="Umbral kurtosis (fondo/baseline):").pack(side="left")
+
+        fig = plt.Figure(figsize=(9, 7), tight_layout=True)
+        ax = fig.subplots(1, 1)
+        ax.set_ylabel("RMS diferencial")
+        ax.set_xlabel("tiempo (s) desde el inicio del archivo")
+        ax.grid(True, alpha=0.3)
+
+        canvas = FigureCanvasTkAgg(fig, master=frame)
+        canvas.get_tk_widget().pack(side="top", fill="both", expand=True)
+        toolbar = NavigationToolbar2Tk(canvas, frame)
+        toolbar.update()
+        self._agregar_crosshair(canvas, [ax])
+
+        linea_rd = {"artista": None}
+        linea_umbral_rd = {"artista": None}
+
+        def _recalcular(_=None):
+            umbral_kurt = float(slider_kurt.get())
+            umbral_rd = float(slider_rd.get())
+            if not len(kurt):
+                canvas.draw_idle()
+                return
+            mask_kurt = kurt > umbral_kurt
+            fondo = rms_w[~mask_kurt]
+            n_fondo = len(fondo)
+            if n_fondo > 0 and float(np.median(fondo)) > 0:
+                baseline = float(np.median(fondo))
+                rd = np.sqrt(np.maximum(0.0, rms_w.astype(np.float64) ** 2 - baseline ** 2)) / baseline
+                texto_baseline = f"baseline: {baseline:.4f}V ({n_fondo} ventanas de fondo)"
+            else:
+                rd = np.full(len(rms_w), np.nan)
+                texto_baseline = "sin ventanas de fondo para el baseline"
+
+            if linea_rd["artista"] is None:
+                linea_rd["artista"], = ax.plot(t_kurt, rd, linewidth=0.8, color="#c0392b")
+            else:
+                linea_rd["artista"].set_ydata(rd)
+            if linea_umbral_rd["artista"] is not None:
+                linea_umbral_rd["artista"].remove()
+            linea_umbral_rd["artista"] = ax.axhline(
+                umbral_rd, color="gray", linestyle="--", linewidth=0.8, label=f"umbral rd={umbral_rd:.2f}",
+            )
+            ax.legend(loc="upper right", fontsize=8)
+            ax.relim()
+            ax.autoscale_view()
+
+            mask_rd = rd > umbral_rd
+            mask_final = mask_kurt & mask_rd
+            label_conteo.config(text=(
+                f"kurtosis>{umbral_kurt:.1f}: {int(mask_kurt.sum())} | "
+                f"rd>{umbral_rd:.2f}: {int(np.nansum(mask_rd))} | "
+                f"AMBOS (señal confirmada): {int(mask_final.sum())}/{len(kurt)} — {texto_baseline}"
+            ))
+            canvas.draw_idle()
+
+        umbral_kurt_max = max(20.0, float(np.ceil(kurt.max()))) if len(kurt) else 20.0
+        umbral_kurt_inicial = min(10.0, umbral_kurt_max)
+        slider_kurt = tk.Scale(
+            controles, from_=3, to=umbral_kurt_max, resolution=0.5, orient="horizontal",
+            length=220, command=_recalcular,
+        )
+        slider_kurt.set(umbral_kurt_inicial)
+        slider_kurt.pack(side="left", padx=(4, 12))
+
+        tk.Label(controles, text="Umbral RMS diferencial:").pack(side="left")
+        slider_rd = tk.Scale(
+            controles, from_=0, to=10.0, resolution=0.1, orient="horizontal",
+            length=220, command=_recalcular,
+        )
+        slider_rd.set(2.0)
+        slider_rd.pack(side="left", padx=(4, 8))
+
+        label_conteo = tk.Label(controles, text="")
+        label_conteo.pack(side="left")
+
+        _recalcular()
         canvas.draw()
 
         self._tabs.append({"frame": frame, "fig": fig, "canvas": canvas})
