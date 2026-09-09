@@ -9,8 +9,13 @@ arrastrando sobre la vista general. Cada canal real tiene su propia pestaña
 tal cual se capturó, más una pestaña con un pasabanda 25kHz-400kHz aplicado
 (descarta ruido de fluido por abajo y frecuencias sin interés por arriba) y
 una tercera con el RMS de esa señal filtrada (|x|, misma resolución
-temporal, siempre positiva en vez de la oscilación +/- original — pensada
-para más adelante integrar el área bajo esta curva en ventanas de 1s).
+temporal, siempre positiva en vez de la oscilación +/- original), más dos
+pestañas de espectro (Welch, escala log-frecuencia/dB) de la cruda y de la
+filtrada (para confirmar que componentes hay y si 25kHz-400kHz son los
+cortes correctos), y una pestaña con el área bajo la curva del RMS en
+ventanas de 50ms (AREA_VENTANA_S, igual a FA_WINDOW_S de revisar.py para
+quedar alineada en el tiempo con la kurtosis/fracción activa de ese mismo
+archivo) — suma de Riemann de la envolvente rectificada.
 
 No reimplementa la lectura del formato .bin — usa _leer_canales_bin y
 _cargar_info de revisar.py (misma fuente de verdad que revisar.py y
@@ -30,10 +35,10 @@ matplotlib.use("TkAgg")
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 from matplotlib.widgets import SpanSelector
-from scipy.signal import butter, sosfiltfilt
+from scipy.signal import butter, sosfiltfilt, welch
 
 sys.path.insert(0, str(Path(__file__).parent))
-from revisar import _leer_canales_bin, _cargar_info, V_REF  # noqa: E402
+from revisar import _leer_canales_bin, _cargar_info, V_REF, FA_WINDOW_S  # noqa: E402
 
 try:
     from tkinterdnd2 import DND_FILES, TkinterDnD
@@ -49,6 +54,11 @@ MAX_MUESTRAS_CRUDAS = 200_000  # por encima de esto, la ventana de zoom tambien 
 FILTRO_BANDA_HZ = (25_000, 400_000)
 FILTRO_ORDEN = 4
 
+# Tamaño de ventana de Welch para el espectro: buen compromiso entre
+# resolucion en frecuencia (~60Hz con fs~3.9MHz) y tiempo de calculo
+# (~3s por canal en un archivo de ~112M muestras).
+FFT_NPERSEG = 65536
+
 
 def _filtrar_pasabanda(volts, fs, banda=FILTRO_BANDA_HZ, orden=FILTRO_ORDEN):
     nyq = fs / 2
@@ -58,10 +68,39 @@ def _filtrar_pasabanda(volts, fs, banda=FILTRO_BANDA_HZ, orden=FILTRO_ORDEN):
 
 def _rms_muestra_a_muestra(volts):
     """RMS con ventana de 1 muestra (sqrt(x^2) = |x|): la señal completa,
-    misma resolucion temporal que la original, pero siempre >= 0. Base para
-    despues integrar el area bajo esta curva en ventanas de 1s (paso
-    siguiente, no implementado todavia)."""
+    misma resolucion temporal que la original, pero siempre >= 0."""
     return np.abs(volts)
+
+
+# Mismo tamaño de ventana que fraccion_activa/kurtosis en revisar.py y
+# timeline_lote.py, para que esta curva de area quede alineada en el tiempo
+# con esas metricas del mismo archivo (50ms daba mas granularidad que 1s
+# para no diluir impactos cortos de arena entre si).
+AREA_VENTANA_S = FA_WINDOW_S
+
+
+def _area_por_ventana(rms, fs, ventana_s=AREA_VENTANA_S):
+    """(t_centro_s, area) del area bajo la curva de rms (ya siempre >= 0)
+    en ventanas de ventana_s no superpuestas — suma de Riemann (rectangular,
+    area_i = sum(muestras de la ventana) * dt) por ventana."""
+    n_ventana = max(1, int(fs * ventana_s))
+    n_total = len(rms) // n_ventana
+    if n_total == 0:
+        return np.array([]), np.array([], dtype=np.float32)
+    mat = rms[: n_total * n_ventana].reshape(n_total, n_ventana).astype(np.float64)
+    area = (mat.sum(axis=1) / fs).astype(np.float32)
+    t = (np.arange(n_total) + 0.5) * ventana_s
+    return t, area
+
+
+def _calcular_espectro(volts, fs, nperseg=FFT_NPERSEG):
+    """(freqs, psd_db) via Welch (promedia varios segmentos con overlap —
+    mas robusto que una FFT unica sobre millones de muestras, y evita tener
+    que guardar un array complejo del tamaño del archivo)."""
+    n = min(nperseg, len(volts))
+    freqs, psd = welch(volts, fs=fs, nperseg=n)
+    psd_db = 10 * np.log10(psd + 1e-20)
+    return freqs, psd_db
 
 
 def _envolvente(x, n_bins):
@@ -198,48 +237,67 @@ class VisorFormaOnda:
         self._tabs = []
 
     def _construir_canales(self, ruta: Path):
-        """Lista [(nombre, volts_ndarray, fs), ...]: cada canal real, seguido
-        de su version filtrada (pasabanda 25kHz-400kHz) y del RMS de esa
-        version filtrada (|x|, misma resolucion y fs que la filtrada — solo
-        le saca el signo, sin perder ninguna muestra). Cacheada por archivo
-        porque filtrar (sosfiltfilt sobre millones de muestras) tarda ~1-2s
-        por canal."""
+        """{"tiempo": [(nombre, volts_ndarray, fs), ...], "fft": [(nombre,
+        freqs, psd_db), ...], "area": [(nombre, t_s, area), ...]}. Por cada
+        canal real: crudo, filtrado (pasabanda 25kHz-400kHz), RMS del
+        filtrado (|x|, misma resolucion — solo le saca el signo), espectro
+        (Welch) del crudo y del filtrado, y el area bajo la curva del RMS
+        en ventanas de AREA_VENTANA_S. Cacheado por archivo porque
+        filtrar+Welch sobre millones de muestras tarda unos segundos por
+        canal."""
         if ruta in self.canales_graf_cache:
             return self.canales_graf_cache[ruta]
         ch0, ch1, fs, meta, info = self._cargar(ruta)
         dual = ch1 is not None
 
-        def _con_filtrado_y_rms(nombre, volts):
+        tiempo = []
+        fft = []
+        area = []
+
+        def _agregar_canal(nombre, volts):
             filtrado = _filtrar_pasabanda(volts, fs)
             rms = _rms_muestra_a_muestra(filtrado)
-            return [
+            tiempo.extend([
                 (nombre, volts, fs),
                 (f"{nombre} filtrado (25-400kHz)", filtrado, fs),
                 (f"{nombre} filtrado — RMS", rms, fs),
-            ]
+            ])
+            f_crudo, psd_crudo = _calcular_espectro(volts, fs)
+            f_filt, psd_filt = _calcular_espectro(filtrado, fs)
+            fft.extend([
+                (f"{nombre} — FFT", f_crudo, psd_crudo),
+                (f"{nombre} filtrado — FFT", f_filt, psd_filt),
+            ])
+            t_area, area_vals = _area_por_ventana(rms, fs)
+            area.append((f"{nombre} filtrado — Área/{int(AREA_VENTANA_S * 1000)}ms", t_area, area_vals))
 
         ch0_v = ch0.astype(np.float32) / 32767.0 * V_REF
-        canales = _con_filtrado_y_rms("IN1", ch0_v)
+        _agregar_canal("IN1", ch0_v)
         if dual:
             ch1_v = ch1.astype(np.float32) / 32767.0 * V_REF
-            canales += _con_filtrado_y_rms("IN2", ch1_v)
+            _agregar_canal("IN2", ch1_v)
             # IN1 y IN2 SI estan sincronizados (mismo reloj, misma captura) —
             # a diferencia del caso mono, acá restar en el tiempo es valido:
             # restar directamente en Volts (ya son lineales) es lo mismo que
             # restar los int16 y convertir despues.
             limpia_v = ch0_v - ch1_v
-            canales += _con_filtrado_y_rms("Limpia (IN1-IN2)", limpia_v)
+            _agregar_canal("Limpia (IN1-IN2)", limpia_v)
 
-        self.canales_graf_cache[ruta] = canales
-        return canales
+        resultado = {"tiempo": tiempo, "fft": fft, "area": area}
+        self.canales_graf_cache[ruta] = resultado
+        return resultado
 
     def _graficar(self, ruta: Path):
         ch0, ch1, fs, meta, info = self._cargar(ruta)
         canales = self._construir_canales(ruta)
 
         self._limpiar_tabs()
-        for nombre, volts, fs_canal in canales:
+        for nombre, volts, fs_canal in canales["tiempo"]:
             self._crear_tab(nombre, volts, fs_canal)
+        for nombre, freqs, psd_db in canales["fft"]:
+            self._crear_tab_fft(nombre, freqs, psd_db)
+        for nombre, t_area, area_vals in canales["area"]:
+            self._crear_tab_area(nombre, t_area, area_vals)
         if self._tabs:
             self.notebook.select(0)
 
@@ -346,6 +404,54 @@ class VisorFormaOnda:
             ax.plot(t, recorte, linewidth=0.6, color="#1baf7a")
         ax.set_title(f"{nombre} zoom — {n:,} muestras{titulo_extra}")
         ax.set_ylabel(f"{nombre} zoom (V)")
+
+    def _crear_tab_fft(self, nombre, freqs, psd_db):
+        frame = tk.Frame(self.notebook)
+        self.notebook.add(frame, text=nombre)
+
+        fig = plt.Figure(figsize=(9, 7), tight_layout=True)
+        ax = fig.subplots(1, 1)
+        ax.axvspan(*FILTRO_BANDA_HZ, color="orange", alpha=0.15, label="pasabanda 25-400kHz")
+        ax.semilogx(freqs, psd_db, linewidth=0.7, color="#2a78d6")
+        ax.set_xlim(max(freqs[1], 10.0), freqs[-1])
+        ax.set_xlabel("frecuencia (Hz)")
+        ax.set_ylabel("PSD (dB/Hz)")
+        ax.set_title(f"{nombre} (Welch, {FFT_NPERSEG:,} muestras/segmento)")
+        ax.grid(True, which="both", alpha=0.3)
+        ax.legend(loc="upper right", fontsize=8)
+
+        canvas = FigureCanvasTkAgg(fig, master=frame)
+        canvas.get_tk_widget().pack(side="top", fill="both", expand=True)
+        toolbar = NavigationToolbar2Tk(canvas, frame)
+        toolbar.update()
+        canvas.draw()
+
+        self._tabs.append({"frame": frame, "fig": fig, "canvas": canvas})
+
+    def _crear_tab_area(self, nombre, t, area):
+        frame = tk.Frame(self.notebook)
+        self.notebook.add(frame, text=nombre)
+
+        fig = plt.Figure(figsize=(9, 7), tight_layout=True)
+        ax = fig.subplots(1, 1)
+        ventana_ms = int(AREA_VENTANA_S * 1000)
+        if len(t):
+            ax.bar(t, area, width=AREA_VENTANA_S * 0.9, color="#2a78d6", align="center")
+        else:
+            ax.text(0.5, 0.5, f"Archivo mas corto que {ventana_ms}ms, sin ventanas completas",
+                     ha="center", va="center", transform=ax.transAxes, color="gray")
+        ax.set_xlabel("tiempo (s) desde el inicio del archivo")
+        ax.set_ylabel("área (V·s)")
+        ax.set_title(f"{nombre} — área bajo la curva por ventana de {ventana_ms}ms")
+        ax.grid(True, axis="y", alpha=0.3)
+
+        canvas = FigureCanvasTkAgg(fig, master=frame)
+        canvas.get_tk_widget().pack(side="top", fill="both", expand=True)
+        toolbar = NavigationToolbar2Tk(canvas, frame)
+        toolbar.update()
+        canvas.draw()
+
+        self._tabs.append({"frame": frame, "fig": fig, "canvas": canvas})
 
 
 def main():
