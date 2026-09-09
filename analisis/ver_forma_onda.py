@@ -5,9 +5,12 @@ una captura de campo. Punto 1 de la propuesta de "estudiar la señal en
 crudo": una vista general del archivo completo (envolvente min/max, porque
 un chunk tiene millones de muestras y no entra pintado punto a punto) más
 una vista de resolución completa de la ventana que se seleccione
-arrastrando sobre la vista general. Cada canal real se muestra tal cual se
-capturó y, debajo, con un pasabanda 25kHz-400kHz aplicado (descarta ruido
-de fluido por abajo y frecuencias sin interés por arriba).
+arrastrando sobre la vista general. Cada canal real tiene su propia pestaña
+tal cual se capturó, más una pestaña con un pasabanda 25kHz-400kHz aplicado
+(descarta ruido de fluido por abajo y frecuencias sin interés por arriba) y
+una tercera con el RMS de esa señal filtrada (|x|, misma resolución
+temporal, siempre positiva en vez de la oscilación +/- original — pensada
+para más adelante integrar el área bajo esta curva en ventanas de 1s).
 
 No reimplementa la lectura del formato .bin — usa _leer_canales_bin y
 _cargar_info de revisar.py (misma fuente de verdad que revisar.py y
@@ -53,6 +56,14 @@ def _filtrar_pasabanda(volts, fs, banda=FILTRO_BANDA_HZ, orden=FILTRO_ORDEN):
     return sosfiltfilt(sos, volts).astype(np.float32)
 
 
+def _rms_muestra_a_muestra(volts):
+    """RMS con ventana de 1 muestra (sqrt(x^2) = |x|): la señal completa,
+    misma resolucion temporal que la original, pero siempre >= 0. Base para
+    despues integrar el area bajo esta curva en ventanas de 1s (paso
+    siguiente, no implementado todavia)."""
+    return np.abs(volts)
+
+
 def _envolvente(x, n_bins):
     """(t_centro, minimos, maximos) por bloque de x, o (t, x, x) si x ya es chico."""
     n = len(x)
@@ -75,7 +86,7 @@ class VisorFormaOnda:
 
         self.archivos = []      # lista de Path, en el orden agregado
         self.canales_cache = {}  # Path -> (ch0, ch1, fs, meta, info)
-        self.canales_graf_cache = {}  # Path -> lista [(nombre, volts), ...] (incluye filtrados, cacheado por costo del filtro)
+        self.canales_graf_cache = {}  # Path -> lista [(nombre, volts, fs), ...] (incluye filtrados y RMS, cacheado por costo del filtro)
 
         marco_izq = tk.Frame(root, width=260)
         marco_izq.pack(side="left", fill="y", padx=6, pady=6)
@@ -187,25 +198,37 @@ class VisorFormaOnda:
         self._tabs = []
 
     def _construir_canales(self, ruta: Path):
-        """Lista [(nombre, volts_ndarray), ...]: cada canal real seguido de su
-        version filtrada (pasabanda 25kHz-400kHz). Cacheada por archivo porque
-        filtrar (sosfiltfilt sobre millones de muestras) tarda ~1-2s por canal."""
+        """Lista [(nombre, volts_ndarray, fs), ...]: cada canal real, seguido
+        de su version filtrada (pasabanda 25kHz-400kHz) y del RMS de esa
+        version filtrada (|x|, misma resolucion y fs que la filtrada — solo
+        le saca el signo, sin perder ninguna muestra). Cacheada por archivo
+        porque filtrar (sosfiltfilt sobre millones de muestras) tarda ~1-2s
+        por canal."""
         if ruta in self.canales_graf_cache:
             return self.canales_graf_cache[ruta]
         ch0, ch1, fs, meta, info = self._cargar(ruta)
         dual = ch1 is not None
 
+        def _con_filtrado_y_rms(nombre, volts):
+            filtrado = _filtrar_pasabanda(volts, fs)
+            rms = _rms_muestra_a_muestra(filtrado)
+            return [
+                (nombre, volts, fs),
+                (f"{nombre} filtrado (25-400kHz)", filtrado, fs),
+                (f"{nombre} filtrado — RMS", rms, fs),
+            ]
+
         ch0_v = ch0.astype(np.float32) / 32767.0 * V_REF
-        canales = [("IN1", ch0_v), ("IN1 filtrado (25-400kHz)", _filtrar_pasabanda(ch0_v, fs))]
+        canales = _con_filtrado_y_rms("IN1", ch0_v)
         if dual:
             ch1_v = ch1.astype(np.float32) / 32767.0 * V_REF
-            canales += [("IN2", ch1_v), ("IN2 filtrado (25-400kHz)", _filtrar_pasabanda(ch1_v, fs))]
+            canales += _con_filtrado_y_rms("IN2", ch1_v)
             # IN1 y IN2 SI estan sincronizados (mismo reloj, misma captura) —
             # a diferencia del caso mono, acá restar en el tiempo es valido:
             # restar directamente en Volts (ya son lineales) es lo mismo que
             # restar los int16 y convertir despues.
             limpia_v = ch0_v - ch1_v
-            canales += [("Limpia (IN1-IN2)", limpia_v), ("Limpia filtrado (25-400kHz)", _filtrar_pasabanda(limpia_v, fs))]
+            canales += _con_filtrado_y_rms("Limpia (IN1-IN2)", limpia_v)
 
         self.canales_graf_cache[ruta] = canales
         return canales
@@ -215,8 +238,8 @@ class VisorFormaOnda:
         canales = self._construir_canales(ruta)
 
         self._limpiar_tabs()
-        for nombre, volts in canales:
-            self._crear_tab(nombre, volts, fs)
+        for nombre, volts, fs_canal in canales:
+            self._crear_tab(nombre, volts, fs_canal)
         if self._tabs:
             self.notebook.select(0)
 
