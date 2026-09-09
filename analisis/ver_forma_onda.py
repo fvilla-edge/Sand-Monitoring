@@ -19,7 +19,7 @@ Uso: doble-click en abrir_forma_onda.sh (mismo directorio), o:
 import sys
 import tkinter as tk
 from pathlib import Path
-from tkinter import filedialog, messagebox
+from tkinter import filedialog, messagebox, ttk
 
 import numpy as np
 import matplotlib
@@ -102,17 +102,14 @@ class VisorFormaOnda:
         marco_der = tk.Frame(root)
         marco_der.pack(side="right", fill="both", expand=True, padx=6, pady=6)
 
-        self.fig = plt.Figure(figsize=(8, 7), tight_layout=True)
-        self.canvas = FigureCanvasTkAgg(self.fig, master=marco_der)
-        self.canvas.get_tk_widget().pack(side="top", fill="both", expand=True)
-        self.toolbar = NavigationToolbar2Tk(self.canvas, marco_der)
-        self.toolbar.update()
-
-        self._spans = []  # SpanSelector vivos (hay que retener la referencia o los mata el GC)
-        self._click_info = {}  # ax_overview -> (volts, ax_zoom, fs, nombre), para el fallback de click simple
-        self._prensado = None
-        self.canvas.mpl_connect("button_press_event", self._on_press)
-        self.canvas.mpl_connect("button_release_event", self._on_release)
+        # Una pestaña por canal (cruda y filtrada) — cada una con su propia
+        # figura de solo 2 filas (vista general + zoom), asi ocupan todo el
+        # espacio disponible en vez de amontonarse todas apiladas en una sola
+        # figura cada vez mas chica a medida que hay mas canales (dual triplica
+        # a 6 canales: IN1, IN2, Limpia, cada uno con su version filtrada).
+        self.notebook = ttk.Notebook(marco_der)
+        self.notebook.pack(fill="both", expand=True)
+        self._tabs = []  # lista de dicts (frame/fig/canvas/span) del archivo actual, para no perder referencias vivas (GC) y para poder destruirlas al graficar otro archivo
 
         if not _CON_DND:
             self.info_label.config(text="[!] Arrastrar y soltar no disponible\n(falta tkinterdnd2)")
@@ -153,8 +150,7 @@ class VisorFormaOnda:
         self.canales_cache = {}
         self.canales_graf_cache = {}
         self.listbox.delete(0, "end")
-        self.fig.clear()
-        self.canvas.draw()
+        self._limpiar_tabs()
 
     # --- graficado ---
 
@@ -183,44 +179,12 @@ class VisorFormaOnda:
         self.canales_cache[ruta] = resultado
         return resultado
 
-    def _on_press(self, event):
-        self._prensado = (event.x, event.y, event.inaxes, event.xdata)
-
-    def _on_release(self, event):
-        """Respaldo de SpanSelector: si el usuario solo hizo click (sin
-        arrastre real), SpanSelector no llama a onselect y no pasa nada —
-        acá se detecta ese caso (distancia en pixeles chica) y se abre una
-        ventana de 1s centrada en el click, en vez de dejarlo sin efecto."""
-        if self._prensado is None:
-            return
-        x0, y0, ax0, xdata0 = self._prensado
-        self._prensado = None
-        if ax0 is None or ax0 not in self._click_info or event.xdata is None:
-            return
-        distancia_px = ((event.x - x0) ** 2 + (event.y - y0) ** 2) ** 0.5
-        if distancia_px > 3:
-            return  # fue un arrastre real, ya lo maneja el SpanSelector
-        volts, ax_zoom, fs, nombre = self._click_info[ax0]
-        try:
-            self._dibujar_zoom(ax_zoom, volts, fs, xdata0, xdata0, nombre)
-        except Exception:
-            import traceback
-            messagebox.showerror("Error al graficar el zoom", traceback.format_exc())
-            print(traceback.format_exc(), file=sys.stderr)
-            return
-        self.canvas.draw_idle()
-
-    def _asegurar_sin_pan_zoom(self):
-        """Pan/Zoom del toolbar de matplotlib se come el arrastre del mouse
-        y no deja que el SpanSelector reciba nada — se ve como "arrastro y
-        no pasa nada" sin ningun error. Se fuerza a apagar cada vez que se
-        grafica un archivo nuevo, para no depender de que el usuario se
-        acuerde de desactivarlo a mano."""
-        modo = str(self.toolbar.mode).lower()
-        if "pan" in modo:
-            self.toolbar.pan()
-        elif "zoom" in modo:
-            self.toolbar.zoom()
+    def _limpiar_tabs(self):
+        for tab in self._tabs:
+            self.notebook.forget(tab["frame"])
+            plt.close(tab["fig"])
+            tab["frame"].destroy()
+        self._tabs = []
 
     def _construir_canales(self, ruta: Path):
         """Lista [(nombre, volts_ndarray), ...]: cada canal real seguido de su
@@ -247,52 +211,14 @@ class VisorFormaOnda:
         return canales
 
     def _graficar(self, ruta: Path):
-        self._asegurar_sin_pan_zoom()
         ch0, ch1, fs, meta, info = self._cargar(ruta)
         canales = self._construir_canales(ruta)
-        n_filas = len(canales) * 2
 
-        self.fig.clear()
-        self._spans = []
-        self._click_info = {}
-        ejes = self.fig.subplots(n_filas, 1, sharex=True)
-        if n_filas == 2:
-            ejes = [ejes[0], ejes[1]]
-
-        for idx, (nombre, volts) in enumerate(canales):
-            ax_overview = ejes[idx * 2]
-            ax_zoom = ejes[idx * 2 + 1]
-            t, ymin, ymax = _envolvente(volts, N_BINS_OVERVIEW)
-            t_s = t / fs
-            ax_overview.fill_between(t_s, ymin, ymax, linewidth=0, color="#2a78d6")
-            ax_overview.set_ylabel(f"{nombre} (V)")
-            ax_overview.set_title(f"{nombre} — vista general (envolvente, {len(volts):,} muestras)"
-                                   if idx == 0 else f"{nombre} — vista general")
-            ax_zoom.set_ylabel(f"{nombre} zoom (V)")
-            ax_zoom.text(0.5, 0.5, "Arrastrá sobre la vista general de arriba\npara ver esta ventana en detalle",
-                         ha="center", va="center", transform=ax_zoom.transAxes, color="gray")
-
-            def hacer_callback(volts=volts, ax_zoom=ax_zoom, fs=fs, nombre=nombre):
-                def _al_seleccionar(xmin, xmax):
-                    try:
-                        self._dibujar_zoom(ax_zoom, volts, fs, xmin, xmax, nombre)
-                    except Exception as exc:
-                        import traceback
-                        messagebox.showerror("Error al graficar el zoom", traceback.format_exc())
-                        print(traceback.format_exc(), file=sys.stderr)
-                        return
-                    self.canvas.draw_idle()
-                return _al_seleccionar
-
-            span = SpanSelector(
-                ax_overview, hacer_callback(), "horizontal",
-                useblit=True, props=dict(alpha=0.3, facecolor="orange"),
-                interactive=True, drag_from_anywhere=True,
-            )
-            self._spans.append(span)
-            self._click_info[ax_overview] = (volts, ax_zoom, fs, nombre)
-
-        ejes[-1].set_xlabel("tiempo (s) desde el inicio del archivo")
+        self._limpiar_tabs()
+        for nombre, volts in canales:
+            self._crear_tab(nombre, volts, fs)
+        if self._tabs:
+            self.notebook.select(0)
 
         dec = info.get("decimacion")
         cond = info.get("condicion")
@@ -302,7 +228,78 @@ class VisorFormaOnda:
                   f"fs: {fs/1e6:.4f} MHz\ninicio: {fecha}\n"
                   + (f"lost0: {meta.get('lost0', 'N/A')}\nlost1: {meta.get('lost1', 'N/A')}" if meta else "sin metadata de header"))
         )
-        self.canvas.draw()
+
+    def _crear_tab(self, nombre, volts, fs):
+        frame = tk.Frame(self.notebook)
+        self.notebook.add(frame, text=nombre)
+
+        fig = plt.Figure(figsize=(9, 7), tight_layout=True)
+        # Sin sharex entre vista general y zoom: son rangos de tiempo
+        # distintos (todo el archivo vs. la ventana arrastrada) — compartir
+        # el eje hacia que al graficar el zoom, matplotlib reescalara TAMBIEN
+        # la vista general al rango angosto (bug ya presente antes de las
+        # pestañas, confirmado con overview.get_xlim() cambiando tras zoom).
+        ax_overview, ax_zoom = fig.subplots(2, 1)
+        canvas = FigureCanvasTkAgg(fig, master=frame)
+        canvas.get_tk_widget().pack(side="top", fill="both", expand=True)
+        toolbar = NavigationToolbar2Tk(canvas, frame)
+        toolbar.update()
+
+        t, ymin, ymax = _envolvente(volts, N_BINS_OVERVIEW)
+        t_s = t / fs
+        ax_overview.fill_between(t_s, ymin, ymax, linewidth=0, color="#2a78d6")
+        ax_overview.set_ylabel(f"{nombre} (V)")
+        ax_overview.set_title(f"{nombre} — vista general (envolvente, {len(volts):,} muestras)")
+        ax_overview.set_xlabel("tiempo (s) desde el inicio del archivo")
+
+        ax_zoom.set_ylabel(f"{nombre} zoom (V)")
+        ax_zoom.text(0.5, 0.5, "Arrastrá sobre la vista general de arriba\npara ver esta ventana en detalle",
+                     ha="center", va="center", transform=ax_zoom.transAxes, color="gray")
+        ax_zoom.set_xlabel("tiempo (s)")
+
+        def _al_seleccionar(xmin, xmax):
+            try:
+                self._dibujar_zoom(ax_zoom, volts, fs, xmin, xmax, nombre)
+            except Exception:
+                import traceback
+                messagebox.showerror("Error al graficar el zoom", traceback.format_exc())
+                print(traceback.format_exc(), file=sys.stderr)
+                return
+            canvas.draw_idle()
+
+        span = SpanSelector(
+            ax_overview, _al_seleccionar, "horizontal",
+            useblit=True, props=dict(alpha=0.3, facecolor="orange"),
+            interactive=True, drag_from_anywhere=True,
+        )
+
+        prensado = {"val": None}
+
+        def _on_press(event):
+            prensado["val"] = (event.x, event.y, event.inaxes, event.xdata)
+
+        def _on_release(event):
+            """Respaldo de SpanSelector: si el usuario solo hizo click (sin
+            arrastre real), SpanSelector no llama a onselect y no pasa nada —
+            acá se detecta ese caso (distancia en pixeles chica) y se abre
+            una ventana de 1s centrada en el click, en vez de dejarlo sin
+            efecto."""
+            if prensado["val"] is None:
+                return
+            x0, y0, ax0, xdata0 = prensado["val"]
+            prensado["val"] = None
+            if ax0 is not ax_overview or event.xdata is None:
+                return
+            distancia_px = ((event.x - x0) ** 2 + (event.y - y0) ** 2) ** 0.5
+            if distancia_px > 3:
+                return  # fue un arrastre real, ya lo maneja el SpanSelector
+            _al_seleccionar(xdata0, xdata0)
+
+        canvas.mpl_connect("button_press_event", _on_press)
+        canvas.mpl_connect("button_release_event", _on_release)
+        canvas.draw()
+
+        self._tabs.append({"frame": frame, "fig": fig, "canvas": canvas, "span": span})
 
     def _dibujar_zoom(self, ax, volts, fs, t0, t1, nombre):
         VENTANA_MIN_S = 0.05  # si el "arrastre" fue casi un click, usar esta ventana centrada en t0
