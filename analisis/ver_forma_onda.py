@@ -24,12 +24,19 @@ tiene sentido porque las tres cubren el archivo completo). Kurtosis
 calculada sobre el filtrado de 25-400kHz de este visor, NO la banda de
 100-450kHz de revisar.py — el número no es directamente comparable con los
 umbrales ~3 reposo / >20 arena de ese script. Un slider de umbral de
-kurtosis (sin valor fijo adivinado — se calibra a ojo mirando la señal)
-clasifica cada ventana como "señal" o "fondo"; el RMS diferencial usa la
-mediana del RMS de las ventanas de FONDO del propio archivo como baseline
-(misma formula que rms_diferencial de revisar.py, sqrt(max(0,rms²-b²))/b,
-pero autocalibrado por archivo en vez de depender de una carpeta "reposo"
-externa).
+kurtosis clasifica cada ventana como "señal" o "fondo"; el RMS diferencial
+usa la mediana del RMS de las ventanas de FONDO del propio archivo como
+baseline (misma formula que rms_diferencial de revisar.py,
+sqrt(max(0,rms²-b²))/b, pero autocalibrado por archivo en vez de depender
+de una carpeta "reposo" externa — comparar contra el RMS de una sesión de
+otro día no tiene sentido, varía por causas ajenas a la arena). Defaults de
+los sliders (kurtosis=10, rd=0.5) calibrados contra el lote
+datos_campo/42_1_reposo_20260903_1*_mono_dec32 (purga de 8kg confirmada por
+planilla BPE-2421 a las 14:00 UTC = 11:00 ART): con baseline autocalibrado,
+kurtosis>10 aisla ~3-4% de ventanas como evento sobre un fondo muy estable
+(~3.0, gaussiano); rd es más ruidoso (turbulencia de fluido eleva rd>0.1 en
+~40% de las ventanas sin ser arena), pero casi todo lo que kurtosis marca
+ya supera rd>0.5 sin filtrar eventos reales.
 
 No reimplementa la lectura del formato .bin — usa _leer_canales_bin y
 _cargar_info de revisar.py (misma fuente de verdad que revisar.py y
@@ -773,7 +780,7 @@ class VisorFormaOnda:
             controles, from_=0, to=10.0, resolution=0.1, orient="horizontal",
             length=220, command=_recalcular,
         )
-        slider_rd.set(2.0)
+        slider_rd.set(0.5)
         slider_rd.pack(side="left", padx=(4, 8))
 
         label_conteo = tk.Label(controles, text="")
