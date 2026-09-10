@@ -31,6 +31,26 @@ fi
 CFG=/root/scripts_campo_comun/cfg.py
 MAX_REINTENTOS=$(python3 "$CFG" reintentos.max)
 ESPERA_ENTRE_REINTENTOS=$(python3 "$CFG" reintentos.espera_s)
+LOG_DIR=$(python3 "$CFG" rutas.log_dir)
+MAX_CORE_DUMPS=$(python3 "$CFG" limpieza.max_core_dumps)
+
+# ulimit -c unlimited (mas abajo) genera un core_python3_<pid>_<t> por cada
+# abort/segfault nativo (ej. el SIGSEGV de _python_lib.so documentado en
+# sec.166 de la memoria del proyecto, confirmado en vivo 2026-09-10) — sin
+# limite, con ese crash siendo frecuente, se acumulan sin fin (182 archivos,
+# 1.2 GB, detectados esa misma sesion). Se podan a los MAX_CORE_DUMPS mas
+# recientes en cada intento — se deja mas de uno a proposito, para poder
+# comparar varios crashes recientes si hace falta diagnosticar.
+podar_core_dumps() {
+    local n
+    n=$(find "$LOG_DIR" -maxdepth 1 -name 'core_python3_*' 2>/dev/null | wc -l)
+    if [ "$n" -gt "$MAX_CORE_DUMPS" ]; then
+        find "$LOG_DIR" -maxdepth 1 -name 'core_python3_*' -printf '%T@ %p\n' 2>/dev/null \
+            | sort -n | head -n "$((n - MAX_CORE_DUMPS))" | cut -d' ' -f2- \
+            | xargs -r rm -f
+        echo "[supervisor] podados $((n - MAX_CORE_DUMPS)) core dump(s) viejos (limite: $MAX_CORE_DUMPS)."
+    fi
+}
 
 # Extrae el valor de un flag de los args de capturar_stream.py (--directorio,
 # --condicion) para poder ubicar despues la carpeta de una sesion que
@@ -115,6 +135,7 @@ while [ "$intento" -lt "$MAX_REINTENTOS" ]; do
 
     avisar_si_hay_datos_parciales "$marca_tmp"
     rm -f "$marca_tmp"
+    podar_core_dumps
 
     intento=$((intento + 1))
     echo "[supervisor] script termino con error (exit $codigo). Reintento $intento/$MAX_REINTENTOS."

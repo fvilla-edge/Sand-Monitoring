@@ -215,6 +215,46 @@ def preparar_dirs(directorio, subdir_nombre):
     return dest_usb
 
 
+def rescatar_huerfanos(directorio, log_evento):
+    """
+    Busca campo_*.bin sueltos en STREAM_DIR (SD interna) que hayan quedado
+    de una sesion anterior que murio entre el rename exitoso del chunk y el
+    fin del move a destino — ej. el SIGSEGV nativo de _python_lib.so
+    (sec.166 de la memoria del proyecto, confirmado en vivo 2026-09-10):
+    mata el proceso entero sin pasar por ningun except nuestro, asi que el
+    chunk ya renombrado nunca llega a moverse y se queda ahi para siempre
+    sin que nada lo note despues.
+
+    Se corre UNA VEZ al arrancar una sesion nueva (no dentro del loop de
+    captura — ahi ya se sabe que STREAM_DIR esta "limpio" salvo por esto).
+    Son datos capturados de verdad, no basura — se mueven a
+    <directorio>/_recuperados/ con su nombre original (ya trae
+    condicion+timestamp) en vez de borrarlos, para que el operador decida
+    que hacer con ellos.
+    """
+    huerfanos = [
+        f for f in os.listdir(STREAM_DIR)
+        if f.startswith('campo_') and f.endswith('.bin')
+    ]
+    if not huerfanos:
+        return
+    dest_dir = os.path.join(directorio, '_recuperados')
+    os.makedirs(dest_dir, exist_ok=True)
+    log('WARNING', f'  [!] {len(huerfanos)} archivo(s) huerfano(s) de una sesion anterior '
+                    f'en la SD interna — moviendo a {dest_dir}')
+    for nombre in huerfanos:
+        origen      = os.path.join(STREAM_DIR, nombre)
+        destino     = os.path.join(dest_dir, nombre)
+        destino_tmp = destino + '.tmp'
+        try:
+            shutil.move(origen, destino_tmp)
+            os.rename(destino_tmp, destino)
+            log_evento(f'[!] Huerfano recuperado: {nombre} -> {dest_dir}', nivel='WARNING')
+        except OSError as e:
+            log_evento(f'[!] No se pudo recuperar huerfano {nombre}: {e} '
+                        f'— queda en la SD ({origen})', nivel='ERROR')
+
+
 def id_dispositivo(directorio):
     """
     st_dev del punto de montaje de `directorio` — llamar una vez al

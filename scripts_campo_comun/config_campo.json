@@ -9,6 +9,9 @@
     "max": 10,
     "espera_s": 5
   },
+  "limpieza": {
+    "max_core_dumps": 15
+  },
   "starlink": {
     "timeout_stop_s": 150,
     "hora_on": "08:55",

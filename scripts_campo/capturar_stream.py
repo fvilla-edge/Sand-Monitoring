@@ -175,6 +175,18 @@ def _capturar_chunk(confObj, adcObj, n_muestras, fs_ef, chunk_num, condicion, se
     adcObj.removeCallback()
 
     if error[0]:
+        # El streaming-server puede haber dejado un data_file_*.bin a medio
+        # terminar en la SD interna antes del error (mem-error/sd-full/etc) —
+        # sin este borrado queda huerfano ahi para siempre (nadie mas lo
+        # busca: ni el proximo intento, ni relanzar_captura.sh, que solo
+        # limpia el USB/destino). Best-effort: si no se puede borrar, no
+        # tapar el error real del chunk por eso.
+        for f in os.listdir(STREAM_DIR):
+            if f.startswith('data_file_') and f.endswith('.bin'):
+                try:
+                    os.remove(os.path.join(STREAM_DIR, f))
+                except OSError:
+                    pass
         raise RuntimeError(f"Streaming error: {error[0]}")
 
     archivos = sorted([
@@ -294,6 +306,7 @@ def main():
                       f'{args.condicion}_{session_ts}_{etiqueta_canales}_dec{args.decimacion}')
     dest_usb   = cc.preparar_dirs(args.directorio, subdir_nombre)
     usb_dev_id = cc.id_dispositivo(args.directorio)
+    cc.rescatar_huerfanos(args.directorio, log_evento)
 
     if args.destino == 'usb':
         mover_fn      = lambda archivo, num: cc.mover_a_usb(archivo, dest_usb, num, log_evento)
@@ -368,6 +381,18 @@ def main():
                                  f'una vez que aterrice el move en curso). Deteniendo.')
                 break
 
+            # Chequeo proactivo, simetrico al de arriba para el USB — sin
+            # esto la unica senal de SD interna llena era reactiva
+            # (adcServerStoppedSDFull dentro de _capturar_chunk, cuando ya
+            # se lleno). No se descuenta bytes_pendientes aca: el chunk que
+            # se esta moviendo en background ya fue escrito a la SD antes,
+            # asi que liberar ese espacio depende del move (fuera de nuestro
+            # control), no de esta captura.
+            libre_sd = shutil.disk_usage(STREAM_DIR).free
+            if libre_sd < ESPACIO_MIN:
+                cc.log('ERROR', f'[!] SD interna sin espacio ({libre_sd/1e6:.0f} MB libres). Deteniendo.')
+                break
+
             if total_s:
                 restante = total_s - tiempo_capturado
                 if restante < 2.0:
@@ -380,7 +405,6 @@ def main():
             if args.destino == 'usb':
                 espacio_label = f'USB {libre_usb_efectivo/1e9:.2f} GB libres'
             else:
-                libre_sd = shutil.disk_usage(STREAM_DIR).free
                 espacio_label = f'SD {libre_sd/1e9:.2f} GB libres'
             cc.log('INFO', f'--- Chunk {chunk_num:04d} | {espacio_label} ---')
 
