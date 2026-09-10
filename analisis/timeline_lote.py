@@ -42,6 +42,13 @@ dos paneles — kurtosis y rms_diferencial, mismo baseline y formula que
 revisar.py (mediana del RMS de los archivos 'reposo' del lote) — e imprime
 en texto los tramos donde la kurtosis supero el umbral de arena (hora real
 ART = UTC-3, la placa corre en UTC) con duracion y kurtosis pico.
+
+NOTA (decision explicita del usuario): revisar.py se migro a la banda de
+ver_forma_onda.py (25-400kHz, umbral kurtosis 6) para tener una sola linea
+de analisis unificada — este script NO se migro, queda pineado a la banda y
+umbral viejos (100-450kHz, 20) con los que se lo uso hasta ahora, porque ya
+cumplio su proposito original (mirar datos) y sirve de base/patron para el
+futuro acumulado multi-archivo, no como parte de esa linea nueva.
 """
 import re
 import sys
@@ -53,12 +60,30 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
+from scipy.signal import butter, sosfilt
 
 sys.path.insert(0, str(Path(__file__).parent))
 from revisar import (  # noqa: E402
-    _leer_canales_bin, _bandpass, _cargar_info, _recopilar_rutas, _clave_config,
-    FA_WINDOW_S, FA_THRESH, V_REF, cargar_baseline_externo,
+    _leer_canales_bin, _cargar_info, _recopilar_rutas, _clave_config,
+    FA_WINDOW_S, V_REF, cargar_baseline_externo,
 )
+
+# Pineados a los valores CON LOS QUE ESTE SCRIPT SE USO HASTA AHORA (banda
+# 100-450kHz, umbral kurtosis 20) — revisar.py se migro a la banda de
+# ver_forma_onda.py (25-400kHz, umbral 6), pero timeline_lote.py se deja
+# TAL CUAL a proposito (ya cumplio su proposito de mirar datos; sirve de
+# base para el acumulado multi-archivo mas adelante, no forma parte de la
+# nueva linea de analisis unificada). Copiados en vez de importados de
+# revisar.py para no heredar en silencio su cambio de banda/umbral.
+_BANDA_LOTE = (100_000, 450_000)
+_FILTRO_ORD_LOTE = 4
+FA_THRESH = 20
+
+
+def _bandpass(signal, fs):
+    sos = butter(_FILTRO_ORD_LOTE, list(_BANDA_LOTE), btype='band', fs=fs, output='sos')
+    return sosfilt(sos, signal)
+
 
 ART = timezone(timedelta(hours=-3))
 

@@ -11,30 +11,36 @@ JSON de sesion — no hace falta indicarlo por linea de comandos. Un mismo lote
 puede mezclar capturas mono y dual: se muestran en tablas separadas.
 
 Mono: kurtosis, crest factor, fraccion_activa y rms_diferencial sobre la
-senal filtrada (100-450 kHz).
+senal filtrada (25-400 kHz — migrado desde 100-450 kHz para usar la misma
+banda que ver_forma_onda.py, ver constantes BANDA_LOW/BANDA_HIGH mas abajo;
+los umbrales de referencia de kurtosis/fraccion_activa de
+INTERPRETACION_RESULTADOS.md fueron calibrados con la banda VIEJA — no
+aplican tal cual a los numeros que salen de aca hasta recalibrar).
 
 Dual (CH1 codo / CH2 referencia): mismas metricas por canal (incluye crest
 factor cf1/cf2) mas kurtosis_diff (k1-k2) y rms_ratio (CH1/CH2) para separar
 arena de ruido de linea comun a ambos sensores.
 
-rms_diferencial usa como baseline la mediana del RMS de las capturas 'reposo'
-del mismo canal presentes en el lote (formula Gao 2015, ver
-analisis/INTERPRETACION_RESULTADOS.md). En dual, si el lote no tiene ninguna
-captura 'reposo' (comun en pruebas de estudio que solo graban 'con_arena'),
-cae a un fallback in-session: usa el chunk de rms minimo de cada canal DENTRO
-de la misma sesion como baseline aproximado (menos solido que un reposo
-real, se marca en la salida). En mono, sin reposo en el lote se sigue
-mostrando N/A (sin fallback).
+rms_diferencial usa como baseline la mediana del RMS de las ventanas de
+FONDO (kurtosis < FA_THRESH) DEL PROPIO ARCHIVO — AUTOCALIBRADO, mismo
+criterio que ver_forma_onda.py (formula Gao 2015 sobre ese baseline, ver
+analisis/INTERPRETACION_RESULTADOS.md). Ya NO depende de que el lote tenga
+una carpeta 'reposo' al lado, ni de comparar contra una captura de otro dia
+o sesion — eso varia por causas ajenas a la arena (turbulencia, ganancia,
+acoplamiento del sensor ese dia). Si un archivo no tiene ninguna ventana de
+fondo propia (saturado de arena de punta a punta, sin ningun tramo de
+calma), cae a --baseline externo si esta disponible (ver mas abajo); sin
+eso, rms_dif/rd1/rd2 quedan en N/A para ese archivo/canal.
 
 Uso:
   .venv/bin/python3 analisis/revisar.py /mnt/usb/0_0_reposo_20260630_134042/
   .venv/bin/python3 analisis/revisar.py campo_reposo_*.bin campo_con_arena_*.bin
 
 Con --baseline analisis/baseline_confirmado.json (ver generar_baseline.py),
-rms_diferencial usa ese baseline confirmado en vez del "reposo" del propio
-lote para cualquier archivo cuya (canales, decimacion) este cubierta ahi —
-mas solido que el "reposo" de un lote que puede no estar confirmado de
-verdad (ver sec.151 de la memoria del proyecto).
+rms_diferencial usa ese baseline confirmado como RESPALDO, solo para los
+archivos/canales sin ventanas de fondo propias — mas solido que inventar un
+"reposo" del lote que puede no estar confirmado de verdad (ver sec.151 de
+la memoria del proyecto).
 
 Formato del .bin: NO es raw plano — es un tren de segmentos [header][datos
 canal0][datos canal1][marcador fin, 12 bytes 0xFF]. El tamaño de header
@@ -50,11 +56,11 @@ import numpy as np
 from scipy.signal import butter, sosfilt
 from scipy.stats import kurtosis as scipy_kurtosis
 
-BANDA_LOW   = 100_000   # Hz
-BANDA_HIGH  = 450_000   # Hz
+BANDA_LOW   = 25_000    # Hz — migrado de 100_000 a la banda de ver_forma_onda.py
+BANDA_HIGH  = 400_000   # Hz — migrado de 450_000, idem
 FILTRO_ORD  = 4
 FA_WINDOW_S = 0.050     # 50 ms por ventana
-FA_THRESH   = 20        # kurtosis Pearson > 20 → ventana activa
+FA_THRESH   = 6         # kurtosis Pearson >= 6 → ventana activa (KURT_FIJO_ACUMULADO de ver_forma_onda.py, calibrado contra la purga de 8kg confirmada del 3/9 — ver sec.163/165 de la memoria del proyecto). Antes: 20, calibrado para la banda vieja (100-450kHz).
 
 V_REF = 20.0            # ±20V con jumper HV y gain A_1_20
 
@@ -225,17 +231,42 @@ def _bandpass(signal, fs):
     return sosfilt(sos, signal)
 
 
-def _fraccion_activa(sig, fs):
+def _metricas_por_ventana(sig, fs):
+    """(kurt_w, rms_w) por ventana de FA_WINDOW_S — mismo criterio que
+    _kurtosis_por_ventana/_rms_por_ventana_directo de ver_forma_onda.py.
+    Base compartida de fraccion_activa y del baseline autocalibrado del rms
+    diferencial (ver _baseline_autocalibrado)."""
     n_win   = int(fs * FA_WINDOW_S)
     n_total = len(sig) // n_win
     if n_total == 0:
-        return 0.0
+        return np.array([]), np.array([])
     mat = sig[:n_total * n_win].reshape(n_total, n_win)
     mat = mat - mat.mean(axis=1, keepdims=True)
     m2  = np.mean(mat ** 2, axis=1)
     m4  = np.mean(mat ** 4, axis=1)
     kurt_w = m4 / np.where(m2 > 0, m2 ** 2, 1e-30)
-    return float(np.mean(kurt_w > FA_THRESH) * 100)
+    rms_w  = np.sqrt(m2)
+    return kurt_w, rms_w
+
+
+def _fraccion_activa(kurt_w):
+    if len(kurt_w) == 0:
+        return 0.0
+    return float(np.mean(kurt_w >= FA_THRESH) * 100)
+
+
+def _baseline_autocalibrado(kurt_w, rms_w):
+    """Mediana del RMS de las ventanas de FONDO (kurt_w < FA_THRESH) DEL
+    PROPIO ARCHIVO — mismo criterio que el RMS diferencial autocalibrado de
+    ver_forma_onda.py, en vez de depender de un 'reposo' externo de otro
+    archivo/sesion/dia (que varia por causas ajenas a la arena). None si el
+    archivo no tiene ninguna ventana de fondo (saturado de arena de punta a
+    punta) — en ese caso rms_diferencial cae al baseline confirmado externo
+    (--baseline) si esta disponible, ver _agregar_rms_diferencial_mono/dual."""
+    fondo = rms_w[kurt_w < FA_THRESH]
+    if len(fondo) == 0:
+        return None
+    return float(np.median(fondo))
 
 
 def _chunk_num_from_nombre(stem):
@@ -243,13 +274,6 @@ def _chunk_num_from_nombre(stem):
         return int(stem.rsplit('_', 1)[-1])
     except ValueError:
         return 0
-
-
-def _session_key_from_nombre(stem):
-    """Identifica la sesion de origen de un chunk (mismo session_ts) para el
-    fallback in-session de rms_diferencial dual — ver _agregar_rms_diferencial_dual."""
-    m = re.match(r'campo_(?:reposo|con_arena)_(\d{8}_\d{6})_\d{4}', stem)
-    return m.group(1) if m else stem
 
 
 def _cargar_info(ruta):
@@ -285,7 +309,9 @@ def _calcular_mono(ruta, info):
     pico  = float(np.max(np.abs(sig_f)))
     kurt  = float(scipy_kurtosis(sig_f, fisher=False))
     cf    = float(pico / rms) if rms > 0 else 0.0
-    fa    = _fraccion_activa(sig_f, fs)
+    kurt_w, rms_w = _metricas_por_ventana(sig_f, fs)
+    fa    = _fraccion_activa(kurt_w)
+    baseline_auto = _baseline_autocalibrado(kurt_w, rms_w)
 
     _chequear_osc_rate(ruta, meta['osc0'], fs)
 
@@ -295,7 +321,7 @@ def _calcular_mono(ruta, info):
         'archivo': ruta.name, 'cond': cond, 'chunk': chunk, 'dur_min': dur_s / 60,
         'dur_real_min': dur_real_min, 'decimacion': dec,
         'rms': rms, 'kurt': kurt, 'crest': cf, 'fa_pct': fa, 'size_mb': size,
-        'lost': meta['lost0'],
+        'lost': meta['lost0'], 'baseline_auto': baseline_auto,
     }
 
 
@@ -323,8 +349,12 @@ def _calcular_dual(ruta, info):
     cf2   = float(pico2 / rms2) if rms2 > 0 else 0.0
     k1   = float(scipy_kurtosis(f1, fisher=False))
     k2   = float(scipy_kurtosis(f2, fisher=False))
-    fa1  = _fraccion_activa(f1, fs)
-    fa2  = _fraccion_activa(f2, fs)
+    kurt_w1, rms_w1 = _metricas_por_ventana(f1, fs)
+    kurt_w2, rms_w2 = _metricas_por_ventana(f2, fs)
+    fa1  = _fraccion_activa(kurt_w1)
+    fa2  = _fraccion_activa(kurt_w2)
+    baseline_auto1 = _baseline_autocalibrado(kurt_w1, rms_w1)
+    baseline_auto2 = _baseline_autocalibrado(kurt_w2, rms_w2)
 
     _chequear_osc_rate(ruta, meta['osc0'], fs, canal_label=' ch1')
     _chequear_osc_rate(ruta, meta['osc1'], fs, canal_label=' ch2')
@@ -334,11 +364,11 @@ def _calcular_dual(ruta, info):
     return {
         'archivo': ruta.name, 'cond': cond, 'chunk': chunk, 'dur_min': dur_s / 60,
         'dur_real_min': dur_real_min, 'decimacion': dec,
-        'session': _session_key_from_nombre(ruta.stem),
         'rms1': rms1, 'rms2': rms2, 'cf1': cf1, 'cf2': cf2,
         'k1': k1, 'k2': k2, 'dk': k1 - k2,
         'fa1': fa1, 'fa2': fa2, 'rms_r': rms1 / rms2 if rms2 > 0 else 0.0,
         'size_mb': size, 'lost1': meta['lost0'], 'lost2': meta['lost1'],
+        'baseline_auto1': baseline_auto1, 'baseline_auto2': baseline_auto2,
     }
 
 
@@ -368,95 +398,80 @@ def cargar_baseline_externo(ruta):
 
 
 def _agregar_rms_diferencial_mono(resultados, baseline_externo=None):
-    """rms_diferencial por archivo. Si hay un baseline_externo (ver
-    generar_baseline.py) con una entrada para la (canales=1, decimacion) de
-    un archivo, se usa ESE en vez del calculo in-lote de siempre — evita el
-    problema de confiar en el 'reposo' de un lote que en realidad no esta
-    confirmado (ver sec.151 de la memoria del proyecto: un lote entero
-    etiquetado 'reposo' cayo dentro de una hora de produccion real del
-    pozo). Si no hay baseline_externo, o no cubre esa combinacion, cae al
-    comportamiento de siempre (mediana de 'reposo' EN EL LOTE)."""
-    reposo_rms = [r['rms'] for r in resultados if r['cond'] == 'reposo']
-    baseline_lote = float(np.median(reposo_rms)) if reposo_rms else None
-
+    """rms_diferencial por archivo. Baseline preferido:
+    1. AUTOCALIBRADO (mediana del RMS de las ventanas de fondo, kurt_w <
+       FA_THRESH, DEL PROPIO ARCHIVO — ver _baseline_autocalibrado, mismo
+       criterio que ver_forma_onda.py). No depende de otros archivos del
+       lote ni de que dia se capturaron.
+    2. Si el archivo no tiene ninguna ventana de fondo propia (saturado de
+       arena de punta a punta), cae a baseline_externo (--baseline, ver
+       generar_baseline.py) para la (canales=1, decimacion) del archivo, si
+       esta disponible.
+    Si ninguno de los dos aplica, rms_dif queda en None (N/A). Ya NO se usa
+    la mediana de 'reposo' del lote (comparar contra otro archivo/sesion no
+    tiene sentido, ver ver_forma_onda.py)."""
     for r in resultados:
-        cfg = (baseline_externo or {}).get(_clave_config(1, r.get('decimacion')))
-        if cfg:
-            baseline, modo = cfg['rms'], 'confirmado'
-        elif baseline_lote is not None:
-            baseline, modo = baseline_lote, 'reposo'
-        else:
+        baseline = r.get('baseline_auto')
+        modo = 'auto'
+        if baseline is None:
+            cfg = (baseline_externo or {}).get(_clave_config(1, r.get('decimacion')))
+            if cfg:
+                baseline, modo = cfg['rms'], 'confirmado'
+        if baseline is None:
             r['rms_dif'] = None
             r['baseline_modo'] = None
             continue
         r['rms_dif'] = float(np.sqrt(max(0.0, r['rms'] ** 2 - baseline ** 2)) / baseline)
         r['baseline_modo'] = modo
 
-    return baseline_lote
-
 
 def _agregar_rms_diferencial_dual(resultados, baseline_externo=None):
-    """rd1/rd2 por chunk. Baseline preferido, en este orden:
-    1. baseline_externo (ver generar_baseline.py) para la (canales=2,
-       decimacion) del lote, si esta presente — el mas solido, viene de
-       capturas confirmadas sin arena por otra via (reporte de pozo, etc.),
-       no del 'reposo' de este mismo lote.
-    2. mediana del RMS de las capturas 'reposo' del mismo canal en TODO el
-       lote (formula Gao 2015).
-    3. fallback IN-SESSION: si el lote no tiene ningun archivo 'reposo'
-       (comun en pruebas de estudio que solo graban 'con_arena'), usa como
-       baseline el chunk de RMS minimo de cada canal DENTRO de la misma
-       sesion (mismo session_ts) — el mas debil de los tres, se marca
-       'in-session' en el resultado para que quede claro en la salida.
-    Asume una sola (canales, decimacion) por invocacion para el baseline
-    externo — mismo supuesto que ya hacia el resto de este archivo con
-    lotes mixtos."""
+    """rd1/rd2 por chunk. Baseline preferido POR CANAL:
+    1. AUTOCALIBRADO (mediana del RMS de las ventanas de fondo del PROPIO
+       archivo, ver _baseline_autocalibrado) — no depende de otros archivos
+       del lote/sesion.
+    2. Si ese canal no tiene ninguna ventana de fondo propia (saturado de
+       arena de punta a punta), cae a baseline_externo (--baseline) para la
+       (canales=2, decimacion) del lote, si esta disponible.
+    Si ninguno de los dos aplica para un canal, ese rd queda en None (N/A).
+    Los dos canales de un mismo archivo pueden terminar con fuentes
+    distintas (uno auto, otro confirmado) — rd_modo lo marca como 'mixto'
+    en ese caso. Ya NO se usa 'reposo' del lote ni el fallback in-session
+    (rms minimo de la sesion) — comparar contra otro archivo/sesion no
+    tiene sentido, ver ver_forma_onda.py."""
     dec = resultados[0].get('decimacion') if resultados else None
     cfg = (baseline_externo or {}).get(_clave_config(2, dec))
-    if cfg:
-        base1, base2 = cfg['rms1'], cfg['rms2']
-        for r in resultados:
-            r['rd1'] = float(np.sqrt(max(0.0, r['rms1'] ** 2 - base1 ** 2)) / base1) if base1 > 0 else None
-            r['rd2'] = float(np.sqrt(max(0.0, r['rms2'] ** 2 - base2 ** 2)) / base2) if base2 > 0 else None
-            r['rd_modo'] = 'confirmado'
-        return base1, base2, 'confirmado'
 
-    reposo1 = [r['rms1'] for r in resultados if r['cond'] == 'reposo']
-    reposo2 = [r['rms2'] for r in resultados if r['cond'] == 'reposo']
-    if reposo1 and reposo2:
-        base1 = float(np.median(reposo1))
-        base2 = float(np.median(reposo2))
-        for r in resultados:
-            r['rd1'] = float(np.sqrt(max(0.0, r['rms1'] ** 2 - base1 ** 2)) / base1)
-            r['rd2'] = float(np.sqrt(max(0.0, r['rms2'] ** 2 - base2 ** 2)) / base2)
-            r['rd_modo'] = 'reposo'
-        return base1, base2, 'reposo'
-
-    sesiones = {}
     for r in resultados:
-        sesiones.setdefault(r['session'], []).append(r)
+        base1, fuente1 = r.get('baseline_auto1'), 'auto'
+        if base1 is None and cfg:
+            base1, fuente1 = cfg['rms1'], 'confirmado'
+        base2, fuente2 = r.get('baseline_auto2'), 'auto'
+        if base2 is None and cfg:
+            base2, fuente2 = cfg['rms2'], 'confirmado'
 
-    for grupo in sesiones.values():
-        base1 = min(r['rms1'] for r in grupo)
-        base2 = min(r['rms2'] for r in grupo)
-        for r in grupo:
-            r['rd1'] = float(np.sqrt(max(0.0, r['rms1'] ** 2 - base1 ** 2)) / base1) if base1 > 0 else None
-            r['rd2'] = float(np.sqrt(max(0.0, r['rms2'] ** 2 - base2 ** 2)) / base2) if base2 > 0 else None
-            r['rd_modo'] = 'in-session'
-    return None, None, 'in-session'
+        r['rd1'] = float(np.sqrt(max(0.0, r['rms1'] ** 2 - base1 ** 2)) / base1) if base1 else None
+        r['rd2'] = float(np.sqrt(max(0.0, r['rms2'] ** 2 - base2 ** 2)) / base2) if base2 else None
+
+        if r['rd1'] is None and r['rd2'] is None:
+            r['rd_modo'] = None
+        elif r['rd1'] is None or r['rd2'] is None or fuente1 == fuente2:
+            r['rd_modo'] = fuente1 if r['rd1'] is not None else fuente2
+        else:
+            r['rd_modo'] = 'mixto'
 
 
 def _detectar_mono(r):
-    if r['kurt'] > 20 or r['fa_pct'] > 5:
+    if r['kurt'] > FA_THRESH or r['fa_pct'] > 5:
         return '*** ARENA ***'
     return 'reposo'
 
 
 def _detectar_dual(r):
     k1, k2 = r['k1'], r['k2']
-    if k1 > 20 and k2 > 20:
+    if k1 > FA_THRESH and k2 > FA_THRESH:
         return 'RUIDO COMUN'   # ambos canales impulsivos -> no es arena localizada
-    if k1 > 20 and k1 > 3 * k2:
+    if k1 > FA_THRESH and k1 > 3 * k2:
         return '*** ARENA ***'
     return 'reposo'
 
@@ -479,9 +494,11 @@ def _mostrar_mono(resultados, baseline_externo=None):
     n_confirmado = sum(1 for r in resultados if r.get('baseline_modo') == 'confirmado')
     n_na = sum(1 for r in resultados if r['rms_dif'] is None)
     if n_confirmado:
-        print(f'[OK] rms_diferencial: {n_confirmado}/{len(resultados)} archivo(s) usando baseline CONFIRMADO externo')
+        print(f'[OK] rms_diferencial: {n_confirmado}/{len(resultados)} archivo(s) sin ventanas de fondo propias, '
+              f'usando baseline CONFIRMADO externo (--baseline)')
     if n_na:
-        print(f'[!] rms_diferencial: {n_na}/{len(resultados)} archivo(s) sin baseline (ni externo ni "reposo" en el lote) — N/A')
+        print(f'[!] rms_diferencial: {n_na}/{len(resultados)} archivo(s) sin baseline (ni ventanas de fondo propias '
+              f'ni --baseline) — N/A')
 
     ancho = max(len(r['archivo']) for r in resultados)
 
@@ -520,9 +537,10 @@ def _mostrar_mono(resultados, baseline_externo=None):
     print(f'\n  {len(resultados)} archivos | {dur_tot:.1f} min total | '
           f'{n_arena} con arena | {n_reposo} en reposo')
     print()
-    print('  Referencia: kurtosis reposo ~3 | arena >20  |  fa% reposo 0% | arena >25%')
+    print(f'  Referencia: kurtosis reposo ~3 | arena >{FA_THRESH}  |  fa% reposo 0% | arena >25%')
     print('  rms_diferencial (informativo, no afecta deteccion): sqrt(max(0,rms²-baseline²))/baseline,')
-    print('  baseline = mediana RMS de "reposo" en el lote | <0.1 insignificante | 0.1-0.4 leve | >0.4 significativo')
+    print(f'  baseline = AUTOCALIBRADO (mediana RMS de ventanas propias con kurtosis<{FA_THRESH}); si el archivo no')
+    print('  tiene ventanas de fondo propias cae a --baseline externo | <0.1 insignificante | 0.1-0.4 leve | >0.4 significativo')
     print('  perd = muestras perdidas (lostCount del header, N/A en archivos pre-2026.1 sin ese campo).')
     print('  dur_r = duracion real del chunk segun el reloj de hardware (timeCapture del header) —')
     print('  a diferencia de "dur" (basada en cantidad de muestras), SI incluye el tiempo de "perd".')
@@ -531,13 +549,16 @@ def _mostrar_mono(resultados, baseline_externo=None):
 
 
 def _mostrar_dual(resultados, baseline_externo=None):
-    base1, base2, modo = _agregar_rms_diferencial_dual(resultados, baseline_externo)
-    if modo == 'confirmado':
-        print(f'[OK] rd1/rd2 usando baseline CONFIRMADO externo (rms1={base1:.4f}V, rms2={base2:.4f}V)')
-    elif modo == 'in-session':
-        print('[!] Ningun archivo con condicion "reposo" en el lote — rd1/rd2 usan '
-              'fallback in-session (rms minimo por canal DENTRO de cada sesion), '
-              'menos solido que un reposo dedicado')
+    _agregar_rms_diferencial_dual(resultados, baseline_externo)
+    n_confirmado = sum(1 for r in resultados if r.get('rd_modo') == 'confirmado')
+    n_mixto = sum(1 for r in resultados if r.get('rd_modo') == 'mixto')
+    n_na = sum(1 for r in resultados if r.get('rd_modo') is None)
+    if n_confirmado or n_mixto:
+        print(f'[OK] rd1/rd2: {n_confirmado}/{len(resultados)} archivo(s) sin ventanas de fondo propias en NINGUN '
+              f'canal usando baseline CONFIRMADO externo (--baseline), {n_mixto} con un canal auto y otro confirmado')
+    if n_na:
+        print(f'[!] rd1/rd2: {n_na}/{len(resultados)} archivo(s) sin baseline en ningun canal '
+              f'(ni ventanas de fondo propias ni --baseline) — N/A')
 
     ancho = max(len(r['archivo']) for r in resultados)
 
@@ -590,13 +611,12 @@ def _mostrar_dual(resultados, baseline_externo=None):
           f'{n_arena} con arena | {n_ruido} ruido comun | {n_reposo} en reposo')
     print()
     print('  Referencia reposo: k1~3, k2~3, dk~0, fa1%~0, fa2%~0, rms_r~1, cf~5-6')
-    print('  Referencia arena:  k1>20, k2~3, dk>>0, fa1%>25, rms_r>1, cf mas alto que reposo')
+    print(f'  Referencia arena:  k1>{FA_THRESH}, k2~3, dk>>0, fa1%>25, rms_r>1, cf mas alto que reposo')
     print('  cf1/cf2 = crest factor por canal (pico/rms de la señal filtrada).')
     print('  rd1/rd2 (informativo, no afecta deteccion): rms_diferencial por canal,')
-    print('  baseline = mediana RMS de "reposo" del mismo canal en el lote si hay alguno;')
-    print('  si no hay "reposo" en el lote, fallback in-session (rms minimo por canal de la misma sesion, ver arriba)')
-    print('  | <0.1 insignificante | 0.1-0.4 leve | >0.4 significativo (escala pensada para baseline real, con el')
-    print('  fallback in-session tiende a dar numeros mas altos porque el "piso" ya incluye algo de señal).')
+    print(f'  baseline = AUTOCALIBRADO por canal (mediana RMS de ventanas propias con kurtosis<{FA_THRESH}); si ese')
+    print('  canal no tiene ventanas de fondo propias cae a --baseline externo (ver arriba)')
+    print('  | <0.1 insignificante | 0.1-0.4 leve | >0.4 significativo.')
     print('  ch1=IN1, ch2=IN2 por construccion del formato (ver _leer_canales_bin) — ya no depende de pares/impares.')
     print('  perd1/perd2 = muestras perdidas por canal (lostCount del header, N/A en archivos pre-2026.1 sin ese campo).')
     print('  dur_r = duracion real del chunk segun el reloj de hardware (timeCapture del header) —')

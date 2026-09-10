@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from revisar import (
     _calcular, _recopilar_rutas,
     _agregar_rms_diferencial_mono, _agregar_rms_diferencial_dual,
-    _detectar_mono, _detectar_dual,
+    _detectar_mono, _detectar_dual, FA_THRESH,
 )
 
 COLOR_REPOSO = '#2a78d6'   # categorical slot 1 (blue)
@@ -54,7 +54,8 @@ def _color_dual(r):
 
 
 def _graficar_mono(resultados):
-    modo = _agregar_rms_diferencial_mono(resultados) is not None
+    _agregar_rms_diferencial_mono(resultados)
+    hay_na = any(r['rms_dif'] is None for r in resultados)
     resultados = sorted(resultados, key=lambda r: (r['cond'], r['archivo']))
     etiquetas = [f"{r['cond']}\n#{r['chunk']:04d}" for r in resultados]
     colores   = [_color_mono(r) for r in resultados]
@@ -64,8 +65,8 @@ def _graficar_mono(resultados):
     fig.suptitle('Deteccion de arena — mono (azul=reposo, naranja=arena)', fontsize=12)
 
     ax1.bar(x, [r['kurt'] for r in resultados], color=colores)
-    ax1.axhline(20, color=INK_SECOND, linestyle='--', linewidth=1.5)
-    ax1.text(0, 20, ' umbral arena', color=INK_SECOND, fontsize=8, va='bottom')
+    ax1.axhline(FA_THRESH, color=INK_SECOND, linestyle='--', linewidth=1.5)
+    ax1.text(0, FA_THRESH, ' umbral arena', color=INK_SECOND, fontsize=8, va='bottom')
     ax1.set_title('Kurtosis')
 
     ax2.bar(x, [r['crest'] for r in resultados], color=colores)
@@ -78,8 +79,8 @@ def _graficar_mono(resultados):
     ax3.axhline(0.1, color=INK_MUTED, linestyle=':', linewidth=1)
     ax3.axhline(0.4, color=INK_MUTED, linestyle=':', linewidth=1)
     ax3.set_title('RMS diferencial')
-    if not modo:
-        ax3.text(0.02, 0.95, 'sin "reposo" en el lote: N/A -> 0', transform=ax3.transAxes,
+    if hay_na:
+        ax3.text(0.02, 0.95, 'sin ventanas de fondo propias (sin --baseline): N/A -> 0', transform=ax3.transAxes,
                   fontsize=8, color=INK_MUTED, va='top')
 
     for ax in (ax1, ax2, ax3):
@@ -95,7 +96,8 @@ def _graficar_mono(resultados):
 
 
 def _graficar_dual(resultados):
-    _, _, modo = _agregar_rms_diferencial_dual(resultados)
+    _agregar_rms_diferencial_dual(resultados)
+    hay_na = any(r.get('rd_modo') is None for r in resultados)
     resultados = sorted(resultados, key=lambda r: (r['cond'], r['chunk']))
     etiquetas = [f"{r['cond']}\n#{r['chunk']:04d}" for r in resultados]
     x = range(len(resultados))
@@ -106,7 +108,7 @@ def _graficar_dual(resultados):
 
     ax1.bar([i - ancho/2 for i in x], [r['k1'] for r in resultados], ancho, color=COLOR_REPOSO, label='ch1')
     ax1.bar([i + ancho/2 for i in x], [r['k2'] for r in resultados], ancho, color=COLOR_CH2, label='ch2')
-    ax1.axhline(20, color=INK_SECOND, linestyle='--', linewidth=1.5)
+    ax1.axhline(FA_THRESH, color=INK_SECOND, linestyle='--', linewidth=1.5)
     ax1.set_title('Kurtosis')
     ax1.legend(fontsize=8)
 
@@ -123,8 +125,8 @@ def _graficar_dual(resultados):
     ax3.axhline(0.4, color=INK_MUTED, linestyle=':', linewidth=1)
     ax3.set_title('RMS diferencial')
     ax3.legend(fontsize=8)
-    if modo == 'in-session':
-        ax3.text(0.02, 0.95, 'sin "reposo" en el lote: fallback in-session', transform=ax3.transAxes,
+    if hay_na:
+        ax3.text(0.02, 0.95, 'sin ventanas de fondo propias (sin --baseline): N/A -> 0', transform=ax3.transAxes,
                   fontsize=8, color=INK_MUTED, va='top')
 
     for ax in (ax1, ax2, ax3):

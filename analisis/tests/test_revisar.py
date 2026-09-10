@@ -225,17 +225,23 @@ def test_chequear_osc_rate_none_no_chequea(capsys):
     assert capsys.readouterr().err == ''
 
 
-# --- _fraccion_activa ---------------------------------------------------------
+# --- _metricas_por_ventana / _fraccion_activa / _baseline_autocalibrado -------
 
-def test_fraccion_activa_senal_corta_devuelve_cero():
+def test_metricas_por_ventana_senal_corta_devuelve_vacio():
     sig = np.zeros(10)
-    assert rv._fraccion_activa(sig, fs=1000) == 0.0
+    kurt_w, rms_w = rv._metricas_por_ventana(sig, fs=1000)
+    assert len(kurt_w) == 0 and len(rms_w) == 0
+
+
+def test_fraccion_activa_sin_ventanas_devuelve_cero():
+    assert rv._fraccion_activa(np.array([])) == 0.0
 
 
 def test_fraccion_activa_ruido_bajo_no_cruza_umbral():
     rng = np.random.default_rng(42)
     sig = rng.normal(0, 1, 500)   # 10 ventanas de 50ms a fs=1000
-    assert rv._fraccion_activa(sig, fs=1000) == 0.0
+    kurt_w, _ = rv._metricas_por_ventana(sig, fs=1000)
+    assert rv._fraccion_activa(kurt_w) == 0.0
 
 
 def test_fraccion_activa_impulsos_cruzan_umbral():
@@ -246,69 +252,94 @@ def test_fraccion_activa_impulsos_cruzan_umbral():
         v[0] = 1000.0   # espiga aislada -> kurtosis pearson muy por encima de FA_THRESH
         ventanas.append(v)
     sig = np.concatenate(ventanas)
-    assert rv._fraccion_activa(sig, fs=1000) == 100.0
+    kurt_w, _ = rv._metricas_por_ventana(sig, fs=1000)
+    assert rv._fraccion_activa(kurt_w) == 100.0
+
+
+def test_baseline_autocalibrado_usa_mediana_de_ventanas_de_fondo():
+    kurt_w = np.array([1.0, 2.0, rv.FA_THRESH + 5, 3.0])
+    rms_w = np.array([1.0, 3.0, 999.0, 5.0])   # la ventana de arena (indice 2) no debe entrar
+    assert rv._baseline_autocalibrado(kurt_w, rms_w) == pytest.approx(3.0)
+
+
+def test_baseline_autocalibrado_sin_ventanas_de_fondo_da_none():
+    kurt_w = np.array([rv.FA_THRESH + 1, rv.FA_THRESH + 5])
+    rms_w = np.array([1.0, 2.0])
+    assert rv._baseline_autocalibrado(kurt_w, rms_w) is None
 
 
 # --- _agregar_rms_diferencial_mono -------------------------------------------
 
-def test_rms_diferencial_mono_con_reposo():
+def test_rms_diferencial_mono_usa_baseline_autocalibrado():
     resultados = [
-        {'cond': 'reposo', 'rms': 1.0},
-        {'cond': 'con_arena', 'rms': 2.0},
+        {'rms': 1.0, 'baseline_auto': 1.0},
+        {'rms': 2.0, 'baseline_auto': 1.0},
     ]
-    baseline = rv._agregar_rms_diferencial_mono(resultados)
-    assert baseline == 1.0
+    rv._agregar_rms_diferencial_mono(resultados)
     assert resultados[0]['rms_dif'] == pytest.approx(0.0)
+    assert resultados[0]['baseline_modo'] == 'auto'
     assert resultados[1]['rms_dif'] == pytest.approx(3 ** 0.5)
+    assert resultados[1]['baseline_modo'] == 'auto'
 
 
-def test_rms_diferencial_mono_sin_reposo_da_none():
-    resultados = [{'cond': 'con_arena', 'rms': 2.0}]
-    baseline = rv._agregar_rms_diferencial_mono(resultados)
-    assert baseline is None
+def test_rms_diferencial_mono_sin_baseline_auto_cae_a_externo():
+    resultados = [{'rms': 2.0, 'baseline_auto': None, 'decimacion': 32}]
+    baseline_externo = {'mono_dec32': {'rms': 1.0}}
+    rv._agregar_rms_diferencial_mono(resultados, baseline_externo)
+    assert resultados[0]['rms_dif'] == pytest.approx(3 ** 0.5)
+    assert resultados[0]['baseline_modo'] == 'confirmado'
+
+
+def test_rms_diferencial_mono_sin_ningun_baseline_da_none():
+    resultados = [{'rms': 2.0, 'baseline_auto': None, 'decimacion': 32}]
+    rv._agregar_rms_diferencial_mono(resultados)
     assert resultados[0]['rms_dif'] is None
+    assert resultados[0]['baseline_modo'] is None
 
 
 # --- _agregar_rms_diferencial_dual --------------------------------------------
 
-def test_rms_diferencial_dual_con_reposo_usa_mediana():
+def test_rms_diferencial_dual_usa_baseline_autocalibrado_por_canal():
     resultados = [
-        {'cond': 'reposo', 'rms1': 1.0, 'rms2': 2.0, 'session': 's1'},
-        {'cond': 'con_arena', 'rms1': 3.0, 'rms2': 4.0, 'session': 's1'},
+        {'rms1': 1.0, 'rms2': 2.0, 'baseline_auto1': 1.0, 'baseline_auto2': 2.0, 'decimacion': 64},
+        {'rms1': 3.0, 'rms2': 4.0, 'baseline_auto1': 1.0, 'baseline_auto2': 2.0, 'decimacion': 64},
     ]
-    base1, base2, modo = rv._agregar_rms_diferencial_dual(resultados)
-    assert (base1, base2, modo) == (1.0, 2.0, 'reposo')
+    rv._agregar_rms_diferencial_dual(resultados)
     assert resultados[1]['rd1'] == pytest.approx(8 ** 0.5)
     assert resultados[1]['rd2'] == pytest.approx(12 ** 0.5 / 2)
-    assert all(r['rd_modo'] == 'reposo' for r in resultados)
+    assert all(r['rd_modo'] == 'auto' for r in resultados)
 
 
-def test_rms_diferencial_dual_sin_reposo_cae_a_fallback_in_session():
-    resultados = [
-        {'cond': 'con_arena', 'rms1': 1.0, 'rms2': 2.0, 'session': 's1'},
-        {'cond': 'con_arena', 'rms1': 3.0, 'rms2': 4.0, 'session': 's1'},
-    ]
-    base1, base2, modo = rv._agregar_rms_diferencial_dual(resultados)
-    assert (base1, base2, modo) == (None, None, 'in-session')
-    assert all(r['rd_modo'] == 'in-session' for r in resultados)
-    assert resultados[1]['rd1'] == pytest.approx(8 ** 0.5)
+def test_rms_diferencial_dual_sin_baseline_auto_cae_a_externo():
+    resultados = [{'rms1': 3.0, 'rms2': 4.0, 'baseline_auto1': None, 'baseline_auto2': None, 'decimacion': 64}]
+    baseline_externo = {'dual_dec64': {'rms1': 1.0, 'rms2': 2.0}}
+    rv._agregar_rms_diferencial_dual(resultados, baseline_externo)
+    assert resultados[0]['rd1'] == pytest.approx(8 ** 0.5)
+    assert resultados[0]['rd2'] == pytest.approx(12 ** 0.5 / 2)
+    assert resultados[0]['rd_modo'] == 'confirmado'
 
 
-def test_rms_diferencial_dual_sesion_de_un_chunk_da_cero_trivial():
-    """Limitacion ya documentada: con un solo chunk en la sesion, el minimo
-    ES el dato, asi que el fallback da 0.0 (no es un baseline real)."""
-    resultados = [{'cond': 'con_arena', 'rms1': 5.0, 'rms2': 6.0, 'session': 's1'}]
+def test_rms_diferencial_dual_un_canal_auto_otro_confirmado_da_mixto():
+    resultados = [{'rms1': 1.0, 'rms2': 4.0, 'baseline_auto1': 1.0, 'baseline_auto2': None, 'decimacion': 64}]
+    baseline_externo = {'dual_dec64': {'rms1': 1.0, 'rms2': 2.0}}
+    rv._agregar_rms_diferencial_dual(resultados, baseline_externo)
+    assert resultados[0]['rd_modo'] == 'mixto'
+
+
+def test_rms_diferencial_dual_sin_ningun_baseline_da_none():
+    resultados = [{'rms1': 3.0, 'rms2': 4.0, 'baseline_auto1': None, 'baseline_auto2': None, 'decimacion': 64}]
     rv._agregar_rms_diferencial_dual(resultados)
-    assert resultados[0]['rd1'] == pytest.approx(0.0)
-    assert resultados[0]['rd2'] == pytest.approx(0.0)
+    assert resultados[0]['rd1'] is None
+    assert resultados[0]['rd2'] is None
+    assert resultados[0]['rd_modo'] is None
 
 
 # --- _detectar_mono / _detectar_dual ------------------------------------------
 
 @pytest.mark.parametrize('kurt,fa_pct,esperado', [
-    (20.0, 0.0, 'reposo'),         # limite exacto de kurtosis: no dispara
-    (20.1, 0.0, '*** ARENA ***'),
-    (0.0, 5.0, 'reposo'),          # limite exacto de fa%: no dispara
+    (rv.FA_THRESH, 0.0, 'reposo'),          # limite exacto de kurtosis: no dispara
+    (rv.FA_THRESH + 0.1, 0.0, '*** ARENA ***'),
+    (0.0, 5.0, 'reposo'),                   # limite exacto de fa%: no dispara
     (0.0, 5.1, '*** ARENA ***'),
 ])
 def test_detectar_mono_umbrales(kurt, fa_pct, esperado):
@@ -317,10 +348,10 @@ def test_detectar_mono_umbrales(kurt, fa_pct, esperado):
 
 
 @pytest.mark.parametrize('k1,k2,esperado', [
-    (25.0, 25.0, 'RUIDO COMUN'),
-    (25.0, 5.0, '*** ARENA ***'),      # 25 > 20 y 25 > 3*5
-    (25.0, 10.0, 'reposo'),            # 25 > 20 pero 25 no > 3*10
-    (15.0, 1.0, 'reposo'),             # ni siquiera cruza 20
+    (rv.FA_THRESH + 5, rv.FA_THRESH + 5, 'RUIDO COMUN'),
+    (rv.FA_THRESH + 5, (rv.FA_THRESH + 5) / 4, '*** ARENA ***'),   # k1 > umbral y k1 > 3*k2
+    (rv.FA_THRESH + 5, (rv.FA_THRESH + 5) / 2, 'reposo'),          # k1 > umbral pero k1 no > 3*k2
+    (rv.FA_THRESH - 1, 1.0, 'reposo'),                             # k1 ni siquiera cruza el umbral
 ])
 def test_detectar_dual_umbrales(k1, k2, esperado):
     r = {'k1': k1, 'k2': k2}
@@ -335,15 +366,6 @@ def test_chunk_num_from_nombre():
 
 def test_chunk_num_from_nombre_sin_sufijo_numerico_da_cero():
     assert rv._chunk_num_from_nombre('archivo_raro_sin_numero') == 0
-
-
-def test_session_key_from_nombre_bien_formado():
-    stem = 'campo_reposo_20260708_140510_0003'
-    assert rv._session_key_from_nombre(stem) == '20260708_140510'
-
-
-def test_session_key_from_nombre_sin_match_devuelve_stem():
-    assert rv._session_key_from_nombre('archivo_raro') == 'archivo_raro'
 
 
 # --- _cargar_info --------------------------------------------------------------

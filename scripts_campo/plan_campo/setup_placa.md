@@ -145,6 +145,59 @@ Crear el directorio destino en la PC **antes de correr el script** (SCP falla si
 mkdir -p ~/datos_campo
 ```
 
+## 4b. Hardening SSH + verificar que `fail2ban` banea de verdad (si la placa queda expuesta a internet, ej. detrás de Starlink)
+
+Ver el detalle completo, root cause y contexto en `../../starlink_remoto/HISTORIAL_STARLINK.md`
+→ "`fail2ban` nunca baneó nada de verdad — el kernel de esta placa no soporta `nftables`".
+
+Después de instalar `PasswordAuthentication no` + `fail2ban` (jail `sshd`, backend `systemd`,
+`maxretry=5`), **no asumir que ya banea de verdad** — los kernels custom de Red Pitaya/Zynq
+suelen no traer `nftables` (`banaction` por defecto de `fail2ban`) ni el módulo `multiport` de
+`iptables`. Verificar y arreglar:
+
+```bash
+ssh root@<IP_PLACA> "
+# 1. iptables legacy (funciona sin nftables/multiport/REJECT)
+update-alternatives --set iptables /usr/sbin/iptables-legacy
+update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy
+
+# 2. jail.local con banaction=iptables (no multiport) + blocktype=DROP explícito
+cat > /etc/fail2ban/jail.local << 'EOF'
+[DEFAULT]
+ignoreip = 127.0.0.1/8 ::1 <IP de confianza, ej. la de tu oficina>
+banaction = iptables
+banaction_allports = iptables-allports
+blocktype = DROP
+action_ = %(banaction)s[blocktype=%(blocktype)s, port=\"%(port)s\", protocol=\"%(protocol)s\", chain=\"%(chain)s\"]
+
+[sshd]
+enabled = true
+backend = systemd
+maxretry = 5
+findtime = 600
+bantime = 600
+EOF
+systemctl restart fail2ban
+"
+```
+
+`ignoreip` con una IP tuya de confianza es importante — sin eso, tu propia sesión SSH puede
+autobanearse (el filtro cuenta cada clave rechazada de un `ssh-agent` con varias identidades
+como intento fallido). `bantime=600` (10 min, no el default de 1h) es la red de seguridad si
+esa IP algún día deja de ser la tuya.
+
+**Probar antes de confiar en el mecanismo** (IP de documentación, RFC 5737, nunca se conecta
+de verdad):
+
+```bash
+ssh root@<IP_PLACA> "
+fail2ban-client set sshd banip 203.0.113.1
+iptables -L f2b-sshd -n -v   # debe aparecer una regla DROP para 203.0.113.1
+fail2ban-client set sshd unbanip 203.0.113.1
+iptables -L f2b-sshd -n -v   # la regla debe desaparecer
+"
+```
+
 ## 5. Starlink / control remoto del relé (si esta placa lo maneja)
 
 Arquitectura, hallazgos de hardware y decisiones: `../../starlink_remoto/HISTORIAL_STARLINK.md`.
