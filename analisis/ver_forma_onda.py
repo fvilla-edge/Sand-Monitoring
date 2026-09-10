@@ -30,13 +30,18 @@ baseline (misma formula que rms_diferencial de revisar.py,
 sqrt(max(0,rms²-b²))/b, pero autocalibrado por archivo en vez de depender
 de una carpeta "reposo" externa — comparar contra el RMS de una sesión de
 otro día no tiene sentido, varía por causas ajenas a la arena). Defaults de
-los sliders (kurtosis=10, rd=0.5) calibrados contra el lote
+los sliders (kurtosis=6, rd=0.5, ambos en KURT_FIJO_ACUMULADO para la
+pestaña "Acumulado" y el mismo valor a mano acá) calibrados contra el lote
 datos_campo/42_1_reposo_20260903_1*_mono_dec32 (purga de 8kg confirmada por
-planilla BPE-2421 a las 14:00 UTC = 11:00 ART): con baseline autocalibrado,
-kurtosis>10 aisla ~3-4% de ventanas como evento sobre un fondo muy estable
-(~3.0, gaussiano); rd es más ruidoso (turbulencia de fluido eleva rd>0.1 en
-~40% de las ventanas sin ser arena), pero casi todo lo que kurtosis marca
-ya supera rd>0.5 sin filtrar eventos reales.
+planilla BPE-2421 a las 14:00 UTC = 11:00 ART) CON la banda real de este
+visor (25-400kHz, no la de revisar.py — un primer calibrado se hizo con la
+banda equivocada y quedo corregido despues): con baseline autocalibrado,
+kurtosis>6 aisla ~5.9% de ventanas como evento sobre un fondo muy estable
+(~3.0, gaussiano; el baseline autocalibrado da ~5.99mV pase lo que pase
+entre umbral 5 y 10, no es sensible a ese numero); rd es más ruidoso
+(turbulencia de fluido eleva rd>0.1 en ~40% de las ventanas sin ser arena),
+pero con kurtosis=6 el 99% de lo que kurtosis marca ya supera rd>0.5 sin
+filtrar eventos reales.
 
 No reimplementa la lectura del formato .bin — usa _leer_canales_bin y
 _cargar_info de revisar.py (misma fuente de verdad que revisar.py y
@@ -79,6 +84,12 @@ FILTRO_ORDEN = 4
 # resolucion en frecuencia (~60Hz con fs~3.9MHz) y tiempo de calculo
 # (~3s por canal en un archivo de ~112M muestras).
 FFT_NPERSEG = 65536
+
+# Umbral de kurtosis para el acumulado de área (pestaña "Acumulado"): fijo
+# por ahora a pedido del usuario, no un slider — arrancamos con un solo
+# archivo para ver como se comporta antes de pensar en hacerlo configurable
+# o en pegar varios archivos como timeline_lote.py.
+KURT_FIJO_ACUMULADO = 6.0
 
 
 def _filtrar_pasabanda(volts, fs, banda=FILTRO_BANDA_HZ, orden=FILTRO_ORDEN):
@@ -357,7 +368,8 @@ class VisorFormaOnda:
     def _construir_canales(self, ruta: Path):
         """{"tiempo": [(nombre, volts_ndarray, fs), ...], "fft": [(nombre,
         freqs, psd_db), ...], "area": [(nombre, rms_ndarray, fs), ...],
-        "combinado": [(nombre, filtrado_ndarray, fs, t_s, kurt, rms_w), ...]}.
+        "combinado": [(nombre, filtrado_ndarray, fs, t_s, kurt, rms_w,
+        area_vals), ...]}.
         Por cada canal real: crudo, filtrado (pasabanda 25kHz-400kHz), RMS
         del filtrado (|x|, misma resolucion — solo le saca el signo), espectro
         (Welch) del crudo y del filtrado, el RMS de nuevo para el area bajo
@@ -401,7 +413,12 @@ class VisorFormaOnda:
             area.append((f"{nombre} filtrado — Área", rms, fs))
             t_k, kurt_vals = _kurtosis_por_ventana(filtrado, fs)
             _, rms_w = _rms_por_ventana_directo(filtrado, fs)
-            combinado.append((f"{nombre} filtrado — Señal+Kurtosis", filtrado, fs, t_k, kurt_vals, rms_w))
+            # Misma ventana (AREA_VENTANA_S) y misma fuente (rms muestra a
+            # muestra) que la pestaña de área — area_vals[i] es el area de la
+            # MISMA ventana que kurt_vals[i] (t_k identico en ambas, ver
+            # _area_por_ventana/_kurtosis_por_ventana).
+            _, area_vals = _area_por_ventana(rms, fs)
+            combinado.append((f"{nombre} filtrado — Señal+Kurtosis", filtrado, fs, t_k, kurt_vals, rms_w, area_vals))
 
         ch0_v = ch0.astype(np.float32) / 32767.0 * V_REF
         _agregar_canal("IN1", ch0_v)
@@ -430,10 +447,12 @@ class VisorFormaOnda:
             self._crear_tab_fft(nombre, freqs, psd_db)
         for nombre, rms, fs_canal in canales["area"]:
             self._crear_tab_area(nombre, rms, fs_canal)
-        for nombre, filtrado, fs_canal, t_k, kurt_vals, rms_w in canales["combinado"]:
+        for nombre, filtrado, fs_canal, t_k, kurt_vals, rms_w, area_vals in canales["combinado"]:
             self._crear_tab_combinado(nombre, filtrado, fs_canal, t_k, kurt_vals)
             nombre_rd = nombre.replace("Señal+Kurtosis", "RMS diferencial")
             self._crear_tab_rmsdif(nombre_rd, t_k, kurt_vals, rms_w)
+            nombre_ac = nombre.replace("Señal+Kurtosis", "Acumulado")
+            self._crear_tab_acumulado(nombre_ac, t_k, kurt_vals, area_vals)
         if self._tabs:
             self.notebook.select(0)
 
@@ -676,7 +695,7 @@ class VisorFormaOnda:
             canvas.draw_idle()
 
         umbral_max = max(20.0, float(np.ceil(kurt.max()))) if len(kurt) else 20.0
-        umbral_inicial = min(10.0, umbral_max)
+        umbral_inicial = min(KURT_FIJO_ACUMULADO, umbral_max)
         slider = tk.Scale(
             controles, from_=3, to=umbral_max, resolution=0.5, orient="horizontal",
             length=280, command=_al_mover_umbral,
@@ -767,7 +786,7 @@ class VisorFormaOnda:
             canvas.draw_idle()
 
         umbral_kurt_max = max(20.0, float(np.ceil(kurt.max()))) if len(kurt) else 20.0
-        umbral_kurt_inicial = min(10.0, umbral_kurt_max)
+        umbral_kurt_inicial = min(KURT_FIJO_ACUMULADO, umbral_kurt_max)
         slider_kurt = tk.Scale(
             controles, from_=3, to=umbral_kurt_max, resolution=0.5, orient="horizontal",
             length=220, command=_recalcular,
@@ -787,6 +806,47 @@ class VisorFormaOnda:
         label_conteo.pack(side="left")
 
         _recalcular()
+        canvas.draw()
+
+        self._tabs.append({"frame": frame, "fig": fig, "canvas": canvas})
+
+    def _crear_tab_acumulado(self, nombre, t_kurt, kurt, area_vals):
+        """Acumulado corriente del área bajo la curva de RMS, sumando SOLO
+        las ventanas (AREA_VENTANA_S) con kurtosis >= KURT_FIJO_ACUMULADO —
+        las ventanas de fondo aportan 0. Umbral fijo por ahora (no slider),
+        primer paso antes de pensar en pegar varios archivos como hace
+        timeline_lote.py con la kurtosis."""
+        frame = tk.Frame(self.notebook)
+        self.notebook.add(frame, text=nombre)
+
+        fig = plt.Figure(figsize=(9, 7), tight_layout=True)
+        ax = fig.subplots(1, 1)
+
+        if len(t_kurt):
+            mask = kurt >= KURT_FIJO_ACUMULADO
+            area_contada = np.where(mask, area_vals, 0.0)
+            acumulado = np.cumsum(area_contada, dtype=np.float64)
+            ax.step(t_kurt, acumulado, where="post", linewidth=1.2, color="#2a78d6")
+            n_contadas = int(mask.sum())
+            texto = (
+                f"kurtosis≥{KURT_FIJO_ACUMULADO:.1f}: {n_contadas}/{len(kurt)} ventanas sumadas "
+                f"({100 * n_contadas / len(kurt):.1f}%) — total acumulado: {acumulado[-1]:.4f} V·s"
+            )
+            ax.text(0.02, 0.98, texto, transform=ax.transAxes, ha="left", va="top", fontsize=8)
+        else:
+            ax.text(0.5, 0.5, f"Archivo mas corto que {int(AREA_VENTANA_S * 1000)}ms, sin ventanas completas",
+                     ha="center", va="center", transform=ax.transAxes, color="gray")
+
+        ax.set_xlabel("tiempo (s) desde el inicio del archivo")
+        ax.set_ylabel("área acumulada (V·s)")
+        ax.set_title(f"{nombre} (kurtosis≥{KURT_FIJO_ACUMULADO:.1f}, ventana {int(AREA_VENTANA_S * 1000)}ms)")
+        ax.grid(True, alpha=0.3)
+
+        canvas = FigureCanvasTkAgg(fig, master=frame)
+        canvas.get_tk_widget().pack(side="top", fill="both", expand=True)
+        toolbar = NavigationToolbar2Tk(canvas, frame)
+        toolbar.update()
+        self._agregar_crosshair(canvas, [ax])
         canvas.draw()
 
         self._tabs.append({"frame": frame, "fig": fig, "canvas": canvas})
