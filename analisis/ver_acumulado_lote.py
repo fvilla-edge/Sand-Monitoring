@@ -31,6 +31,7 @@ unos 40s, y bloquear la ventana ese tiempo la deja "trabada" sin feedback.
 Uso: doble-click en abrir_acumulado_lote.sh (mismo directorio), o:
   .venv/bin/python3 analisis/ver_acumulado_lote.py
 """
+import os
 import sys
 import threading
 import traceback
@@ -122,8 +123,10 @@ class VisorAcumuladoLote:
         self.root = root
         root.title("Acumulado de lote — señal pegada en el tiempo real")
         root.geometry("1250x820")
+        root.protocol("WM_DELETE_WINDOW", self._al_cerrar)
 
         self.archivos = []  # lista de Path (carpetas o archivos), en el orden agregado
+        self._cerrando = False  # ver _al_cerrar / _notificar
 
         marco_izq = tk.Frame(root, width=260)
         marco_izq.pack(side="left", fill="y", padx=6, pady=6)
@@ -248,9 +251,43 @@ class VisorAcumuladoLote:
                 raise ValueError("ningun archivo tuvo ventanas completas (¿archivos muy cortos?)")
         except Exception:
             error = traceback.format_exc()
-            self.root.after(0, self._al_fallar, error)
+            self._notificar(self._al_fallar, error)
             return
-        self.root.after(0, self._mostrar, grupos)
+        self._notificar(self._mostrar, grupos)
+
+    def _notificar(self, callback, *args):
+        """Puente hilo de fondo -> hilo principal de Tk (via root.after).
+        Si la ventana ya se esta cerrando, no llama a Tcl — el filtrado con
+        scipy no se puede cancelar a mitad de camino, asi que este hilo
+        puede seguir corriendo un rato despues de que el usuario cerro la
+        ventana; llamar a root.after() sobre un root ya destruido es lo que
+        dejaba el proceso colgado esperando Ctrl+C."""
+        if self._cerrando:
+            return
+        try:
+            self.root.after(0, callback, *args)
+        except Exception:
+            pass
+
+    def _al_cerrar(self):
+        self._cerrando = True
+        for tab in self._tabs:
+            try:
+                plt.close(tab["fig"])
+            except Exception:
+                pass
+        try:
+            self.root.destroy()
+        except Exception:
+            pass
+        # Salida inmediata en vez de un shutdown "prolijo": si el hilo de
+        # fondo seguia procesando, root.destroy() no siempre alcanza para
+        # que mainloop() vuelva (visto en la practica con la combinacion
+        # tkinterdnd2+hilo — hacia falta Ctrl+C varias veces en la
+        # terminal). No hay nada que perder por salir asi: el PNG ya se
+        # guardo si el procesamiento habia terminado, y si no, no hay
+        # resultado que conservar.
+        os._exit(0)
 
     def _al_fallar(self, error_texto):
         self.boton_procesar.config(state="normal", text="Procesar lote")
