@@ -45,7 +45,7 @@ Sand Monitoring/
 ├── analisis/               # Scripts de analisis local (corren en la PC)
 │   ├── revisar.py          # Revision rapida de capturas, mono o dual (.bin) — fuente de verdad en texto
 │   ├── visores/            # GUIs de matplotlib/tkinter (ver_forma_onda.py, ver_acumulado_lote.py + abrir_*.sh)
-│   ├── lote/               # Analisis de un lote completo pegado en el tiempo (acumulado_lote.py, timeline_lote.py)
+│   ├── lote/               # Analisis de un lote completo pegado en el tiempo (acumulado_lote.py)
 │   ├── utilidades/         # graficar.py, extraer_canal.py, generar_baseline.py
 │   ├── INTERPRETACION_RESULTADOS.md  # Guia de lectura de metricas: deteccion vs clasificacion
 │   └── tests/              # Tests del parser de .bin y la logica de deteccion (pytest)

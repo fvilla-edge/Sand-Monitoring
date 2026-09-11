@@ -10,9 +10,10 @@ hora de produccion real segun el reporte del pozo).
 
 Agrupa por (canales, decimacion) — cada combinacion encontrada arma su
 propia entrada en el JSON ("mono_dec32", "dual_dec64", etc.) con la
-mediana del RMS (señal filtrada 100-450kHz) de esos archivos. revisar.py
-y timeline_lote.py usan esas entradas via --baseline en vez de calcular
-un baseline por lote cuando la (canales, decimacion) esta cubierta ahi.
+mediana del RMS (señal filtrada con la banda vigente de revisar.py, ver
+BANDA_LOW/BANDA_HIGH ahi) de esos archivos. revisar.py usa esas entradas
+via --baseline en vez de calcular un baseline por lote cuando la
+(canales, decimacion) esta cubierta ahi.
 
 Antes de escribir nada, verifica que NINGUN archivo pasado haya sido
 detectado como arena/ruido (revisar.py::_detectar_mono/_detectar_dual) —

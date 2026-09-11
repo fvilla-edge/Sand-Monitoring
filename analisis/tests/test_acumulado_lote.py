@@ -4,7 +4,7 @@ pegado de archivos en un eje de tiempo absoluto, fusion de tramos,
 acumulado), sin pasar por el bandpass real ni por .bin sinteticos: mismo
 criterio que tests/test_revisar.py, que tampoco ejercita _calcular_mono/
 _calcular_dual end-to-end (necesitarian una fs real >800kHz para que el
-pasabanda 25-400kHz tenga sentido, y no agregan cobertura sobre la logica
+pasabanda 50-400kHz tenga sentido, y no agregan cobertura sobre la logica
 propia de este script).
 """
 from datetime import datetime, timedelta, timezone

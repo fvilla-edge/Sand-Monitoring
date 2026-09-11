@@ -6,12 +6,12 @@ crudo": una vista general del archivo completo (envolvente min/max, porque
 un chunk tiene millones de muestras y no entra pintado punto a punto) más
 una vista de resolución completa de la ventana que se seleccione
 arrastrando sobre la vista general. Cada canal real tiene su propia pestaña
-tal cual se capturó, más una pestaña con un pasabanda 25kHz-400kHz aplicado
+tal cual se capturó, más una pestaña con un pasabanda 50kHz-400kHz aplicado
 (descarta ruido de fluido por abajo y frecuencias sin interés por arriba) y
 una tercera con el RMS de esa señal filtrada (|x|, misma resolución
 temporal, siempre positiva en vez de la oscilación +/- original), más dos
 pestañas de espectro (Welch, escala log-frecuencia/dB) de la cruda y de la
-filtrada (para confirmar que componentes hay y si 25kHz-400kHz son los
+filtrada (para confirmar que componentes hay y si 50kHz-400kHz son los
 cortes correctos), y una pestaña con el área bajo la curva del RMS (suma de
 Riemann de la envolvente rectificada) con un combobox para elegir la
 ventana (50/100/200/500/1000ms) y recalcular al vuelo — por defecto
@@ -21,7 +21,7 @@ archivo), y una pestaña combinada (señal filtrada arriba, kurtosis por
 ventana de AREA_VENTANA_S al medio, RMS diferencial autocalibrado abajo,
 mismo eje de tiempo compartido — a diferencia de overview/zoom, acá SI
 tiene sentido porque las tres cubren el archivo completo). Kurtosis
-calculada sobre el filtrado de 25-400kHz de este visor, NO la banda de
+calculada sobre el filtrado de 50-400kHz de este visor, NO la banda de
 100-450kHz de revisar.py — el número no es directamente comparable con los
 umbrales ~3 reposo / >20 arena de ese script. Un slider de umbral de
 kurtosis clasifica cada ventana como "señal" o "fondo"; el RMS diferencial
@@ -34,7 +34,7 @@ los sliders (kurtosis=6, rd=0.5, ambos en KURT_FIJO_ACUMULADO para la
 pestaña "Acumulado" y el mismo valor a mano acá) calibrados contra el lote
 datos_campo/42_1_reposo_20260903_1*_mono_dec32 (purga de 8kg confirmada por
 planilla BPE-2421 a las 14:00 UTC = 11:00 ART) CON la banda real de este
-visor (25-400kHz, no la de revisar.py — un primer calibrado se hizo con la
+visor (50-400kHz, no la de revisar.py — un primer calibrado se hizo con la
 banda equivocada y quedo corregido despues): con baseline autocalibrado,
 kurtosis>6 aisla ~5.9% de ventanas como evento sobre un fondo muy estable
 (~3.0, gaussiano; el baseline autocalibrado da ~5.99mV pase lo que pase
@@ -75,9 +75,9 @@ except ImportError:
 N_BINS_OVERVIEW = 2000       # columnas de la envolvente de vista general
 MAX_MUESTRAS_CRUDAS = 200_000  # por encima de esto, la ventana de zoom tambien se decima
 
-# Banda de interes para arena: <25kHz es ruido de fluido, >400kHz no aporta
+# Banda de interes para arena: <50kHz es ruido de fluido, >400kHz no aporta
 # (fuera del rango de interes del sensor). Pasabanda Butterworth zero-phase.
-FILTRO_BANDA_HZ = (25_000, 400_000)
+FILTRO_BANDA_HZ = (50_000, 400_000)
 FILTRO_ORDEN = 4
 
 # Tamaño de ventana de Welch para el espectro: buen compromiso entre
@@ -370,7 +370,7 @@ class VisorFormaOnda:
         freqs, psd_db), ...], "area": [(nombre, rms_ndarray, fs), ...],
         "combinado": [(nombre, filtrado_ndarray, fs, t_s, kurt, rms_w,
         area_vals), ...]}.
-        Por cada canal real: crudo, filtrado (pasabanda 25kHz-400kHz), RMS
+        Por cada canal real: crudo, filtrado (pasabanda 50kHz-400kHz), RMS
         del filtrado (|x|, misma resolucion — solo le saca el signo), espectro
         (Welch) del crudo y del filtrado, el RMS de nuevo para el area bajo
         la curva (la pestaña de area recalcula la ventana al vuelo, ver
@@ -401,7 +401,7 @@ class VisorFormaOnda:
             rms = _rms_muestra_a_muestra(filtrado)
             tiempo.extend([
                 (nombre, volts, fs),
-                (f"{nombre} filtrado (25-400kHz)", filtrado, fs),
+                (f"{nombre} filtrado (50-400kHz)", filtrado, fs),
                 (f"{nombre} filtrado — RMS", rms, fs),
             ])
             f_crudo, psd_crudo = _calcular_espectro(volts, fs)
@@ -569,7 +569,7 @@ class VisorFormaOnda:
 
         fig = plt.Figure(figsize=(9, 7), tight_layout=True)
         ax = fig.subplots(1, 1)
-        ax.axvspan(*FILTRO_BANDA_HZ, color="orange", alpha=0.15, label="pasabanda 25-400kHz")
+        ax.axvspan(*FILTRO_BANDA_HZ, color="orange", alpha=0.15, label="pasabanda 50-400kHz")
         ax.semilogx(freqs, psd_db, linewidth=0.7, color="#2a78d6")
         ax.set_xlim(max(freqs[1], 10.0), freqs[-1])
         ax.set_xlabel("frecuencia (Hz)")
@@ -675,7 +675,7 @@ class VisorFormaOnda:
         self._agregar_crosshair(canvas, [ax_signal, ax_kurt])
 
         # Umbral SIN valor fijo adivinado: sin un archivo de fondo puro en
-        # esta banda (25-400kHz) para calibrar contra que comparamos, un
+        # esta banda (50-400kHz) para calibrar contra que comparamos, un
         # numero fijo en el codigo (10, 15, 20...) seria arbitrario — mejor
         # un slider que se ajusta a ojo mirando donde la kurtosis se dispara
         # contra los picos reales de la señal de arriba.

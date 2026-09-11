@@ -20,7 +20,7 @@ porque no aportaba nada por encima del acumulado.)
 
 No reimplementa el calculo — usa las funciones de acumulado_lote.py
 (_leer_lote, _armar_serie, _acumulado, _tramos_activos, _etiqueta_lote), que
-a su vez reusan revisar.py (banda 25-400kHz, umbral kurtosis 6 — ver ahi
+a su vez reusan revisar.py (banda 50-400kHz, umbral kurtosis 6 — ver ahi
 para el porque). También guarda el mismo PNG que la version CLI en
 analisis/outputs/acumulado_lote/, por si hace falta para un informe.
 

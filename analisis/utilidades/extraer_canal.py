@@ -12,8 +12,8 @@ en la placa ni toca el pipeline de scripts_campo/capturar_stream.py.
 --canal 1 = IN1 (sensor codo), --canal 2 = IN2 (sensor referencia) — mismo
 orden fijo que _leer_canales_bin en revisar.py (indice 0 = IN1, indice 1 =
 IN2). El archivo de salida queda con el canal elegido en la posicion de
-"canal unico", asi revisar.py/graficar.py/timeline_lote.py lo leen como
-cualquier captura mono, sin cambios.
+"canal unico", asi revisar.py/graficar.py lo leen como cualquier captura
+mono, sin cambios.
 
 Uso:
   .venv/bin/python3 analisis/utilidades/extraer_canal.py --canal 1 "carpeta dual"/ -o salida/
