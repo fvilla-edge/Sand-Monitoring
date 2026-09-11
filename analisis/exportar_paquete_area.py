@@ -32,8 +32,9 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).parent))
 from revisar import _leer_canales_bin, _cargar_info, V_REF  # noqa: E402
 from area_kurtosis import (  # noqa: E402
-    AREA_VENTANA_S,
+    AREA_VENTANA_S, BLOQUE_S_DEFAULT, MARGEN_S_DEFAULT,
     _filtrar_pasabanda, _rms_muestra_a_muestra, _area_por_ventana, _kurtosis_por_ventana,
+    _bloques_canal, _area_kurtosis_de_bloque,
 )
 
 
@@ -53,7 +54,12 @@ def _construir_paquete_canal(nombre, volts, fs):
 def construir_paquete(ruta: Path):
     """{"archivo", "fs_hz", "ventana_s", "canales": [{"canal", "t_centro_s",
     "area", "kurtosis"}, ...]} — un dict por canal real (IN1, IN2 y
-    Limpia=IN1-IN2 si es dual, igual que ver_forma_onda.py)."""
+    Limpia=IN1-IN2 si es dual, igual que ver_forma_onda.py).
+
+    Carga el .bin ENTERO en memoria (via _leer_canales_bin) — sirve en la PC
+    (donde se valido originalmente contra ver_forma_onda.py) pero NO en la
+    placa: un chunk de captura real hace OOM ahi (ver
+    construir_paquete_por_bloques, pensada para eso)."""
     info = _cargar_info(ruta)
     ch0, ch1, meta = _leer_canales_bin(ruta)
     dual = int(info.get("canales", 1)) == 2
@@ -77,15 +83,73 @@ def construir_paquete(ruta: Path):
     }
 
 
+def construir_paquete_por_bloques(ruta: Path, bloque_s=BLOQUE_S_DEFAULT, margen_s=MARGEN_S_DEFAULT):
+    """Mismo resultado que construir_paquete, pero leyendo y filtrando el
+    .bin de a bloques de `bloque_s` segundos (revisar._iterar_segmentos +
+    area_kurtosis._bloques_canal) en vez de cargarlo entero — memoria
+    acotada a ~1 bloque en todo momento, sin importar el tamaño del
+    archivo. Pensada para correr en la placa."""
+    info = _cargar_info(ruta)
+    dual = int(info.get("canales", 1)) == 2
+    fs = float(info["fs_hz_por_canal"]) if dual else float(info["fs_hz"])
+
+    nombres = ["IN1"] + (["IN2", "Limpia (IN1-IN2)"] if dual else [])
+    acumulado = {n: {"t": [], "area": [], "kurt": []} for n in nombres}
+    # residual = muestras YA FILTRADAS del bloque anterior que no llegaron a
+    # completar una ventana — se le pegan adelante al core del proximo
+    # bloque (ver _area_kurtosis_de_bloque) para no reiniciar la grilla de
+    # ventanas en cada bloque.
+    residual = {n: None for n in nombres}
+
+    def _agregar(nombre, volts_bloque, n_izq, n_core, t_offset_s):
+        t_loc, area, kurt, nuevo_residual = _area_kurtosis_de_bloque(
+            volts_bloque, fs, n_izq, n_core, residual_anterior=residual[nombre])
+        n_residual_anterior = len(residual[nombre]) if residual[nombre] is not None else 0
+        t_abs = t_loc + t_offset_s - n_residual_anterior / fs
+        acumulado[nombre]["t"].extend(t_abs.tolist())
+        acumulado[nombre]["area"].extend(area.tolist())
+        acumulado[nombre]["kurt"].extend(kurt.tolist())
+        residual[nombre] = nuevo_residual
+
+    for t_offset_s, bloque0_i16, bloque1_i16, n_izq, n_core in _bloques_canal(ruta, fs, bloque_s, margen_s):
+        ch0_v = bloque0_i16.astype(np.float32) / 32767.0 * V_REF
+        _agregar("IN1", ch0_v, n_izq, n_core, t_offset_s)
+
+        if dual:
+            ch1_v = bloque1_i16.astype(np.float32) / 32767.0 * V_REF
+            _agregar("IN2", ch1_v, n_izq, n_core, t_offset_s)
+            limpia_v = ch0_v - ch1_v
+            _agregar("Limpia (IN1-IN2)", limpia_v, n_izq, n_core, t_offset_s)
+
+    canales = [
+        {
+            "canal": nombre,
+            "t_centro_s": [round(float(v), 6) for v in d["t"]],
+            "area": [float(v) for v in d["area"]],
+            "kurtosis": [float(v) for v in d["kurt"]],
+        }
+        for nombre, d in acumulado.items()
+    ]
+    return {"archivo": ruta.name, "fs_hz": fs, "ventana_s": AREA_VENTANA_S, "canales": canales}
+
+
 def main():
     ap = argparse.ArgumentParser(
         description="Exporta el paquete liviano (area+kurtosis por ventana) de una captura .bin")
     ap.add_argument("archivo", type=Path, help="captura .bin (requiere session_*_info.json al lado)")
     ap.add_argument("-o", "--salida", type=Path, default=None,
                      help="ruta del JSON de salida (default: <archivo sin .bin>.paquete.json)")
+    ap.add_argument("--todo-de-una", action="store_true",
+                     help="cargar el .bin entero en memoria en vez de procesarlo por bloques "
+                          "(sirve para comparar en la PC; en la placa hace OOM con un chunk real)")
+    ap.add_argument("--bloque-s", type=float, default=BLOQUE_S_DEFAULT,
+                     help=f"segundos de señal 'core' por bloque (default: {BLOQUE_S_DEFAULT})")
     args = ap.parse_args()
 
-    paquete = construir_paquete(args.archivo)
+    if args.todo_de_una:
+        paquete = construir_paquete(args.archivo)
+    else:
+        paquete = construir_paquete_por_bloques(args.archivo, bloque_s=args.bloque_s)
     salida = args.salida or args.archivo.with_suffix(".paquete.json")
     with open(salida, "w") as f:
         json.dump(paquete, f)

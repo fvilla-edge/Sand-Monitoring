@@ -114,9 +114,83 @@ def _detectar_header_size(f, tam):
         f'(probados: {_HEADER_SIZES_CONOCIDOS}) — ¿archivo de un firmware nuevo?')
 
 
+def _iterar_segmentos(ruta, leer_datos=True):
+    """Generador que recorre `ruta` segmento por segmento (header + datos +
+    marcador), sin acumular el archivo entero en memoria — devuelve por
+    segmento (ch0_bytes, ch1_bytes, info); con leer_datos=False no lee las
+    secciones de datos (solo hace seek), ch0_bytes/ch1_bytes vienen en None
+    y info trae ademas 'offset_ch0' (para lectura de rangos puntuales sin
+    tocar el resto del archivo, ver _leer_rango_muestras).
+
+    info: 'header_144' (bool) y, si header_144, 'lost0'/'lost1' (de ESE
+    segmento, no acumulado), 'osc0'/'osc1' (solo en el primer segmento),
+    't_cap' (ns) y 'tam_ch0' (bytes) — mismos campos que antes calculaba
+    _leer_canales_bin inline, ahora factorizados aca para que tanto esa
+    funcion (junta todo, uso normal en PC) como un consumidor que no quiera
+    cargar el archivo entero (procesamiento por bloques en la placa, ver
+    analisis/area_kurtosis.py) compartan la misma logica de parseo/
+    validacion del formato — no reimplementarla en dos lugares.
+
+    Mismos avisos por stderr que antes ante segmento truncado o marcador
+    invalido, cortando la lectura ahi en vez de fallar o inventar datos."""
+    tam = ruta.stat().st_size
+    with open(ruta, 'rb') as f:
+        header_size = _detectar_header_size(f, tam)
+        header_144 = header_size == 144
+        pos = 0
+        n_seg = 0
+        while pos + header_size <= tam:
+            f.seek(pos)
+            header = f.read(header_size)
+            size_ch0, size_ch1, size_ch2, size_ch3 = np.frombuffer(
+                header, dtype='<u4', count=4, offset=_OFF_SIZE_CH)
+            fin_datos = pos + header_size + int(size_ch0) + int(size_ch1) + int(size_ch2) + int(size_ch3)
+            if fin_datos + 12 > tam:
+                print(f'[!] {ruta.name}: segmento {n_seg} truncado al final del archivo, se descarta', file=sys.stderr)
+                return
+            if leer_datos:
+                f.seek(pos + header_size)
+                ch0_bytes = f.read(int(size_ch0))
+                ch1_bytes = f.read(int(size_ch1))
+            else:
+                ch0_bytes = ch1_bytes = None
+            f.seek(fin_datos)
+            marcador = f.read(12)
+            marker_ok = marcador == _MARKER
+            info = {'header_144': header_144, 'offset_ch0': pos + header_size,
+                    'size_ch0': int(size_ch0), 'size_ch1': int(size_ch1)}
+            # lost/osc/t_cap de ESTE segmento solo se exponen si su propio
+            # marcador de cierre es valido — mismo contrato que antes: los
+            # datos de un segmento con marcador roto igual se entregan (se
+            # habian leido ya, ver mas abajo), pero su lost/osc/t_cap NO
+            # (ver test_leer_canales_bin_marcador_invalido_corta_la_lectura).
+            if marker_ok and header_144:
+                size_declarado = int(size_ch0) + int(size_ch1) + int(size_ch2) + int(size_ch3)
+                sigment_length = int(np.frombuffer(header, dtype='<u4', count=1, offset=_OFF_SIGMENT_LENGTH)[0])
+                if sigment_length != size_declarado:
+                    print(f'[!] {ruta.name}: sigmentLength del header ({sigment_length}) no coincide '
+                          f'con sizeCh declarado ({size_declarado}) en segmento {n_seg}', file=sys.stderr)
+                lost_ch = np.frombuffer(header, dtype='<u8', count=4, offset=_OFF_LOST_COUNT)
+                info['lost0'] = int(lost_ch[0])
+                info['lost1'] = int(lost_ch[1])
+                t_cap = int(np.frombuffer(header, dtype='<i8', count=1, offset=_OFF_TIME_CAPTURE)[0])
+                info['t_cap'] = t_cap
+                if n_seg == 0:
+                    osc_ch = np.frombuffer(header, dtype='<u8', count=4, offset=_OFF_OSC_RATE)
+                    info['osc0'], info['osc1'] = int(osc_ch[0]), int(osc_ch[1])
+                info['tam_ch0'] = int(size_ch0)
+            yield ch0_bytes, ch1_bytes, info
+            if not marker_ok:
+                print(f'[!] {ruta.name}: marcador invalido en segmento {n_seg} (offset {fin_datos}), '
+                      f'se corta la lectura ahi', file=sys.stderr)
+                return
+            pos = fin_datos + 12
+            n_seg += 1
+
+
 def _leer_canales_bin(ruta):
     """
-    Recorre el archivo segmento por segmento (header + datos + marcador) y
+    Recorre el archivo segmento por segmento (via _iterar_segmentos) y
     devuelve (ch0, ch1, meta) — ch0/ch1 son arrays int16 con SOLO muestras
     reales, sin los bytes de header/marcador mezclados adentro.
 
@@ -139,6 +213,11 @@ def _leer_canales_bin(ruta):
         de timeCapture junto a las constantes de arriba). None si no hay
         ningun segmento con header de 144 bytes.
 
+    Carga el archivo entero en memoria (junta todos los segmentos) — para
+    procesar un archivo grande sin ese costo de RAM (pensado para la placa,
+    ver analisis/area_kurtosis.py::_bloques_canal), usar _iterar_segmentos
+    directo en vez de esta funcion.
+
     Si el ultimo segmento quedo truncado (sesion cortada a mitad de escritura)
     se corta ahi y se avisa por stderr, en vez de fallar o inventar datos.
     Tambien se avisa por stderr si sigmentLength (offset 136, redundante con
@@ -146,53 +225,25 @@ def _leer_canales_bin(ruta):
     señal de corrupcion que el chequeo de marcador podria no detectar.
     """
     ch0_partes, ch1_partes = [], []
-    header_144 = None
+    header_144 = False
     lost0 = lost1 = 0
     osc0 = osc1 = None
     t_inicio = t_ultimo = None
     tam_ultimo_ch0 = 0
-    tam = ruta.stat().st_size
-    with open(ruta, 'rb') as f:
-        header_size = _detectar_header_size(f, tam)
-        header_144 = header_size == 144
-        pos = 0
-        n_seg = 0
-        while pos + header_size <= tam:
-            f.seek(pos)
-            header = f.read(header_size)
-            size_ch0, size_ch1, size_ch2, size_ch3 = np.frombuffer(
-                header, dtype='<u4', count=4, offset=_OFF_SIZE_CH)
-            fin_datos = pos + header_size + int(size_ch0) + int(size_ch1) + int(size_ch2) + int(size_ch3)
-            if fin_datos + 12 > tam:
-                print(f'[!] {ruta.name}: segmento {n_seg} truncado al final del archivo, se descarta', file=sys.stderr)
-                break
-            f.seek(pos + header_size)
-            ch0_partes.append(f.read(int(size_ch0)))
-            ch1_partes.append(f.read(int(size_ch1)))
-            f.seek(fin_datos)
-            marcador = f.read(12)
-            if marcador != _MARKER:
-                print(f'[!] {ruta.name}: marcador invalido en segmento {n_seg} (offset {fin_datos}), '
-                      f'se corta la lectura ahi', file=sys.stderr)
-                break
-            if header_144:
-                size_declarado = int(size_ch0) + int(size_ch1) + int(size_ch2) + int(size_ch3)
-                sigment_length = int(np.frombuffer(header, dtype='<u4', count=1, offset=_OFF_SIGMENT_LENGTH)[0])
-                if sigment_length != size_declarado:
-                    print(f'[!] {ruta.name}: sigmentLength del header ({sigment_length}) no coincide '
-                          f'con sizeCh declarado ({size_declarado}) en segmento {n_seg}', file=sys.stderr)
-                lost_ch = np.frombuffer(header, dtype='<u8', count=4, offset=_OFF_LOST_COUNT)
-                lost0 += int(lost_ch[0])
-                lost1 += int(lost_ch[1])
-                t_cap = int(np.frombuffer(header, dtype='<i8', count=1, offset=_OFF_TIME_CAPTURE)[0])
-                if n_seg == 0:
-                    osc_ch = np.frombuffer(header, dtype='<u8', count=4, offset=_OFF_OSC_RATE)
-                    osc0, osc1 = int(osc_ch[0]), int(osc_ch[1])
-                    t_inicio = t_cap
-                t_ultimo = t_cap
-                tam_ultimo_ch0 = int(size_ch0)
-            pos = fin_datos + 12
-            n_seg += 1
+    n_seg = 0
+    for ch0_bytes, ch1_bytes, info in _iterar_segmentos(ruta):
+        ch0_partes.append(ch0_bytes)
+        ch1_partes.append(ch1_bytes)
+        header_144 = info['header_144']
+        if header_144 and 't_cap' in info:  # ausente si el marcador de ESTE segmento era invalido
+            lost0 += info['lost0']
+            lost1 += info['lost1']
+            if n_seg == 0:
+                osc0, osc1 = info['osc0'], info['osc1']
+                t_inicio = info['t_cap']
+            t_ultimo = info['t_cap']
+            tam_ultimo_ch0 = info['tam_ch0']
+        n_seg += 1
 
     ch0 = np.frombuffer(b''.join(ch0_partes), dtype='<i2')
     ch1 = np.frombuffer(b''.join(ch1_partes), dtype='<i2')
