@@ -61,10 +61,14 @@ matplotlib.use("TkAgg")
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 from matplotlib.widgets import SpanSelector
-from scipy.signal import butter, sosfiltfilt, welch
+from scipy.signal import welch
 
 sys.path.insert(0, str(Path(__file__).parent))
-from revisar import _leer_canales_bin, _cargar_info, V_REF, FA_WINDOW_S  # noqa: E402
+from revisar import _leer_canales_bin, _cargar_info, V_REF  # noqa: E402
+from area_kurtosis import (  # noqa: E402
+    FILTRO_BANDA_HZ, AREA_VENTANA_S,
+    _filtrar_pasabanda, _rms_muestra_a_muestra, _area_por_ventana, _kurtosis_por_ventana,
+)
 
 try:
     from tkinterdnd2 import DND_FILES, TkinterDnD
@@ -74,11 +78,6 @@ except ImportError:
 
 N_BINS_OVERVIEW = 2000       # columnas de la envolvente de vista general
 MAX_MUESTRAS_CRUDAS = 200_000  # por encima de esto, la ventana de zoom tambien se decima
-
-# Banda de interes para arena: <25kHz es ruido de fluido, >400kHz no aporta
-# (fuera del rango de interes del sensor). Pasabanda Butterworth zero-phase.
-FILTRO_BANDA_HZ = (25_000, 400_000)
-FILTRO_ORDEN = 4
 
 # Tamaño de ventana de Welch para el espectro: buen compromiso entre
 # resolucion en frecuencia (~60Hz con fs~3.9MHz) y tiempo de calculo
@@ -90,59 +89,6 @@ FFT_NPERSEG = 65536
 # archivo para ver como se comporta antes de pensar en hacerlo configurable
 # o en pegar varios archivos como timeline_lote.py.
 KURT_FIJO_ACUMULADO = 6.0
-
-
-def _filtrar_pasabanda(volts, fs, banda=FILTRO_BANDA_HZ, orden=FILTRO_ORDEN):
-    nyq = fs / 2
-    sos = butter(orden, [banda[0] / nyq, banda[1] / nyq], btype="bandpass", output="sos")
-    return sosfiltfilt(sos, volts).astype(np.float32)
-
-
-def _rms_muestra_a_muestra(volts):
-    """RMS con ventana de 1 muestra (sqrt(x^2) = |x|): la señal completa,
-    misma resolucion temporal que la original, pero siempre >= 0."""
-    return np.abs(volts)
-
-
-# Mismo tamaño de ventana que fraccion_activa/kurtosis en revisar.py y
-# timeline_lote.py, para que esta curva de area quede alineada en el tiempo
-# con esas metricas del mismo archivo (50ms daba mas granularidad que 1s
-# para no diluir impactos cortos de arena entre si).
-AREA_VENTANA_S = FA_WINDOW_S
-
-
-def _area_por_ventana(rms, fs, ventana_s=AREA_VENTANA_S):
-    """(t_centro_s, area) del area bajo la curva de rms (ya siempre >= 0)
-    en ventanas de ventana_s no superpuestas — suma de Riemann (rectangular,
-    area_i = sum(muestras de la ventana) * dt) por ventana."""
-    n_ventana = max(1, int(fs * ventana_s))
-    n_total = len(rms) // n_ventana
-    if n_total == 0:
-        return np.array([]), np.array([], dtype=np.float32)
-    mat = rms[: n_total * n_ventana].reshape(n_total, n_ventana).astype(np.float64)
-    area = (mat.sum(axis=1) / fs).astype(np.float32)
-    t = (np.arange(n_total) + 0.5) * ventana_s
-    return t, area
-
-
-def _kurtosis_por_ventana(volts, fs, ventana_s=AREA_VENTANA_S):
-    """(t_centro_s, kurtosis) en ventanas de ventana_s no superpuestas —
-    mismo criterio y formula que _metricas_por_ventana de timeline_lote.py
-    (y el calculo de kurtosis de revisar.py): dentro de cada ventana se le
-    resta la media, y kurt = m4/m2^2 con m2=E[(x-x̄)^2], m4=E[(x-x̄)^4]. Para
-    ruido gaussiano da ~3; picos aislados grandes (impactos) la disparan
-    mucho mas arriba porque m4 pesa los valores extremos a la 4ta potencia."""
-    n_ventana = max(1, int(fs * ventana_s))
-    n_total = len(volts) // n_ventana
-    if n_total == 0:
-        return np.array([]), np.array([], dtype=np.float32)
-    mat = volts[: n_total * n_ventana].reshape(n_total, n_ventana).astype(np.float64)
-    mat = mat - mat.mean(axis=1, keepdims=True)
-    m2 = np.mean(mat ** 2, axis=1)
-    m4 = np.mean(mat ** 4, axis=1)
-    kurt = (m4 / np.where(m2 > 0, m2 ** 2, 1e-30)).astype(np.float32)
-    t = (np.arange(n_total) + 0.5) * ventana_s
-    return t, kurt
 
 
 def _rms_por_ventana_directo(volts, fs, ventana_s=AREA_VENTANA_S):
