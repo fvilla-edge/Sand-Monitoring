@@ -42,9 +42,12 @@ Sand Monitoring/
 │   ├── relanzar_captura.sh    # Supervisor: relanza capturar_stream.py si el streaming-server se cae
 │   ├── repetir_captura.sh     # Repite una captura corta N veces (carpetas livianas, mas faciles de transmitir)
 │   └── udev-automount/        # Montaje/desmontaje automatico del storage de campo (USB/SSD) en /mnt/usb
-├── analisis/               # Scripts de analisis local (corren en la PC)
+├── analisis/               # Scripts de analisis (mayoria corre en la PC, placa/ es la excepcion)
 │   ├── revisar.py          # Revision rapida de capturas, mono o dual (.bin) — fuente de verdad en texto
-│   ├── graficar.py         # Graficos de barras para demo, mismas metricas que revisar.py
+│   ├── visores/            # GUIs de matplotlib/tkinter (ver_forma_onda.py, ver_acumulado_lote.py + abrir_*.sh)
+│   ├── lote/               # Analisis de un lote completo pegado en el tiempo (acumulado_lote.py)
+│   ├── utilidades/         # graficar.py, extraer_canal.py, generar_baseline.py
+│   ├── placa/              # Paquete liviano area/kurtosis pensado para correr EN la placa (rama area-en-placa, sin mergear a main — ver sec.169/171 de la memoria del proyecto)
 │   ├── INTERPRETACION_RESULTADOS.md  # Guia de lectura de metricas: deteccion vs clasificacion
 │   └── tests/              # Tests del parser de .bin y la logica de deteccion (pytest)
 ├── indicador_estado/       # LED de estado (PS_MIO11) — parpadeo distinto en captura/transmision/standby

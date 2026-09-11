@@ -4,8 +4,8 @@ exportar_paquete_area.py — Fase 1 del "paquete liviano para la placa"
 (ver docs del feature, rama area-en-placa): por archivo de captura calcula
 (t_centro_s, area, kurtosis) por ventana de AREA_VENTANA_S — mismas
 formulas que las pestañas "Área" y "Señal+Kurtosis" de ver_forma_onda.py
-(ver analisis/area_kurtosis.py, de donde se importan) — y lo guarda en
-JSON.
+(ver analisis/placa/area_kurtosis.py, de donde se importan) — y lo guarda
+en JSON.
 
 A proposito NO hace el paso de "Acumulado" (umbral de kurtosis + cumsum):
 esa parte se hace despues, en la PC, a partir de este JSON — no hace falta
@@ -14,8 +14,8 @@ volver a tocar la señal cruda para eso. Tampoco importa matplotlib/tkinter
 la placa (fase 2 del plan) sin arrastrar esas dependencias.
 
 Uso:
-  .venv/bin/python3 analisis/exportar_paquete_area.py campo_reposo_..._0000.bin
-  .venv/bin/python3 analisis/exportar_paquete_area.py archivo.bin -o salida.json
+  .venv/bin/python3 analisis/placa/exportar_paquete_area.py campo_reposo_..._0000.bin
+  .venv/bin/python3 analisis/placa/exportar_paquete_area.py archivo.bin -o salida.json
 
 Valida contra ver_forma_onda.py: abrir el mismo archivo ahi y comparar
 "area" contra la pestaña "Área" (ventana 50ms) y "kurtosis" contra la curva
@@ -29,7 +29,8 @@ from pathlib import Path
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent))          # placa/ (area_kurtosis.py)
+sys.path.insert(0, str(Path(__file__).parent.parent))    # analisis/ (revisar.py)
 from revisar import _leer_canales_bin, _cargar_info, V_REF  # noqa: E402
 from area_kurtosis import (  # noqa: E402
     AREA_VENTANA_S, BLOQUE_S_DEFAULT, MARGEN_S_DEFAULT,

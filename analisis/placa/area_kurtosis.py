@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-area_kurtosis.py — filtrado pasabanda (25-400kHz) + área bajo la curva del
+area_kurtosis.py — filtrado pasabanda (50-400kHz) + área bajo la curva del
 RMS y kurtosis, ambas por ventana de AREA_VENTANA_S. Es la parte PURA (sin
 matplotlib/tkinter) de ver_forma_onda.py: ese visor importa estas mismas
 funciones en vez de definirlas, para que solo exista una formula real.
@@ -15,19 +15,23 @@ No reimplementa la lectura del formato .bin — eso sigue en
 revisar.py::_leer_canales_bin/_cargar_info, misma fuente de verdad de
 siempre.
 """
+import sys
+from pathlib import Path
+
 import numpy as np
 from scipy.signal import butter, sosfiltfilt
 
-from revisar import FA_WINDOW_S, _iterar_segmentos
+sys.path.insert(0, str(Path(__file__).parent.parent))  # analisis/ (revisar.py)
+from revisar import FA_WINDOW_S, _iterar_segmentos  # noqa: E402
 
-# Banda de interes para arena: <25kHz es ruido de fluido, >400kHz no aporta
+# Banda de interes para arena: <50kHz es ruido de fluido, >400kHz no aporta
 # (fuera del rango de interes del sensor). Pasabanda Butterworth zero-phase.
-FILTRO_BANDA_HZ = (25_000, 400_000)
+FILTRO_BANDA_HZ = (50_000, 400_000)
 FILTRO_ORDEN = 4
 
-# Mismo tamaño de ventana que fraccion_activa/kurtosis en revisar.py y
-# timeline_lote.py, para que el area/kurtosis de aca queden alineados en el
-# tiempo con esas metricas del mismo archivo.
+# Mismo tamaño de ventana que fraccion_activa/kurtosis en revisar.py, para
+# que el area/kurtosis de aca queden alineados en el tiempo con esas
+# metricas del mismo archivo.
 AREA_VENTANA_S = FA_WINDOW_S
 
 

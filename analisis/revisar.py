@@ -11,11 +11,12 @@ JSON de sesion — no hace falta indicarlo por linea de comandos. Un mismo lote
 puede mezclar capturas mono y dual: se muestran en tablas separadas.
 
 Mono: kurtosis, crest factor, fraccion_activa y rms_diferencial sobre la
-senal filtrada (25-400 kHz — migrado desde 100-450 kHz para usar la misma
-banda que ver_forma_onda.py, ver constantes BANDA_LOW/BANDA_HIGH mas abajo;
-los umbrales de referencia de kurtosis/fraccion_activa de
-INTERPRETACION_RESULTADOS.md fueron calibrados con la banda VIEJA — no
-aplican tal cual a los numeros que salen de aca hasta recalibrar).
+senal filtrada (50-400 kHz — piso subido desde 25 kHz por decision de
+reunion de avance del 2026-09-11, ver constantes BANDA_LOW/BANDA_HIGH mas
+abajo; los umbrales de referencia de kurtosis/fraccion_activa de
+INTERPRETACION_RESULTADOS.md fueron calibrados con bandas VIEJAS (100-450kHz
+y luego 25-400kHz) — no aplican tal cual a los numeros que salen de aca
+hasta recalibrar).
 
 Dual (CH1 codo / CH2 referencia): mismas metricas por canal (incluye crest
 factor cf1/cf2) mas kurtosis_diff (k1-k2) y rms_ratio (CH1/CH2) para separar
@@ -56,8 +57,8 @@ import numpy as np
 from scipy.signal import butter, sosfilt
 from scipy.stats import kurtosis as scipy_kurtosis
 
-BANDA_LOW   = 25_000    # Hz — migrado de 100_000 a la banda de ver_forma_onda.py
-BANDA_HIGH  = 400_000   # Hz — migrado de 450_000, idem
+BANDA_LOW   = 50_000    # Hz — subido de 25_000 por decision de reunion de avance (2026-09-11)
+BANDA_HIGH  = 400_000   # Hz
 FILTRO_ORD  = 4
 FA_WINDOW_S = 0.050     # 50 ms por ventana
 FA_THRESH   = 6         # kurtosis Pearson >= 6 → ventana activa (KURT_FIJO_ACUMULADO de ver_forma_onda.py, calibrado contra la purga de 8kg confirmada del 3/9 — ver sec.163/165 de la memoria del proyecto). Antes: 20, calibrado para la banda vieja (100-450kHz).

@@ -5,8 +5,8 @@ graficar.py — Graficos de barras para demo, mismas metricas que revisar.py
 siendo la fuente de verdad en texto) — esto es solo la vista grafica.
 
 Uso:
-  .venv/bin/python3 analisis/graficar.py datos_campo/
-  .venv/bin/python3 analisis/graficar.py campo_reposo_*.bin campo_con_arena_*.bin
+  .venv/bin/python3 analisis/utilidades/graficar.py datos_campo/
+  .venv/bin/python3 analisis/utilidades/graficar.py campo_reposo_*.bin campo_con_arena_*.bin
 
 Guarda un PNG por grupo (mono/dual) en analisis/outputs/graficos/.
 """
@@ -17,7 +17,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent.parent))  # analisis/ (donde vive revisar.py)
 from revisar import (
     _calcular, _recopilar_rutas,
     _agregar_rms_diferencial_mono, _agregar_rms_diferencial_dual,
@@ -31,7 +31,7 @@ COLOR_CH2    = '#1baf7a'   # categorical slot 3 (aqua) — canal 2 en dual
 INK_MUTED    = '#898781'
 INK_SECOND   = '#52514e'
 
-OUT_DIR = Path(__file__).parent / 'outputs' / 'graficos'
+OUT_DIR = Path(__file__).parent.parent / 'outputs' / 'graficos'
 
 
 def _quitar_bordes(ax):

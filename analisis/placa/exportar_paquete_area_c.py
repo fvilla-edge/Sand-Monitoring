@@ -3,7 +3,7 @@
 exportar_paquete_area_c.py — misma salida que exportar_paquete_area.py
 (paquete area+kurtosis por ventana, sin acumulado), pero el trabajo pesado
 (leer el .bin, filtrar, ventanear) corre en un binario C
-(analisis/c/paquete_area) en vez de Python/NumPy/SciPy.
+(analisis/placa/c/paquete_area) en vez de Python/NumPy/SciPy.
 
 Motivo: medido en la placa real (rp-f0fbda), la version Python tarda ~10x
 el tiempo real de la señal AUN SOLA, sin competir con ninguna captura
@@ -20,10 +20,10 @@ en area_kurtosis.py — margen real entre bloques + residual de ventaneo
 arrastrado para no perder la grilla continua) y filtrar/ventanear.
 
 Uso: igual que exportar_paquete_area.py
-  .venv/bin/python3 analisis/exportar_paquete_area_c.py archivo.bin [-o salida.json] [--bloque-s N]
+  .venv/bin/python3 analisis/placa/exportar_paquete_area_c.py archivo.bin [-o salida.json] [--bloque-s N]
 
 Requiere haber compilado antes el binario:
-  cd analisis/c && make
+  cd analisis/placa/c && make
 """
 import sys
 import json
@@ -34,7 +34,8 @@ from pathlib import Path
 
 from scipy.signal import butter
 
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent))          # placa/ (area_kurtosis.py)
+sys.path.insert(0, str(Path(__file__).parent.parent))    # analisis/ (revisar.py)
 from revisar import _cargar_info, V_REF  # noqa: E402
 from area_kurtosis import (  # noqa: E402
     FILTRO_BANDA_HZ, FILTRO_ORDEN, AREA_VENTANA_S, BLOQUE_S_DEFAULT, MARGEN_S_DEFAULT,

@@ -20,7 +20,7 @@ porque no aportaba nada por encima del acumulado.)
 
 No reimplementa el calculo — usa las funciones de acumulado_lote.py
 (_leer_lote, _armar_serie, _acumulado, _tramos_activos, _etiqueta_lote), que
-a su vez reusan revisar.py (banda 25-400kHz, umbral kurtosis 6 — ver ahi
+a su vez reusan revisar.py (banda 50-400kHz, umbral kurtosis 6 — ver ahi
 para el porque). También guarda el mismo PNG que la version CLI en
 analisis/outputs/acumulado_lote/, por si hace falta para un informe.
 
@@ -29,7 +29,7 @@ hilo aparte — con un lote real de 13 archivos (~20min de captura) tarda
 unos 40s, y bloquear la ventana ese tiempo la deja "trabada" sin feedback.
 
 Uso: doble-click en abrir_acumulado_lote.sh (mismo directorio), o:
-  .venv/bin/python3 analisis/ver_acumulado_lote.py
+  .venv/bin/python3 analisis/visores/ver_acumulado_lote.py
 """
 import os
 import sys
@@ -47,7 +47,9 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 
-sys.path.insert(0, str(Path(__file__).parent))
+_ANALISIS = Path(__file__).parent.parent
+sys.path.insert(0, str(_ANALISIS))            # revisar.py vive en analisis/
+sys.path.insert(0, str(_ANALISIS / "lote"))   # acumulado_lote.py vive en analisis/lote/
 from revisar import _recopilar_rutas  # noqa: E402
 from acumulado_lote import (  # noqa: E402
     _leer_lote, _armar_serie, _acumulado, _tramos_activos, _etiqueta_lote,

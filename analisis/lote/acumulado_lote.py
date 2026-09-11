@@ -2,9 +2,8 @@
 """
 acumulado_lote.py — Señal completa de un lote (varias capturas seguidas del
 mismo tipo) pegadas en el tiempo real, con la banda/umbral UNIFICADOS de
-revisar.py (25-400kHz, kurtosis>=6 — importados directo de revisar.py, asi
+revisar.py (50-400kHz, kurtosis>=6 — importados directo de revisar.py, asi
 que si esa banda vuelve a cambiar este script la sigue sin tocar nada acá).
-Reemplaza a timeline_lote.py para lotes nuevos (ver NOTA mas abajo).
 
 Dos paneles por lote (mono o dual), mismo eje de tiempo absoluto real:
   - kurtosis por ventana de FA_WINDOW_S (50ms).
@@ -27,8 +26,8 @@ del mismo tipo (mono_dec32 + mono_dec64) van a quedar pegadas en la misma
 linea aunque sean sesiones distintas (no se detecta ese caso).
 
 Uso:
-  .venv/bin/python3 analisis/acumulado_lote.py "carpeta con lote"/*_mono_dec32/
-  .venv/bin/python3 analisis/acumulado_lote.py "carpeta con lote"/*_dual_dec64/
+  .venv/bin/python3 analisis/lote/acumulado_lote.py "carpeta con lote"/*_mono_dec32/
+  .venv/bin/python3 analisis/lote/acumulado_lote.py "carpeta con lote"/*_dual_dec64/
 
 Guarda un PNG por lote (mono o dual) en analisis/outputs/acumulado_lote/ con
 los dos paneles, e imprime en texto los tramos donde la kurtosis supero el
@@ -43,12 +42,6 @@ grandes con filtfilt duplica el costo de filtrado sin cambiar la
 clasificacion de forma relevante para esta vista (kurtosis/area por ventana
 de 50ms, no la forma de onda punto a punto).
 
-NOTA: reemplaza a timeline_lote.py para lotes nuevos. timeline_lote.py NO se
-migro (queda pineado a proposito a la banda vieja, 100-450kHz/umbral 20, con
-la que se lo uso originalmente) — no se toca ni se re-usa para lotes nuevos,
-solo sirve de referencia historica. Ver sec.166 de la memoria del proyecto
-para el porque de esa decision, y la conversacion donde se decidio crear
-este script en vez de extenderlo in-place.
 """
 import sys
 from datetime import datetime, timedelta, timezone
@@ -63,7 +56,7 @@ import numpy as np
 # solo puede fijarse una vez por proceso: si este modulo lo fijara a Agg al
 # importarse, pisaria el TkAgg que la GUI necesita para el canvas embebido.
 
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent.parent))  # analisis/ (donde vive revisar.py)
 from revisar import (  # noqa: E402
     _leer_canales_bin, _cargar_info, _recopilar_rutas, _bandpass,
     FA_WINDOW_S, FA_THRESH, V_REF,
@@ -74,7 +67,7 @@ import re  # noqa: E402
 
 ART = timezone(timedelta(hours=-3))
 
-OUT_DIR = Path(__file__).parent / 'outputs' / 'acumulado_lote'
+OUT_DIR = Path(__file__).parent.parent / 'outputs' / 'acumulado_lote'
 
 COLOR_K1 = '#2a78d6'
 COLOR_K2 = '#1baf7a'
@@ -268,7 +261,7 @@ def _graficar(nombre_lote, items, canales):
     t1_total = (items[-1]['t_inicio'] + timedelta(seconds=items[-1].get('dur_real_s') or 60)).astimezone(ART)
     fig.suptitle(
         f'Acumulado {nombre_lote} — {t0_total.strftime("%Y-%m-%d %H:%M")} a '
-        f'{t1_total.strftime("%H:%M")} ART ({len(items)} archivos, banda 25-400kHz, umbral kurtosis {FA_THRESH})',
+        f'{t1_total.strftime("%H:%M")} ART ({len(items)} archivos, banda 50-400kHz, umbral kurtosis {FA_THRESH})',
         fontsize=12)
 
     huecos_totales = []

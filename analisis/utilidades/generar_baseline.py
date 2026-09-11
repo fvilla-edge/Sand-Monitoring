@@ -10,9 +10,10 @@ hora de produccion real segun el reporte del pozo).
 
 Agrupa por (canales, decimacion) — cada combinacion encontrada arma su
 propia entrada en el JSON ("mono_dec32", "dual_dec64", etc.) con la
-mediana del RMS (señal filtrada 100-450kHz) de esos archivos. revisar.py
-y timeline_lote.py usan esas entradas via --baseline en vez de calcular
-un baseline por lote cuando la (canales, decimacion) esta cubierta ahi.
+mediana del RMS (señal filtrada con la banda vigente de revisar.py, ver
+BANDA_LOW/BANDA_HIGH ahi) de esos archivos. revisar.py usa esas entradas
+via --baseline en vez de calcular un baseline por lote cuando la
+(canales, decimacion) esta cubierta ahi.
 
 Antes de escribir nada, verifica que NINGUN archivo pasado haya sido
 detectado como arena/ruido (revisar.py::_detectar_mono/_detectar_dual) —
@@ -26,7 +27,7 @@ separadas, como paso ademas en la practica (mono_dec32 + dual_dec64
 primero, mono_dec64 despues).
 
 Uso:
-  .venv/bin/python3 analisis/generar_baseline.py "carpeta con capturas confirmadas"/*/
+  .venv/bin/python3 analisis/utilidades/generar_baseline.py "carpeta con capturas confirmadas"/*/
 """
 import json
 import sys
@@ -35,10 +36,10 @@ from pathlib import Path
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent.parent))  # analisis/ (donde vive revisar.py)
 from revisar import _calcular, _clave_config, _detectar_dual, _detectar_mono, _recopilar_rutas  # noqa: E402
 
-OUT = Path(__file__).parent / 'baseline_confirmado.json'
+OUT = Path(__file__).parent.parent / 'baseline_confirmado.json'
 
 
 def main():

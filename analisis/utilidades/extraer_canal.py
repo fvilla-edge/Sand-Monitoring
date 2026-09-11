@@ -12,12 +12,12 @@ en la placa ni toca el pipeline de scripts_campo/capturar_stream.py.
 --canal 1 = IN1 (sensor codo), --canal 2 = IN2 (sensor referencia) — mismo
 orden fijo que _leer_canales_bin en revisar.py (indice 0 = IN1, indice 1 =
 IN2). El archivo de salida queda con el canal elegido en la posicion de
-"canal unico", asi revisar.py/graficar.py/timeline_lote.py lo leen como
-cualquier captura mono, sin cambios.
+"canal unico", asi revisar.py/graficar.py lo leen como cualquier captura
+mono, sin cambios.
 
 Uso:
-  .venv/bin/python3 analisis/extraer_canal.py --canal 1 "carpeta dual"/ -o salida/
-  .venv/bin/python3 analisis/extraer_canal.py --canal 2 campo_con_arena_*.bin -o salida/
+  .venv/bin/python3 analisis/utilidades/extraer_canal.py --canal 1 "carpeta dual"/ -o salida/
+  .venv/bin/python3 analisis/utilidades/extraer_canal.py --canal 2 campo_con_arena_*.bin -o salida/
 """
 import argparse
 import json
@@ -27,7 +27,7 @@ from pathlib import Path
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent.parent))  # analisis/ (donde vive revisar.py)
 from revisar import (  # noqa: E402
     _MARKER, _OFF_LOST_COUNT, _OFF_OSC_RATE, _OFF_SIGMENT_LENGTH, _OFF_SIZE_CH,
     _cargar_info, _detectar_header_size, _recopilar_rutas,
