@@ -1,16 +1,21 @@
 /*
  * paquete_area.c — la parte pesada de exportar_paquete_area.py reescrita en
  * C: leer el .bin (formato segmentado de revisar.py), filtrar pasabanda
- * (zero-phase) y calcular area/kurtosis por ventana, todo por bloques de
- * memoria acotada (mismo diseño ya validado en area_kurtosis.py: margen de
- * datos reales entre bloques para el asentamiento del filtro + un
- * "residual" de muestras filtradas sin ventanear que se arrastra entre
- * bloques para no reiniciar la grilla de ventanas en cada uno).
+ * (CAUSAL, una pasada — ver sec.172 de la memoria del proyecto) y calcular
+ * area/kurtosis por ventana, todo por bloques de memoria acotada (mismo
+ * diseño ya validado en area_kurtosis.py: margen de datos reales entre
+ * bloques para el asentamiento del filtro + un "residual" de muestras
+ * filtradas sin ventanear que se arrastra entre bloques para no reiniciar
+ * la grilla de ventanas en cada uno).
  *
  * Medido en la placa real (rp-f0fbda): la version Python/NumPy/SciPy
  * tarda ~10x el tiempo real de la señal AUN SOLA, sin competir con
  * ninguna captura (245.9s para procesar 25.7s de audio) — de ahi esta
- * reescritura.
+ * reescritura. La primera version de esta reescritura (zero-phase,
+ * sosfiltfilt-equivalente) llego a 0.32x tiempo real (79.5s) — sigue sin
+ * alcanzar. Sec.172 midio que el filtro zero-phase cuesta ~2x el causal
+ * (benchmark en Python, clasificacion de kurtosis 99.3% igual entre ambos
+ * en datos reales) — esta version pasa a causal por ese motivo.
  *
  * NO calcula los coeficientes del filtro (evita reimplementar el diseño
  * Butterworth en C, riesgo de un bug numerico sutil): los recibe ya
@@ -58,13 +63,18 @@ static void salida_agregar(Salida *s, double t, double area, double kurt) {
     s->n++;
 }
 
-/* --- Filtro zero-phase (equivalente a scipy.signal.sosfiltfilt, sin el
- * ajuste de condiciones iniciales de scipy: arranca en silencio (zi=0) en
- * cada pasada. El margen entre bloques (>=195312 muestras en el uso real,
- * >> los ~437 muestras que mide el asentamiento real del filtro, ver
- * docs/plan del feature) hace que el transitorio de arranque decaiga del
- * todo antes de llegar al tramo "core" que de verdad se usa — validado
- * numericamente contra la version Python/SciPy.
+/* --- Filtro CAUSAL, una sola pasada (equivalente a scipy.signal.sosfilt,
+ * sin el ajuste de condiciones iniciales de scipy: arranca en silencio
+ * (zi=0) en vez de estado estacionario). El margen IZQUIERDO entre bloques
+ * (>=195312 muestras en el uso real, >> los ~437 muestras que mide el
+ * asentamiento real del filtro, ver docs/plan del feature) hace que el
+ * transitorio de arranque decaiga del todo antes de llegar al tramo "core"
+ * que de verdad se usa — validado numericamente contra la version
+ * Python/SciPy (99.3% de coincidencia de clasificacion en datos reales,
+ * sec.172). El margen DERECHO ya no hace falta para este filtro (solo
+ * miraba "adelante" para la pasada inversa del zero-phase, que ya no
+ * existe) — se mantiene por ahora sin tocar el resto del pipeline de
+ * bloques, es inofensivo, solo un poco de trabajo de mas.
  *
  * En simple precision (float) a proposito, no double: medido en HW real
  * (placa Zynq 7010, Cortex-A9) — el doble precision puro tardaba ~4-5x mas
@@ -85,19 +95,6 @@ static void aplicar_sos_inplace(const SeccionF *sos, int n_sec, float *x, long n
             x[i] = yi;
         }
     }
-}
-
-static void invertir(float *x, long n) {
-    for (long i = 0, j = n - 1; i < j; i++, j--) {
-        float tmp = x[i]; x[i] = x[j]; x[j] = tmp;
-    }
-}
-
-static void sosfiltfilt_simple(const SeccionF *sos, int n_sec, float *x, long n) {
-    aplicar_sos_inplace(sos, n_sec, x, n);
-    invertir(x, n);
-    aplicar_sos_inplace(sos, n_sec, x, n);
-    invertir(x, n);
 }
 
 /* --- Lectura del .bin (mismo formato que revisar.py::_iterar_segmentos) --- */
@@ -133,7 +130,7 @@ typedef struct {
 } Canal;
 
 /* Filtra el bloque COMPLETO (margen+core+margen, ya en Volts, en float —
- * ver nota de precision en sosfiltfilt_simple) y agrega a `canal` las
+ * ver nota de precision en aplicar_sos_inplace) y agrega a `canal` las
  * ventanas completas que se puedan armar con residual_anterior+core — ver
  * area_kurtosis.py::_area_kurtosis_de_bloque (misma logica, ya validada
  * contra la version Python). El residual y las sumas de ventana SI quedan
@@ -143,7 +140,7 @@ typedef struct {
 static void procesar_canal(const SeccionF *sos, int n_sec, float *volts_bloque, long n_total,
                             long n_izq, long n_core_real, double fs, double ventana_s,
                             double t_offset_s, Canal *canal) {
-    sosfiltfilt_simple(sos, n_sec, volts_bloque, n_total);
+    aplicar_sos_inplace(sos, n_sec, volts_bloque, n_total);
     float *core = volts_bloque + n_izq;
 
     long n_combinado = (long)canal->n_residual + n_core_real;
@@ -299,7 +296,7 @@ int main(int argc, char **argv) {
     fclose(fc);
     /* Los coeficientes se leen en double (los manda scipy con esa
      * precision) pero el filtro corre en float (ver nota de precision en
-     * sosfiltfilt_simple) — se convierten una sola vez aca, no en el loop. */
+     * aplicar_sos_inplace) — se convierten una sola vez aca, no en el loop. */
     SeccionF sos[MAX_SECCIONES];
     for (int i = 0; i < n_sec; i++) {
         sos[i].b0 = (float)sos_d[i].b0;

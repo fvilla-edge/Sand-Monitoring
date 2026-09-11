@@ -19,13 +19,20 @@ import sys
 from pathlib import Path
 
 import numpy as np
-from scipy.signal import butter, sosfiltfilt
+from scipy.signal import butter, sosfilt
 
 sys.path.insert(0, str(Path(__file__).parent.parent))  # analisis/ (revisar.py)
 from revisar import FA_WINDOW_S, _iterar_segmentos  # noqa: E402
 
 # Banda de interes para arena: <50kHz es ruido de fluido, >400kHz no aporta
-# (fuera del rango de interes del sensor). Pasabanda Butterworth zero-phase.
+# (fuera del rango de interes del sensor). Pasabanda Butterworth CAUSAL (una
+# sola pasada, sosfilt) — a proposito distinto de ver_forma_onda.py
+# (sosfiltfilt/zero-phase): sec.172 de la memoria del proyecto midio 2.11x
+# menos costo de filtrado con causal (benchmark propio), y revisar.py/
+# acumulado_lote.py en la PC ya usan causal por el mismo motivo para lotes
+# grandes. Kurtosis/area por ventana no dependen de fase, solo de la
+# distribucion de amplitud dentro de cada ventana — el retardo de grupo fijo
+# que introduce un causal no afecta esa estadistica.
 FILTRO_BANDA_HZ = (50_000, 400_000)
 FILTRO_ORDEN = 4
 
@@ -38,7 +45,7 @@ AREA_VENTANA_S = FA_WINDOW_S
 def _filtrar_pasabanda(volts, fs, banda=FILTRO_BANDA_HZ, orden=FILTRO_ORDEN):
     nyq = fs / 2
     sos = butter(orden, [banda[0] / nyq, banda[1] / nyq], btype="bandpass", output="sos")
-    return sosfiltfilt(sos, volts).astype(np.float32)
+    return sosfilt(sos, volts).astype(np.float32)
 
 
 def _rms_muestra_a_muestra(volts):
@@ -98,11 +105,20 @@ def _kurtosis_por_ventana(volts, fs, ventana_s=AREA_VENTANA_S):
 # _bloques_canal recorre el .bin de a un segmento (revisar._iterar_segmentos,
 # NO _leer_canales_bin) y arma bloques de BLOQUE_S_DEFAULT segundos "core",
 # con un margen de MARGEN_S_DEFAULT a cada lado tomado de datos reales
-# (no relleno inventado) para que sosfiltfilt asiente bien en cada corte
+# (no relleno inventado) para que el filtro asiente bien en cada corte
 # artificial entre bloques -- el margen se descarta del resultado filtrado
 # antes de ventanear, solo se cuenta/emite el core. En memoria, en todo
 # momento, hay como mucho ~1 bloque (unos pocos MB), sin importar cuan
 # largo sea el archivo entero.
+#
+# NOTA (sec.172): este diseño de margen a AMBOS lados se penso para
+# sosfiltfilt (zero-phase, necesita datos reales de los dos lados del corte
+# para asentar bien). Con el filtro causal actual (sosfilt) solo hace falta
+# margen a la IZQUIERDA (historia pasada del filtro) — el margen derecho ya
+# no es necesario para la correctitud, queda como esta por simpleza (no es
+# incorrecto, solo un poco mas conservador/costoso de lo estrictamente
+# necesario). Simplificarlo a un solo margen es una optimizacion pendiente,
+# no aplicada todavia.
 
 BLOQUE_S_DEFAULT = 0.25    # segundos de señal "core" por bloque — medido en HW real:
 # bloque_s=2.0 llegaba a ~493MB de RSS (sosfiltfilt trabaja en float64 sobre
@@ -129,7 +145,9 @@ def _bloques_canal(ruta, fs, bloque_s=BLOQUE_S_DEFAULT, margen_s=MARGEN_S_DEFAUL
     no de la muestra con margen. El consumidor debe filtrar el bloque
     COMPLETO y quedarse solo con [n_izq : n_izq+n_core] del resultado antes
     de ventanear (descartar el margen, que solo esta ahi para el
-    asentamiento del filtro zero-phase en este corte artificial)."""
+    asentamiento del filtro en este corte artificial — con el filtro causal
+    actual, en rigor solo el margen izquierdo hace falta, ver NOTA sec.172
+    mas arriba)."""
     n_core = max(1, int(round(fs * bloque_s)))
     n_margen = max(1, int(round(fs * margen_s)))
 
@@ -195,7 +213,8 @@ def _area_kurtosis_de_bloque(volts_bloque, fs, n_izq, n_core, residual_anterior=
     """Filtra el bloque COMPLETO (margen+core+margen) y devuelve
     (t_local_s, area, kurtosis, residual_nuevo) para las ventanas completas
     que se pueden armar — descarta el margen usado nada mas para el
-    asentamiento del filtro zero-phase (eso SI se tira, ver _bloques_canal).
+    asentamiento del filtro (eso SI se tira, ver _bloques_canal y su NOTA
+    sec.172 sobre por que con causal el margen derecho ya no es necesario).
 
     OJO con una trampa distinta a la del margen: bloque_s no tiene por que
     ser multiplo exacto de ventana_s (ej. fs=3906250Hz, ventana=50ms da

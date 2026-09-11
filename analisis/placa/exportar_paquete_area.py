@@ -3,9 +3,9 @@
 exportar_paquete_area.py — Fase 1 del "paquete liviano para la placa"
 (ver docs del feature, rama area-en-placa): por archivo de captura calcula
 (t_centro_s, area, kurtosis) por ventana de AREA_VENTANA_S — mismas
-formulas que las pestañas "Área" y "Señal+Kurtosis" de ver_forma_onda.py
-(ver analisis/placa/area_kurtosis.py, de donde se importan) — y lo guarda
-en JSON.
+formulas de area/kurtosis que las pestañas "Área" y "Señal+Kurtosis" de
+ver_forma_onda.py (ver analisis/placa/area_kurtosis.py, de donde se
+importan) — y lo guarda en JSON.
 
 A proposito NO hace el paso de "Acumulado" (umbral de kurtosis + cumsum):
 esa parte se hace despues, en la PC, a partir de este JSON — no hace falta
@@ -17,10 +17,14 @@ Uso:
   .venv/bin/python3 analisis/placa/exportar_paquete_area.py campo_reposo_..._0000.bin
   .venv/bin/python3 analisis/placa/exportar_paquete_area.py archivo.bin -o salida.json
 
-Valida contra ver_forma_onda.py: abrir el mismo archivo ahi y comparar
-"area" contra la pestaña "Área" (ventana 50ms) y "kurtosis" contra la curva
-de la pestaña "... Señal+Kurtosis" — tienen que coincidir (misma formula,
-mismos datos).
+Validacion contra ver_forma_onda.py (sec.172): desde que area_kurtosis.py
+pasa a filtro CAUSAL (sosfilt, una pasada — ver_forma_onda.py sigue con
+sosfiltfilt zero-phase a proposito, para que la forma de onda se vea bien
+en el visor) los valores de area/kurtosis de este paquete NO coinciden
+exacto con los del visor — hay un retardo de grupo fijo y menos atenuacion
+por pasada simple. Lo que se valida ahora es CLASIFICACION equivalente
+(mismos archivos por encima/debajo del umbral de kurtosis), no igualdad
+numerica exacta.
 """
 import sys
 import json

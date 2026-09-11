@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
 """
-exportar_paquete_area_c.py — misma salida que exportar_paquete_area.py
-(paquete area+kurtosis por ventana, sin acumulado), pero el trabajo pesado
-(leer el .bin, filtrar, ventanear) corre en un binario C
+exportar_paquete_area_c.py — mismo paquete area+kurtosis por ventana, sin
+acumulado, que exportar_paquete_area.py, pero el trabajo pesado (leer el
+.bin, filtrar, ventanear) corre en un binario C
 (analisis/placa/c/paquete_area) en vez de Python/NumPy/SciPy.
+
+Filtro CAUSAL (una pasada, sec.172) — igual que exportar_paquete_area.py
+y area_kurtosis.py, de donde se importa. El binario C (`aplicar_sos_inplace`
+en paquete_area.c, ver ahi) fue zero-phase hasta sec.172; se paso a causal
+por el mismo motivo que el lado Python (~2x menos costo, 99.3% de
+coincidencia de clasificacion contra zero-phase en datos reales).
 
 Motivo: medido en la placa real (rp-f0fbda), la version Python tarda ~10x
 el tiempo real de la señal AUN SOLA, sin competir con ninguna captura
