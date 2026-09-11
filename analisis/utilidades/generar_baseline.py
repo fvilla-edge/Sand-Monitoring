@@ -26,7 +26,7 @@ separadas, como paso ademas en la practica (mono_dec32 + dual_dec64
 primero, mono_dec64 despues).
 
 Uso:
-  .venv/bin/python3 analisis/generar_baseline.py "carpeta con capturas confirmadas"/*/
+  .venv/bin/python3 analisis/utilidades/generar_baseline.py "carpeta con capturas confirmadas"/*/
 """
 import json
 import sys
@@ -35,10 +35,10 @@ from pathlib import Path
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent.parent))  # analisis/ (donde vive revisar.py)
 from revisar import _calcular, _clave_config, _detectar_dual, _detectar_mono, _recopilar_rutas  # noqa: E402
 
-OUT = Path(__file__).parent / 'baseline_confirmado.json'
+OUT = Path(__file__).parent.parent / 'baseline_confirmado.json'
 
 
 def main():

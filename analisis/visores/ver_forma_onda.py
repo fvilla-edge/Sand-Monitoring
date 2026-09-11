@@ -48,7 +48,7 @@ _cargar_info de revisar.py (misma fuente de verdad que revisar.py y
 timeline_lote.py).
 
 Uso: doble-click en abrir_forma_onda.sh (mismo directorio), o:
-  .venv/bin/python3 analisis/ver_forma_onda.py
+  .venv/bin/python3 analisis/visores/ver_forma_onda.py
 """
 import sys
 import tkinter as tk
@@ -63,7 +63,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolb
 from matplotlib.widgets import SpanSelector
 from scipy.signal import butter, sosfiltfilt, welch
 
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent.parent))  # analisis/ (donde vive revisar.py)
 from revisar import _leer_canales_bin, _cargar_info, V_REF, FA_WINDOW_S  # noqa: E402
 
 try:

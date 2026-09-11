@@ -27,8 +27,8 @@ del mismo tipo (mono_dec32 + mono_dec64) van a quedar pegadas en la misma
 linea aunque sean sesiones distintas (no se detecta ese caso).
 
 Uso:
-  .venv/bin/python3 analisis/acumulado_lote.py "carpeta con lote"/*_mono_dec32/
-  .venv/bin/python3 analisis/acumulado_lote.py "carpeta con lote"/*_dual_dec64/
+  .venv/bin/python3 analisis/lote/acumulado_lote.py "carpeta con lote"/*_mono_dec32/
+  .venv/bin/python3 analisis/lote/acumulado_lote.py "carpeta con lote"/*_dual_dec64/
 
 Guarda un PNG por lote (mono o dual) en analisis/outputs/acumulado_lote/ con
 los dos paneles, e imprime en texto los tramos donde la kurtosis supero el
@@ -63,7 +63,7 @@ import numpy as np
 # solo puede fijarse una vez por proceso: si este modulo lo fijara a Agg al
 # importarse, pisaria el TkAgg que la GUI necesita para el canvas embebido.
 
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent.parent))  # analisis/ (donde vive revisar.py)
 from revisar import (  # noqa: E402
     _leer_canales_bin, _cargar_info, _recopilar_rutas, _bandpass,
     FA_WINDOW_S, FA_THRESH, V_REF,
@@ -74,7 +74,7 @@ import re  # noqa: E402
 
 ART = timezone(timedelta(hours=-3))
 
-OUT_DIR = Path(__file__).parent / 'outputs' / 'acumulado_lote'
+OUT_DIR = Path(__file__).parent.parent / 'outputs' / 'acumulado_lote'
 
 COLOR_K1 = '#2a78d6'
 COLOR_K2 = '#1baf7a'

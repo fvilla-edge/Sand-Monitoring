@@ -16,8 +16,8 @@ IN2). El archivo de salida queda con el canal elegido en la posicion de
 cualquier captura mono, sin cambios.
 
 Uso:
-  .venv/bin/python3 analisis/extraer_canal.py --canal 1 "carpeta dual"/ -o salida/
-  .venv/bin/python3 analisis/extraer_canal.py --canal 2 campo_con_arena_*.bin -o salida/
+  .venv/bin/python3 analisis/utilidades/extraer_canal.py --canal 1 "carpeta dual"/ -o salida/
+  .venv/bin/python3 analisis/utilidades/extraer_canal.py --canal 2 campo_con_arena_*.bin -o salida/
 """
 import argparse
 import json
@@ -27,7 +27,7 @@ from pathlib import Path
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent.parent))  # analisis/ (donde vive revisar.py)
 from revisar import (  # noqa: E402
     _MARKER, _OFF_LOST_COUNT, _OFF_OSC_RATE, _OFF_SIGMENT_LENGTH, _OFF_SIZE_CH,
     _cargar_info, _detectar_header_size, _recopilar_rutas,

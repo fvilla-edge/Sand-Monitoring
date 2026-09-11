@@ -21,8 +21,8 @@ del mismo tipo (mono_dec32 + mono_dec64) van a quedar pegadas en la misma
 linea aunque sean sesiones distintas (no se detecta ese caso).
 
 Uso:
-  .venv/bin/python3 analisis/timeline_lote.py "carpeta con lote"/*_mono_dec32/
-  .venv/bin/python3 analisis/timeline_lote.py "carpeta con lote"/*_dual_dec64/
+  .venv/bin/python3 analisis/lote/timeline_lote.py "carpeta con lote"/*_mono_dec32/
+  .venv/bin/python3 analisis/lote/timeline_lote.py "carpeta con lote"/*_dual_dec64/
 
 Con --baseline analisis/baseline_confirmado.json (ver generar_baseline.py),
 el rms_diferencial usa ese baseline confirmado para la (canales, decimacion)
@@ -62,7 +62,7 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from scipy.signal import butter, sosfilt
 
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent.parent))  # analisis/ (donde vive revisar.py)
 from revisar import (  # noqa: E402
     _leer_canales_bin, _cargar_info, _recopilar_rutas, _clave_config,
     FA_WINDOW_S, V_REF, cargar_baseline_externo,
@@ -87,7 +87,7 @@ def _bandpass(signal, fs):
 
 ART = timezone(timedelta(hours=-3))
 
-OUT_DIR = Path(__file__).parent / 'outputs' / 'timeline_lote'
+OUT_DIR = Path(__file__).parent.parent / 'outputs' / 'timeline_lote'
 
 COLOR_K1 = '#2a78d6'
 COLOR_K2 = '#1baf7a'
