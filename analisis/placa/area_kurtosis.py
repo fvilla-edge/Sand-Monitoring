@@ -34,7 +34,15 @@ from revisar import FA_WINDOW_S, _iterar_segmentos  # noqa: E402
 # distribucion de amplitud dentro de cada ventana — el retardo de grupo fijo
 # que introduce un causal no afecta esa estadistica.
 FILTRO_BANDA_HZ = (50_000, 400_000)
-FILTRO_ORDEN = 4
+# Orden 2 en vez de 4 (sec.173): el costo escala lineal con la cantidad de
+# secciones SOS (orden4=4 secciones, orden2=2) — confirmado con benchmark
+# propio. Sobre el lote de referencia (purga 8kg confirmada, sec.171),
+# orden 2 da 100% de coincidencia de clasificacion contra orden 4 (kurtosis
+# >=6); orden 1 ya baja a 98.8% y pierde bastante atenuacion fuera de banda
+# (30kHz: -10.7dB contra -20.7dB de orden 4) — arriesgado, no se uso. Ver
+# ver_forma_onda.py/revisar.py: siguen en orden 4 a proposito, no tienen la
+# restriccion de tiempo real de este paquete.
+FILTRO_ORDEN = 2
 
 # Mismo tamaño de ventana que fraccion_activa/kurtosis en revisar.py, para
 # que el area/kurtosis de aca queden alineados en el tiempo con esas
@@ -126,9 +134,10 @@ BLOQUE_S_DEFAULT = 0.25    # segundos de señal "core" por bloque — medido en 
 # (459MiB totales, sin swap). 0.25s midio ~155MB en la PC; se re-valida el
 # numero real en la placa antes de confiar en este default (ver plan del
 # feature area-en-placa).
-# Margen >> tiempo de asentamiento real de un Butterworth orden 4 (del
-# orden de decenas de muestras) — se usa una ventana completa (AREA_VENTANA_S)
-# por simpleza y para tener bastante margen de sobra, no porque haga falta
+# Margen >> tiempo de asentamiento real de un Butterworth de este orden (del
+# orden de decenas de muestras, menos secciones con orden 2 que con el
+# orden 4 original) — se usa una ventana completa (AREA_VENTANA_S) por
+# simpleza y para tener bastante margen de sobra, no porque haga falta
 # tanto.
 MARGEN_S_DEFAULT = AREA_VENTANA_S
 
