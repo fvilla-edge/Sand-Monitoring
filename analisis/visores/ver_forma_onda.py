@@ -91,6 +91,13 @@ FFT_NPERSEG = 65536
 # o en pegar varios archivos como timeline_lote.py.
 KURT_FIJO_ACUMULADO = 6.0
 
+# Orden del filtro propio de este visor: SIEMPRE 4, fijo, independiente del
+# FILTRO_ORDEN de area_kurtosis.py (que bajo a 2 en sec.173 solo para el
+# paquete en tiempo real de la placa). Este visor corre en la PC sin esa
+# restriccion, y depender del default del modulo hizo que este visor
+# heredara el orden 2 sin que nadie lo decidiera.
+FILTRO_ORDEN_VISOR = 4
+
 
 def _rms_por_ventana_directo(volts, fs, ventana_s=AREA_VENTANA_S):
     """(t_centro_s, rms) en ventanas de ventana_s no superpuestas — RMS
@@ -344,7 +351,7 @@ class VisorFormaOnda:
         combinado = []
 
         def _agregar_canal(nombre, volts):
-            filtrado = _filtrar_pasabanda(volts, fs)
+            filtrado = _filtrar_pasabanda(volts, fs, orden=FILTRO_ORDEN_VISOR)
             rms = _rms_muestra_a_muestra(filtrado)
             tiempo.extend([
                 (nombre, volts, fs),

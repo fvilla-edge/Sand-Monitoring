@@ -40,8 +40,11 @@ FILTRO_BANDA_HZ = (50_000, 400_000)
 # orden 2 da 100% de coincidencia de clasificacion contra orden 4 (kurtosis
 # >=6); orden 1 ya baja a 98.8% y pierde bastante atenuacion fuera de banda
 # (30kHz: -10.7dB contra -20.7dB de orden 4) — arriesgado, no se uso. Ver
-# ver_forma_onda.py/revisar.py: siguen en orden 4 a proposito, no tienen la
-# restriccion de tiempo real de este paquete.
+# ver_forma_onda.py/revisar.py: quedan en orden 4 a proposito (no tienen la
+# restriccion de tiempo real de este paquete) mediante su propia constante
+# de orden, pasada explicita a _filtrar_pasabanda — NO dependen de este
+# FILTRO_ORDEN. Si esta funcion se llama sin el parametro `orden`, usa este
+# default de la placa.
 FILTRO_ORDEN = 2
 
 # Mismo tamaño de ventana que fraccion_activa/kurtosis en revisar.py, para
