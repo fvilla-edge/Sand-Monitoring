@@ -33,8 +33,20 @@ ARQUITECTURA (lo que hay que reemplazar cuando llegue la placa nueva):
   ventana nueva, calculo de area/kurtosis, armado del paquete) no
   necesita cambiar.
 
+Coeficientes del pasabanda por decimacion (sec.177 de la memoria del
+proyecto): el filtro real de la FPGA tiene coeficientes fijos calculados
+para un fs concreto (limitacion documentada en RedPitaya-FPGA-Release_2025.2/README.md).
+`LectorRegistrosMock` elige el juego correcto (`SECTIONS_Q_POR_DECIMACION`)
+segun el campo `decimacion` del `session_info.json` de cada archivo -
+antes solo soportaba dec32 (hardcodeado), ahora tambien dec64, validado
+con datos reales contra el software (0.1-0.5% de diferencia de kurtosis,
+igual que el juego de dec32). Un archivo con una decimacion sin
+coeficientes validados levanta un error explicito en vez de asumir uno
+existente y reproducir el corrimiento de banda en silencio.
+
 Uso (demo, sin placa - reproduce el archivo real de referencia):
   .venv/bin/python3 analisis/placa/coleccionar_paquete_placa.py --demo
+  .venv/bin/python3 analisis/placa/coleccionar_paquete_placa.py --demo --archivo otro_archivo.bin
 """
 import argparse
 import json
@@ -51,10 +63,23 @@ from area_kurtosis import AREA_VENTANA_S  # noqa: E402
 
 KURT_UMBRAL = 6.0
 FRAC_BITS = 20
-SECTIONS_Q = [
-    (58743, 117487, 58743, -1311029, 526845),
-    (1048576, -2097152, 1048576, -1984139, 943367),
-]
+# Coeficientes del pasabanda REAL de la FPGA (Etapa 4c/6 de
+# RedPitaya-FPGA-Release_2025.2), uno por decimacion soportada - el
+# filtro real usa coeficientes fijos calculados para un fs concreto
+# (limitacion documentada en el README de ese repo: con dec32 corridos a
+# dec64, o viceversa, el filtro queda corrido de banda). El de dec64 se
+# calculo y valido con datos reales en sec.177 de la memoria del
+# proyecto (generar_coefs_dec64.py) - mismo metodo, distinto FS.
+SECTIONS_Q_POR_DECIMACION = {
+    32: [
+        (58743, 117487, 58743, -1311029, 526845),
+        (1048576, -2097152, 1048576, -1984139, 943367),
+    ],
+    64: [
+        (182309, 364619, 182309, -480688, 286917),
+        (1048576, -2097152, 1048576, -1865486, 846090),
+    ],
+}
 ROUND_BIAS = 1 << (FRAC_BITS - 1)
 
 
@@ -78,9 +103,9 @@ def _biquad_section(xs, B0, B1, B2, A1, A2):
     return out
 
 
-def _cascade_fixed(xs):
-    mid = _biquad_section(xs, *SECTIONS_Q[0])
-    return _biquad_section(mid, *SECTIONS_Q[1])
+def _cascade_fixed(xs, sections_q):
+    mid = _biquad_section(xs, *sections_q[0])
+    return _biquad_section(mid, *sections_q[1])
 
 
 class LectorRegistros:
@@ -111,11 +136,21 @@ class LectorRegistrosMock(LectorRegistros):
     def __init__(self, archivo, limite_s=None):
         info = _cargar_info(archivo)
         ch0, ch1, meta = _leer_canales_bin(archivo)
-        self._fs = float(info["fs_hz"])
+        self._fs = float(info.get("fs_hz", info.get("fs_hz_por_canal")))
         if limite_s is not None:
             ch0 = ch0[: int(limite_s * self._fs)]
 
-        filtrado = _cascade_fixed(ch0.astype(np.int64))
+        decimacion = info.get("decimacion")
+        if decimacion not in SECTIONS_Q_POR_DECIMACION:
+            raise ValueError(
+                f"{archivo}: decimacion {decimacion!r} sin coeficientes de pasabanda "
+                f"validados (solo hay para {sorted(SECTIONS_Q_POR_DECIMACION)}) - "
+                "calcular y validar un juego nuevo antes de usar este archivo "
+                "(ver generar_coefs_dec64.py en RedPitaya-FPGA-Release_2025.2 como referencia), "
+                "no asumir uno existente para no reproducir el corrimiento de banda conocido.")
+        sections_q = SECTIONS_Q_POR_DECIMACION[decimacion]
+
+        filtrado = _cascade_fixed(ch0.astype(np.int64), sections_q)
         self._n_ventana = int(self._fs * AREA_VENTANA_S)
         n_total = len(filtrado) // self._n_ventana
         mat = filtrado[: n_total * self._n_ventana].reshape(n_total, self._n_ventana).astype(np.float64)
@@ -210,6 +245,9 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--demo", action="store_true",
                      help="corre contra el archivo real de referencia del proyecto (sin placa)")
+    ap.add_argument("--archivo", type=Path, default=None,
+                     help="usar este .bin en vez del archivo de referencia por default "
+                          "(para probar con datos de otra decimacion, por ejemplo)")
     ap.add_argument("--limite-s", type=float, default=8.0,
                      help="segundos del archivo de referencia a usar en --demo (default 8.0)")
     ap.add_argument("-o", "--salida", type=Path, default=Path("paquete_placa_demo.json"))
@@ -220,8 +258,8 @@ def main():
               " que llegue la placa nueva - ver docstring del script).", file=sys.stderr)
         sys.exit(1)
 
-    archivo = (SAND_MONITORING / "datos_campo" / "42_1_reposo_20260903_145033_mono_dec32"
-               / "campo_reposo_20260903_145033_0001.bin")
+    archivo = args.archivo or (SAND_MONITORING / "datos_campo" / "42_1_reposo_20260903_145033_mono_dec32"
+                                / "campo_reposo_20260903_145033_0001.bin")
     print(f"Modo demo: reproduciendo {archivo.name} ({args.limite_s}s) como si vinieran de la FPGA...")
     lector = LectorRegistrosMock(archivo, limite_s=args.limite_s)
 
