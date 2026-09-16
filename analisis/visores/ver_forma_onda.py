@@ -98,6 +98,23 @@ KURT_FIJO_ACUMULADO = 6.0
 # heredara el orden 2 sin que nadie lo decidiera.
 FILTRO_ORDEN_VISOR = 4
 
+# Tipos de pestaña que arma _construir_canales, con la etiqueta que ve el
+# usuario en el panel de checkboxes — en dual (IN1, IN2 y Limpia IN1-IN2)
+# cada uno de estos 9 tipos se repite por canal, asi que un solo archivo
+# dual con todo tildado arma 27 pestañas. Los checkboxes filtran por tipo,
+# no por canal (los 3 canales de un dual comparten el mismo set de vistas).
+VISTAS = [
+    ("crudo", "Crudo"),
+    ("filtrado", "Filtrado (pasabanda)"),
+    ("rms", "RMS"),
+    ("fft_crudo", "FFT cruda"),
+    ("fft_filtrado", "FFT filtrada"),
+    ("area", "Área"),
+    ("combinado", "Señal+Kurtosis"),
+    ("rmsdif", "RMS diferencial"),
+    ("acumulado", "Acumulado"),
+]
+
 
 def _rms_por_ventana_directo(volts, fs, ventana_s=AREA_VENTANA_S):
     """(t_centro_s, rms) en ventanas de ventana_s no superpuestas — RMS
@@ -148,6 +165,7 @@ class VisorFormaOnda:
         self.archivos = []      # lista de Path, en el orden agregado
         self.canales_cache = {}  # Path -> (ch0, ch1, fs, meta, info)
         self.canales_graf_cache = {}  # Path -> lista [(nombre, volts, fs), ...] (incluye filtrados y RMS, cacheado por costo del filtro)
+        self._ruta_actual = None  # ultimo archivo graficado, para re-render al tildar/destildar vistas
 
         marco_izq = tk.Frame(root, width=260)
         marco_izq.pack(side="left", fill="y", padx=6, pady=6)
@@ -167,6 +185,22 @@ class VisorFormaOnda:
         tk.Button(marco_botones, text="Agregar carpeta...", command=self._agregar_carpeta).pack(fill="x")
         tk.Button(marco_botones, text="Quitar seleccionada(s)", command=self._quitar_seleccionadas).pack(fill="x", pady=(4, 0))
         tk.Button(marco_botones, text="Vaciar lista", command=self._vaciar).pack(fill="x", pady=(4, 0))
+
+        marco_vistas = tk.LabelFrame(marco_izq, text="Vistas a mostrar")
+        marco_vistas.pack(fill="x", pady=(8, 0))
+        self.vista_vars = {}
+        for clave, etiqueta in VISTAS:
+            var = tk.BooleanVar(value=True)
+            self.vista_vars[clave] = var
+            tk.Checkbutton(
+                marco_vistas, text=etiqueta, variable=var, anchor="w",
+                command=self._al_cambiar_vistas,
+            ).pack(fill="x", anchor="w")
+
+        marco_vistas_botones = tk.Frame(marco_izq)
+        marco_vistas_botones.pack(fill="x", pady=(2, 0))
+        tk.Button(marco_vistas_botones, text="Marcar todo", command=lambda: self._marcar_vistas(True)).pack(side="left", expand=True, fill="x")
+        tk.Button(marco_vistas_botones, text="Desmarcar todo", command=lambda: self._marcar_vistas(False)).pack(side="left", expand=True, fill="x")
 
         self.info_label = tk.Label(marco_izq, text="", justify="left", anchor="w", font=("monospace", 8))
         self.info_label.pack(fill="x", pady=(8, 0))
@@ -223,6 +257,21 @@ class VisorFormaOnda:
         self.canales_graf_cache = {}
         self.listbox.delete(0, "end")
         self._limpiar_tabs()
+        self._ruta_actual = None
+
+    # --- panel de vistas ---
+
+    def _al_cambiar_vistas(self):
+        """Re-grafica el archivo actual con el nuevo filtro de vistas — no
+        recalcula nada (canales_graf_cache ya tiene todo), solo decide que
+        pestañas crear, asi que es instantaneo."""
+        if self._ruta_actual is not None:
+            self._graficar(self._ruta_actual)
+
+    def _marcar_vistas(self, valor: bool):
+        for var in self.vista_vars.values():
+            var.set(valor)
+        self._al_cambiar_vistas()
 
     # --- graficado ---
 
@@ -320,10 +369,13 @@ class VisorFormaOnda:
         self._tabs = []
 
     def _construir_canales(self, ruta: Path):
-        """{"tiempo": [(nombre, volts_ndarray, fs), ...], "fft": [(nombre,
-        freqs, psd_db), ...], "area": [(nombre, rms_ndarray, fs), ...],
+        """{"tiempo": [(tipo, nombre, volts_ndarray, fs), ...], "fft": [(tipo,
+        nombre, freqs, psd_db), ...], "area": [(tipo, nombre, rms_ndarray, fs), ...],
         "combinado": [(nombre, filtrado_ndarray, fs, t_s, kurt, rms_w,
-        area_vals), ...]}.
+        area_vals), ...]} — "tipo" es la clave de VISTAS que usa _graficar
+        para decidir, por checkbox, si arma esa pestaña o no (combinado no
+        lleva tipo propio: _graficar arma sus 3 pestañas -combinado/rmsdif/
+        acumulado- desde la misma tupla, cada una con su propio checkbox).
         Por cada canal real: crudo, filtrado (pasabanda 50kHz-400kHz), RMS
         del filtrado (|x|, misma resolucion — solo le saca el signo), espectro
         (Welch) del crudo y del filtrado, el RMS de nuevo para el area bajo
@@ -354,17 +406,17 @@ class VisorFormaOnda:
             filtrado = _filtrar_pasabanda(volts, fs, orden=FILTRO_ORDEN_VISOR)
             rms = _rms_muestra_a_muestra(filtrado)
             tiempo.extend([
-                (nombre, volts, fs),
-                (f"{nombre} filtrado (50-400kHz)", filtrado, fs),
-                (f"{nombre} filtrado — RMS", rms, fs),
+                ("crudo", nombre, volts, fs),
+                ("filtrado", f"{nombre} filtrado (50-400kHz)", filtrado, fs),
+                ("rms", f"{nombre} filtrado — RMS", rms, fs),
             ])
             f_crudo, psd_crudo = _calcular_espectro(volts, fs)
             f_filt, psd_filt = _calcular_espectro(filtrado, fs)
             fft.extend([
-                (f"{nombre} — FFT", f_crudo, psd_crudo),
-                (f"{nombre} filtrado — FFT", f_filt, psd_filt),
+                ("fft_crudo", f"{nombre} — FFT", f_crudo, psd_crudo),
+                ("fft_filtrado", f"{nombre} filtrado — FFT", f_filt, psd_filt),
             ])
-            area.append((f"{nombre} filtrado — Área", rms, fs))
+            area.append(("area", f"{nombre} filtrado — Área", rms, fs))
             t_k, kurt_vals = _kurtosis_por_ventana(filtrado, fs)
             _, rms_w = _rms_por_ventana_directo(filtrado, fs)
             # Misma ventana (AREA_VENTANA_S) y misma fuente (rms muestra a
@@ -395,18 +447,25 @@ class VisorFormaOnda:
         canales = self._construir_canales(ruta)
 
         self._limpiar_tabs()
-        for nombre, volts, fs_canal in canales["tiempo"]:
-            self._crear_tab(nombre, volts, fs_canal)
-        for nombre, freqs, psd_db in canales["fft"]:
-            self._crear_tab_fft(nombre, freqs, psd_db)
-        for nombre, rms, fs_canal in canales["area"]:
-            self._crear_tab_area(nombre, rms, fs_canal)
+        self._ruta_actual = ruta
+        for tipo, nombre, volts, fs_canal in canales["tiempo"]:
+            if self.vista_vars[tipo].get():
+                self._crear_tab(nombre, volts, fs_canal)
+        for tipo, nombre, freqs, psd_db in canales["fft"]:
+            if self.vista_vars[tipo].get():
+                self._crear_tab_fft(nombre, freqs, psd_db)
+        for tipo, nombre, rms, fs_canal in canales["area"]:
+            if self.vista_vars[tipo].get():
+                self._crear_tab_area(nombre, rms, fs_canal)
         for nombre, filtrado, fs_canal, t_k, kurt_vals, rms_w, area_vals in canales["combinado"]:
-            self._crear_tab_combinado(nombre, filtrado, fs_canal, t_k, kurt_vals)
-            nombre_rd = nombre.replace("Señal+Kurtosis", "RMS diferencial")
-            self._crear_tab_rmsdif(nombre_rd, t_k, kurt_vals, rms_w)
-            nombre_ac = nombre.replace("Señal+Kurtosis", "Acumulado")
-            self._crear_tab_acumulado(nombre_ac, t_k, kurt_vals, area_vals)
+            if self.vista_vars["combinado"].get():
+                self._crear_tab_combinado(nombre, filtrado, fs_canal, t_k, kurt_vals)
+            if self.vista_vars["rmsdif"].get():
+                nombre_rd = nombre.replace("Señal+Kurtosis", "RMS diferencial")
+                self._crear_tab_rmsdif(nombre_rd, t_k, kurt_vals, rms_w)
+            if self.vista_vars["acumulado"].get():
+                nombre_ac = nombre.replace("Señal+Kurtosis", "Acumulado")
+                self._crear_tab_acumulado(nombre_ac, t_k, kurt_vals, area_vals)
         if self._tabs:
             self.notebook.select(0)
 
