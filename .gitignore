@@ -21,6 +21,9 @@ losant_config.py
 losant_config_test.py
 access-key-*.txt
 
+# Credenciales de Google Cloud (service account)
+credenciales.json
+
 # Salida de compilacion de arduino-cli
 panel_solar_ble/esp32_victron_scan/build/
 
