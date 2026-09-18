@@ -138,6 +138,11 @@ def _kurtosis_por_ventana(volts, fs, ventana_s=AREA_VENTANA_S):
     return t, kurt
 
 
+# Tamaño de ventana de Welch para el espectro: buen compromiso entre
+# resolucion en frecuencia (~60Hz con fs~3.9MHz) y tiempo de calculo
+# (~3s por canal en un archivo de ~112M muestras).
+FFT_NPERSEG = 65536
+
 # Umbral de kurtosis para el acumulado de área (pestaña "Acumulado"): fijo
 # por ahora a pedido del usuario, no un slider — arrancamos con un solo
 # archivo para ver como se comporta antes de pensar en hacerlo configurable
