@@ -336,25 +336,24 @@ def test_rms_diferencial_dual_sin_ningun_baseline_da_none():
 
 # --- _detectar_mono / _detectar_dual ------------------------------------------
 
-@pytest.mark.parametrize('kurt,fa_pct,esperado', [
-    (rv.FA_THRESH, 0.0, 'reposo'),          # limite exacto de kurtosis: no dispara
-    (rv.FA_THRESH + 0.1, 0.0, '*** ARENA ***'),
-    (0.0, 5.0, 'reposo'),                   # limite exacto de fa%: no dispara
-    (0.0, 5.1, '*** ARENA ***'),
+@pytest.mark.parametrize('fa_pct,esperado', [
+    (0.0, 'reposo'),                        # ninguna ventana cruzo el umbral: no dispara
+    (0.1, '*** ARENA ***'),                 # una sola ventana ya alcanza (sec.182, 2026-09-22:
+    (100.0, '*** ARENA ***'),               # ya no se exige que se sostenga un % del archivo)
 ])
-def test_detectar_mono_umbrales(kurt, fa_pct, esperado):
-    r = {'kurt': kurt, 'fa_pct': fa_pct}
+def test_detectar_mono_umbrales(fa_pct, esperado):
+    r = {'kurt': 0.0, 'fa_pct': fa_pct}
     assert rv._detectar_mono(r) == esperado
 
 
-@pytest.mark.parametrize('k1,k2,esperado', [
-    (rv.FA_THRESH + 5, rv.FA_THRESH + 5, 'RUIDO COMUN'),
-    (rv.FA_THRESH + 5, (rv.FA_THRESH + 5) / 4, '*** ARENA ***'),   # k1 > umbral y k1 > 3*k2
-    (rv.FA_THRESH + 5, (rv.FA_THRESH + 5) / 2, 'reposo'),          # k1 > umbral pero k1 no > 3*k2
-    (rv.FA_THRESH - 1, 1.0, 'reposo'),                             # k1 ni siquiera cruza el umbral
+@pytest.mark.parametrize('k1,k2,ventanas_arena_dual,esperado', [
+    (rv.FA_THRESH + 5, rv.FA_THRESH + 5, 3, 'RUIDO COMUN'),   # RUIDO COMUN gana aunque haya ventanas
+    (1.0, 1.0, 1, '*** ARENA ***'),         # una sola ventana con CH1>umbral y CH1>3xCH2 alcanza
+    (1.0, 1.0, 0, 'reposo'),                # ninguna ventana cruzo esa condicion
+    (rv.FA_THRESH - 1, 1.0, 0, 'reposo'),   # ni el archivo entero ni ninguna ventana
 ])
-def test_detectar_dual_umbrales(k1, k2, esperado):
-    r = {'k1': k1, 'k2': k2}
+def test_detectar_dual_umbrales(k1, k2, ventanas_arena_dual, esperado):
+    r = {'k1': k1, 'k2': k2, 'ventanas_arena_dual': ventanas_arena_dual}
     assert rv._detectar_dual(r) == esperado
 
 

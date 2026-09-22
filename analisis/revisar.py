@@ -407,6 +407,9 @@ def _calcular_dual(ruta, info):
     fa2  = _fraccion_activa(kurt_w2)
     baseline_auto1 = _baseline_autocalibrado(kurt_w1, rms_w1)
     baseline_auto2 = _baseline_autocalibrado(kurt_w2, rms_w2)
+    # ventanas donde CH1 es impulsivo y ademas mucho mas que CH2 en esa MISMA
+    # ventana (no el archivo entero) - ver _detectar_dual, sec.182 memoria.
+    ventanas_arena_dual = int(np.sum((kurt_w1 > FA_THRESH) & (kurt_w1 > 3 * kurt_w2)))
 
     _chequear_osc_rate(ruta, meta['osc0'], fs, canal_label=' ch1')
     _chequear_osc_rate(ruta, meta['osc1'], fs, canal_label=' ch2')
@@ -421,6 +424,7 @@ def _calcular_dual(ruta, info):
         'fa1': fa1, 'fa2': fa2, 'rms_r': rms1 / rms2 if rms2 > 0 else 0.0,
         'size_mb': size, 'lost1': meta['lost0'], 'lost2': meta['lost1'],
         'baseline_auto1': baseline_auto1, 'baseline_auto2': baseline_auto2,
+        'ventanas_arena_dual': ventanas_arena_dual,
     }
 
 
@@ -514,16 +518,29 @@ def _agregar_rms_diferencial_dual(resultados, baseline_externo=None):
 
 
 def _detectar_mono(r):
-    if r['kurt'] > FA_THRESH or r['fa_pct'] > 5:
+    # Antes exigia fa_pct>5 (fraccion sostenida) o kurtosis global del
+    # archivo entero>FA_THRESH - ambos se perdian pases de arena reales pero
+    # breves (confirmados en campo, ver sec.182 memoria del proyecto,
+    # 2026-09-22: picos de kurtosis hasta 841 en una sola ventana que nunca
+    # llegaban a sostenerse el 5% del archivo). Ahora: CUALQUIER ventana de
+    # 50ms con kurtosis>=FA_THRESH ya cuenta como arena, sin exigir que se
+    # sostenga.
+    if r['fa_pct'] > 0:
         return '*** ARENA ***'
     return 'reposo'
 
 
 def _detectar_dual(r):
+    # RUIDO COMUN sigue mirando el archivo entero (los dos canales
+    # impulsivos de punta a punta => ruido de linea, no arena localizada).
+    # La deteccion de arena en si paso a ser por ventana (ver
+    # ventanas_arena_dual en _calcular_dual) por el mismo motivo que
+    # _detectar_mono de arriba - antes exigia que CH1 fuera globalmente
+    # >3x CH2 en el archivo entero, perdiendo pases breves reales.
     k1, k2 = r['k1'], r['k2']
     if k1 > FA_THRESH and k2 > FA_THRESH:
         return 'RUIDO COMUN'   # ambos canales impulsivos -> no es arena localizada
-    if k1 > FA_THRESH and k1 > 3 * k2:
+    if r['ventanas_arena_dual'] > 0:
         return '*** ARENA ***'
     return 'reposo'
 
@@ -589,7 +606,7 @@ def _mostrar_mono(resultados, baseline_externo=None):
     print(f'\n  {len(resultados)} archivos | {dur_tot:.1f} min total | '
           f'{n_arena} con arena | {n_reposo} en reposo')
     print()
-    print(f'  Referencia: kurtosis reposo ~3 | arena >{FA_THRESH}  |  fa% reposo 0% | arena >25%')
+    print(f'  Referencia: kurtosis reposo ~3 | arena: CUALQUIER ventana de 50ms con kurtosis>={FA_THRESH} (fa%>0)')
     print('  rms_diferencial (informativo, no afecta deteccion): sqrt(max(0,rms²-baseline²))/baseline,')
     print(f'  baseline = AUTOCALIBRADO (mediana RMS de ventanas propias con kurtosis<{FA_THRESH}); si el archivo no')
     print('  tiene ventanas de fondo propias cae a --baseline externo | <0.1 insignificante | 0.1-0.4 leve | >0.4 significativo')
@@ -663,7 +680,8 @@ def _mostrar_dual(resultados, baseline_externo=None):
           f'{n_arena} con arena | {n_ruido} ruido comun | {n_reposo} en reposo')
     print()
     print('  Referencia reposo: k1~3, k2~3, dk~0, fa1%~0, fa2%~0, rms_r~1, cf~5-6')
-    print(f'  Referencia arena:  k1>{FA_THRESH}, k2~3, dk>>0, fa1%>25, rms_r>1, cf mas alto que reposo')
+    print(f'  Referencia arena:  RUIDO COMUN si k1>{FA_THRESH} y k2>{FA_THRESH} (archivo entero); '
+          f'si no, ARENA si alguna ventana de 50ms tiene CH1>{FA_THRESH} y CH1>3x CH2 esa misma ventana')
     print('  cf1/cf2 = crest factor por canal (pico/rms de la señal filtrada).')
     print('  rd1/rd2 (informativo, no afecta deteccion): rms_diferencial por canal,')
     print(f'  baseline = AUTOCALIBRADO por canal (mediana RMS de ventanas propias con kurtosis<{FA_THRESH}); si ese')
