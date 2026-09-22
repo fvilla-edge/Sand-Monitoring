@@ -3,9 +3,24 @@
 Organizado por síntoma. Si no está acá, revisar `/root/logs_campo/` (ver
 `formato_y_funcionamiento.md` → "Logs") antes de asumir un bug nuevo.
 
-## "No se pudo conectar al streaming-server"
+## "No se pudo conectar al streaming-server" / "Host not found"
 
-El servidor no arrancó correctamente. Verificar el log:
+**Causa más probable (confirmada 2026-09-22, ver `setup_placa.md` → "2b"): `eth0` no tiene una
+ruta de red válida en este momento** (cayó la interfaz, se perdió el lease DHCP durante el corte
+de `hora_off` del relé Starlink, etc.). El cliente y el servidor se descubren entre sí por un
+broadcast UDP a `255.255.255.255:18902` — aunque están en la misma placa, **no** usan `127.0.0.1`
+ni hostname/DNS para esto, así que un `eth0` caído rompe la conexión igual. El mensaje
+`Host not found` es genérico del vendor, no es un error real de DNS.
+
+**Verificar primero si el fix de `dummy0` está instalado** (`setup_placa.md` → "2b"):
+```bash
+ssh root@<IP_PLACA> "networkctl status dummy0"
+```
+Si no existe, instalarlo soluciona este síntoma específico durante cortes de `eth0` — validado
+con 0 fallos en un corte de 150s (antes: 10/10 fallos y abandono del lote de captura entero).
+
+**Si `dummy0` YA está instalado y el error sigue apareciendo,** entonces es la causa clásica —
+el servidor no arrancó correctamente. Verificar el log:
 
 ```bash
 cat /tmp/sstream_campo.log

@@ -26,6 +26,16 @@ Asunción a reconfirmar en sitio: el plan de Starlink da IP pública/gestionable
 el SSH entrante llega directo sin túnel intermedio (Tailscale, WireGuard, etc.). Si en
 la práctica resulta ser CGNAT, este plan no alcanza y hace falta agregar esa capa.
 
+## Nota — corte de captura durante `hora_off` (2026-09-22)
+
+El corte de `hora_off` puede romper una captura en curso con `ERROR: no se pudo conectar al
+streaming-server` / `Host not found`, no por nada del relé/timers de este archivo, sino porque
+`eth0` se queda sin una ruta de red válida durante la transición (lease DHCP perdido) y el
+mecanismo de descubrimiento del streaming (broadcast UDP, ver más abajo) depende de eso incluso
+para conectar cliente-servidor DENTRO de la misma placa. Fix (interfaz `dummy0`) y detalle
+completo en `scripts_campo/plan_campo/setup_placa.md` → "2b" y `troubleshooting.md` → "No se
+pudo conectar al streaming-server". Instalado y validado en `rp-f0fbda`.
+
 ## Riesgos abiertos
 
 | Riesgo | Estado |

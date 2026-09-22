@@ -50,6 +50,64 @@ EOF
 systemctl daemon-reload && systemctl enable rpsa-lib.service"
 ```
 
+## 2b. Interfaz `dummy0` — discovery de streaming resiliente a cortes de `eth0` (2026-09-22)
+
+**Por qué hace falta:** el cliente (`capturar_stream.py`) y el `streaming-server` — aunque
+corren en la MISMA placa — no se conectan por `127.0.0.1` ni por hostname/DNS/avahi. Se
+descubren por un **broadcast UDP propio del vendor**: el servidor manda cada 1s un paquete a
+`255.255.255.255:18902` anunciando su MAC/IP, y el cliente escucha ese broadcast para saber a
+qué IP conectarse por TCP (puerto 18901). Confirmado con `strace -f -e trace=network`.
+
+Si `eth0` no tiene una ruta válida (cae la interfaz, se pierde el lease DHCP durante el corte de
+`hora_off` del relé de Starlink, etc.), ese `sendto()` falla con `ENETUNREACH` — el cliente nunca
+ve el anuncio y la captura entera falla con `ERROR: no se pudo conectar al streaming-server` /
+`Host not found` (mensaje genérico del vendor, **no** es un error real de DNS pese al nombre).
+Sin esta interfaz, una captura larga que atraviesa un corte de `hora_off` agota los 10 reintentos
+del supervisor y **abandona el lote entero** — pasó de verdad en `rp-f0fbda` el 2026-09-21.
+
+**Fix:** una interfaz `dummy0` local, siempre arriba, con su propia IP, le da a ese broadcast un
+camino que no depende de `eth0`. Es aditivo — no toca `eth0`, el relé ni la configuración de
+Starlink existente.
+
+```bash
+ssh root@<IP_PLACA> "cat > /etc/systemd/network/25-dummy-discovery.netdev << 'EOF'
+[NetDev]
+Name=dummy0
+Kind=dummy
+EOF
+cat > /etc/systemd/network/25-dummy-discovery.network << 'EOF'
+[Match]
+Name=dummy0
+
+[Network]
+Address=10.250.250.1/24
+LinkLocalAddressing=no
+
+[Route]
+Destination=255.255.255.255/32
+EOF
+networkctl reload"
+```
+
+**Verificar que quedó activa:**
+```bash
+ssh root@<IP_PLACA> "networkctl status dummy0 && ip route show | grep 255.255.255.255"
+```
+
+**Validado (2026-09-22, en `rp-f0fd8c` y `rp-f0fbda`):** con `eth0` completamente abajo 150s y
+una captura corriendo de fondo, 0 fallos (antes: 10/10 fallos y abandono del lote). En operación
+normal (`eth0` arriba, sin corte), 3 capturas de sanidad espaciadas 60s dieron 92%/84%/91% de
+eficiencia — igual que sin `dummy0`, no interfiere.
+
+**Trampa de testing, si se repite esta validación:** lanzar capturas de prueba en ráfaga rápida
+(cada pocos segundos, sin pausa) puede dejar un `streaming-server` residual corriendo y dar
+`Operation aborted`/baja eficiencia — esto es un punto débil ya conocido del vendor con
+reconexiones muy seguidas, **no** un síntoma de que `dummy0` esté mal. Espaciar las pruebas
+al menos 45-60s entre sí.
+
+**Si la placa fue reflasheada:** esta interfaz no sobrevive un reflash (solo el `.so` de la
+librería de streaming se restaura solo, vía el servicio del paso 2) — repetir este paso.
+
 ## 3. Montaje automático del USB (una sola vez)
 
 Evita tener que hacer `lsblk` + `mount` a mano cada vez que se reconecta la placa o el
