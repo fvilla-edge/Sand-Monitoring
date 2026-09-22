@@ -20,18 +20,19 @@ referencia: 95.6% de coincidencia de clasificacion (kurtosis>=6) sobre
 umbral, ninguna en impactos fuertes. Aceptado por el usuario como punto
 de partida, revisar con datos reales de la placa nueva mas adelante.
 
-ARQUITECTURA (lo que hay que reemplazar cuando llegue la placa nueva):
+ARQUITECTURA:
   LectorRegistros es la unica pieza que sabe de donde vienen los datos.
-  Hoy hay una sola implementacion, LectorRegistrosMock, que REPRODUCE
-  (no simula en vivo con timing real) las sumas que darian los registros
-  reales, calculadas del archivo real de referencia con el mismo modelo
-  de punto fijo ya validado. El reemplazo real (Etapa 7, con la placa
-  nueva) es una clase LectorRegistrosHW que lea /dev/mem via mmap en los
-  offsets de AREA_WINDOW_COUNT/AREA_SUM_*
-  (0x40000000+0x22C..0x40000000+0x248, ver README de
-  RedPitaya-FPGA-Release_2025.2) - el resto de este script (deteccion de
-  ventana nueva, calculo de area/kurtosis, armado del paquete) no
-  necesita cambiar.
+  LectorRegistrosMock REPRODUCE (no simula en vivo con timing real) las
+  sumas que darian los registros reales, calculadas de un archivo real
+  de referencia - sirve para probar el resto del pipeline sin placa.
+  LectorRegistrosHW (Etapa 7/8, 2026-09-22) lee los registros REALES via
+  mmap de /dev/mem en los offsets de AREA_WINDOW_COUNT/AREA_SUM_*
+  (0x40000000+0x22C..0x40000000+0x248, confirmados en
+  RedPitaya-FPGA-Release_2025.2/prj/stream_app/ip/rp_oscilloscope/scope_cfg.sv,
+  la .rst del repo esta desactualizada) - corre EN la placa con el
+  bitstream nuevo cargado. El resto del script (deteccion de ventana
+  nueva, calculo de area/kurtosis, armado del paquete) es el mismo para
+  los dos lectores.
 
 Coeficientes del pasabanda por decimacion (sec.177 de la memoria del
 proyecto): el filtro real de la FPGA tiene coeficientes fijos calculados
@@ -50,7 +51,11 @@ Uso (demo, sin placa - reproduce el archivo real de referencia):
 """
 import argparse
 import json
+import mmap
+import os
+import struct
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -184,6 +189,67 @@ class LectorRegistrosMock(LectorRegistros):
         return self._idx_actual < self._n_total
 
 
+class LectorRegistrosHW(LectorRegistros):
+    """Lee los registros REALES de area/kurtosis via mmap de /dev/mem
+    (Etapa 7/8 de RedPitaya-FPGA-Release_2025.2). Offsets confirmados en
+    prj/stream_app/ip/rp_oscilloscope/scope_cfg.sv (la .rst del repo esta
+    desactualizada, no la documenta - no seguirla). El acumulador corre
+    en el FPGA de forma continua mientras el bitstream este cargado, no
+    depende de que haya una sesion de capturar_stream.py activa - por
+    eso `AREA_WINDOW_COUNT` puede arrancar en cualquier valor, no en 0."""
+
+    _REG_BASE = 0x40000000
+    _MAP_SIZE = 0x1000  # cubre de sobra hasta 0x248
+
+    _OFF_WINDOW_COUNT = 0x22C
+    _OFF_SUM_ABS_LO = 0x230
+    _OFF_SUM_ABS_HI = 0x234
+    _OFF_SUM_X2_LO = 0x238
+    _OFF_SUM_X2_HI = 0x23C
+    _OFF_SUM_X4_LO = 0x240
+    _OFF_SUM_X4_MID = 0x244
+    _OFF_SUM_X4_HI = 0x248
+
+    def __init__(self, fs_hz, window_samples, duracion_s=None):
+        self._fs = float(fs_hz)
+        self._n_ventana = int(window_samples)
+        self._duracion_s = duracion_s
+        self._t_inicio = time.monotonic()
+
+        fd = os.open("/dev/mem", os.O_RDONLY)
+        try:
+            self._mm = mmap.mmap(fd, self._MAP_SIZE, mmap.MAP_SHARED, mmap.PROT_READ,
+                                  offset=self._REG_BASE)
+        finally:
+            os.close(fd)
+
+    def _leer_reg(self, offset):
+        return struct.unpack_from("<I", self._mm, offset)[0]
+
+    def fs_hz(self):
+        return self._fs
+
+    def window_samples(self):
+        return self._n_ventana
+
+    def leer(self):
+        wc = self._leer_reg(self._OFF_WINDOW_COUNT)
+        sum_abs = self._leer_reg(self._OFF_SUM_ABS_LO) | (self._leer_reg(self._OFF_SUM_ABS_HI) << 32)
+        sum_x2 = self._leer_reg(self._OFF_SUM_X2_LO) | (self._leer_reg(self._OFF_SUM_X2_HI) << 32)
+        sum_x4 = (self._leer_reg(self._OFF_SUM_X4_LO)
+                  | (self._leer_reg(self._OFF_SUM_X4_MID) << 32)
+                  | (self._leer_reg(self._OFF_SUM_X4_HI) << 64))
+        return wc, sum_abs, sum_x2, sum_x4
+
+    def hay_mas(self):
+        if self._duracion_s is None:
+            return True
+        return (time.monotonic() - self._t_inicio) < self._duracion_s
+
+    def close(self):
+        self._mm.close()
+
+
 def _area_kurtosis_de_suma(sum_abs, sum_x2, sum_x4, n, fs):
     """Misma formula que _area_por_ventana/_kurtosis_por_ventana de
     area_kurtosis.py, pero partiendo de las SUMAS (lo que da el
@@ -225,7 +291,7 @@ def coleccionar(lector: LectorRegistros, archivo_nombre, callback_avance=None):
             idx_ventana += 1
             ultimo_wc = wc
 
-        if isinstance(lector, LectorRegistrosMock) and not lector.hay_mas() and wc == ultimo_wc:
+        if not lector.hay_mas() and wc == ultimo_wc:
             break
 
     return {
@@ -245,6 +311,13 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--demo", action="store_true",
                      help="corre contra el archivo real de referencia del proyecto (sin placa)")
+    ap.add_argument("--hw", action="store_true",
+                     help="lee los registros reales via mmap de /dev/mem (Etapa 7/8, solo "
+                          "funciona corriendo EN la placa con el bitstream nuevo cargado)")
+    ap.add_argument("--fs-hz", type=float, default=None,
+                     help="--hw: fs real del ADC (ej. 3906250 para decimacion 32)")
+    ap.add_argument("--duracion-s", type=float, default=None,
+                     help="--hw: cuanto tiempo leer antes de cortar (default: sin limite, Ctrl+C)")
     ap.add_argument("--archivo", type=Path, default=None,
                      help="usar este .bin en vez del archivo de referencia por default "
                           "(para probar con datos de otra decimacion, por ejemplo)")
@@ -253,20 +326,36 @@ def main():
     ap.add_argument("-o", "--salida", type=Path, default=Path("paquete_placa_demo.json"))
     args = ap.parse_args()
 
-    if not args.demo:
-        print("Sin --demo no hay de donde leer todavia (LectorRegistrosHW no existe hasta"
-              " que llegue la placa nueva - ver docstring del script).", file=sys.stderr)
+    if not args.demo and not args.hw:
+        print("Elegir --demo (sin placa) o --hw (en la placa, registros reales).", file=sys.stderr)
         sys.exit(1)
 
-    archivo = args.archivo or (SAND_MONITORING / "datos_campo" / "42_1_reposo_20260903_145033_mono_dec32"
-                                / "campo_reposo_20260903_145033_0001.bin")
-    print(f"Modo demo: reproduciendo {archivo.name} ({args.limite_s}s) como si vinieran de la FPGA...")
-    lector = LectorRegistrosMock(archivo, limite_s=args.limite_s)
+    if args.hw:
+        if args.fs_hz is None:
+            print("--hw necesita --fs-hz (fs real del ADC para esta decimacion).", file=sys.stderr)
+            sys.exit(1)
+        n_ventana = int(args.fs_hz * AREA_VENTANA_S)
+        print(f"Modo HW: leyendo /dev/mem en vivo (fs={args.fs_hz}Hz, "
+              f"ventana={n_ventana} muestras, duracion={args.duracion_s or 'sin limite'})...")
+        lector = LectorRegistrosHW(args.fs_hz, n_ventana, duracion_s=args.duracion_s)
 
-    def avanzar(lector):
-        lector.avanzar_una_ventana()
+        def avanzar(lector):
+            time.sleep(0.005)  # polling liviano, no busy-loop a full velocidad
 
-    paquete = coleccionar(lector, archivo.name, callback_avance=avanzar)
+        try:
+            paquete = coleccionar(lector, "hw_live", callback_avance=avanzar)
+        finally:
+            lector.close()
+    else:
+        archivo = args.archivo or (SAND_MONITORING / "datos_campo" / "42_1_reposo_20260903_145033_mono_dec32"
+                                    / "campo_reposo_20260903_145033_0001.bin")
+        print(f"Modo demo: reproduciendo {archivo.name} ({args.limite_s}s) como si vinieran de la FPGA...")
+        lector = LectorRegistrosMock(archivo, limite_s=args.limite_s)
+
+        def avanzar(lector):
+            lector.avanzar_una_ventana()
+
+        paquete = coleccionar(lector, archivo.name, callback_avance=avanzar)
 
     with open(args.salida, "w") as f:
         json.dump(paquete, f)

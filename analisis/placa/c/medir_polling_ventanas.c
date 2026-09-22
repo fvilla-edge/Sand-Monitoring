@@ -1,30 +1,33 @@
-// Medicion: si un hilo de prioridad alta puede leer un contador que
-// avanza cada 50ms (simulando el registro AREA_WINDOW_COUNT del
-// acumulador de area/kurtosis en la FPGA - ver repo aparte
-// ~/RedPitaya-FPGA-Release_2025.2, Etapa 5/6) sin perderse ninguna
-// actualizacion - antes de invertir en una FIFO en HW para el mismo
-// problema (si el ARM no llega a leer los 9 registros antes de que la
-// proxima ventana los pise, esa ventana se pierde sin aviso).
+// Medicion: si un hilo de prioridad alta puede leer, sin perderse
+// ninguna actualizacion, el registro real AREA_WINDOW_COUNT del
+// acumulador de area/kurtosis en la FPGA (Etapa 5/6/7/8 de
+// ~/RedPitaya-FPGA-Release_2025.2) - antes de invertir en una FIFO en
+// HW para el mismo problema (si el ARM no llega a leer los 9 registros
+// antes de que la proxima ventana los pise, esa ventana se pierde sin
+// aviso). El "productor" es la FPGA misma (su propio reloj de ADC), no
+// hace falta simularlo - a diferencia de la version anterior de este
+// archivo (notebook x86, sin HW real, ver historial de memoria del
+// proyecto 2026-09-14).
 //
-// PENDIENTE REAL: esto todavia simula el "registro" con un contador en
-// memoria (productor/consumidor en la misma notebook, x86) - NO lee
-// hardware de verdad todavia. Cuando llegue la placa nueva de pruebas y
-// el bitstream de la Etapa 5/6 este flasheado, el siguiente paso es
-// reemplazar `productor()` por una lectura real via mmap de
-// /dev/mem (offset AREA_WINDOW_COUNT, 0x40000000+0x22C) y correr esto
-// EN el ARM real (no en la notebook) con la captura real corriendo al
-// mismo tiempo (la carga real que importa, no leer registros en si).
+// Requiere: bitstream con el acumulador de la Etapa 5/6 ya cargado (ver
+// setup_placa.md -> "2b"/"FPGA nuevo" y el README de
+// RedPitaya-FPGA-Release_2025.2) y correr ESTO EN el ARM real de la
+// placa (no en una notebook) - la carga real que importa es la del
+// sistema completo (captura real corriendo al mismo tiempo), no la
+// lectura de registros en si.
 //
-// Resultado del 2026-09-14 en esta notebook (x86, SIN privilegios de
-// tiempo real - `ulimit -r` da 0 en esta cuenta): 60s, 1199 ventanas
-// simuladas, 0 ventanas perdidas, gap maximo entre lecturas = 1. Buena
-// señal pero no concluyente para el ARM real - ver nota de arriba.
+// Resultado del 2026-09-14 (notebook x86, SIN privilegios de tiempo
+// real, contador SIMULADO): 60s, 1199 ventanas, 0 perdidas, gap maximo
+// = 1 - no concluyente para el ARM real, ver arriba.
 //
-// Compilar: gcc -O2 -Wall -o medir_polling_ventanas medir_polling_ventanas.c -lpthread
-// Correr:   ./medir_polling_ventanas   (si hay permiso de SCHED_FIFO lo
-//           usa, si no cae a prioridad normal y lo avisa por stderr)
+// Compilar EN LA PLACA: gcc -O2 -Wall -o medir_polling_ventanas medir_polling_ventanas.c -lpthread
+// Correr (como root, por /dev/mem):
+//   ./medir_polling_ventanas   (si hay permiso de SCHED_FIFO lo usa, si
+//   no cae a prioridad normal y lo avisa por stderr)
 #define _GNU_SOURCE
+#include <fcntl.h>
 #include <stdio.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <pthread.h>
@@ -32,56 +35,64 @@
 #include <time.h>
 #include <stdatomic.h>
 #include <unistd.h>
+#include <sys/mman.h>
 
-#define WINDOW_MS   50
-#define POLL_US     10000   // intenta leer cada 10ms (5x margen contra 50ms)
-#define DURATION_S  60
+#define POLL_US        10000       // intenta leer cada 10ms (5x margen contra 50ms de ventana)
+#define DURATION_S     60
+#define REG_BASE       0x40000000UL
+#define REG_MAP_SIZE   0x1000UL
+#define OFF_WINDOW_COUNT 0x22C
 
-static atomic_uint window_count = 0;
-static atomic_int  stop_flag    = 0;
+static atomic_int stop_flag = 0;
+static volatile uint32_t *g_window_count_reg = NULL;
 
 static void addms(struct timespec *t, long ms) {
     t->tv_nsec += ms * 1000000L;
     while (t->tv_nsec >= 1000000000L) { t->tv_nsec -= 1000000000L; t->tv_sec++; }
 }
 
-static void *productor(void *arg) {
-    struct timespec next;
-    clock_gettime(CLOCK_MONOTONIC, &next);
-    while (!atomic_load(&stop_flag)) {
-        addms(&next, WINDOW_MS);
-        clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &next, NULL);
-        atomic_fetch_add(&window_count, 1);
-    }
-    return NULL;
-}
-
 static void *consumidor(void *arg) {
-    unsigned int last_seen = 0, reads = 0, missed_events = 0, missed_windows = 0, max_gap = 0;
+    unsigned int last_seen = 0, primer_valor = 0, reads = 0;
+    unsigned int missed_events = 0, missed_windows = 0, max_gap = 0;
+    unsigned int primera_lectura = 1;
     struct timespec next;
     clock_gettime(CLOCK_MONOTONIC, &next);
     while (!atomic_load(&stop_flag)) {
-        unsigned int cur = atomic_load(&window_count);
+        unsigned int cur = *g_window_count_reg;
         reads++;
-        unsigned int gap = cur - last_seen;
-        if (gap > max_gap) max_gap = gap;
-        if (gap > 1) { missed_events++; missed_windows += (gap - 1); }
-        last_seen = cur;
+        if (primera_lectura) {
+            // el contador de HW no arranca en 0 (corre solo desde que se
+            // cargo el bitstream) - se resta este valor inicial al final
+            // para reportar cuantas ventanas NUEVAS paso durante esta
+            // corrida, no el valor absoluto del registro.
+            last_seen = primer_valor = cur;
+            primera_lectura = 0;
+        } else {
+            unsigned int gap = cur - last_seen;
+            if (gap > max_gap) max_gap = gap;
+            if (gap > 1) { missed_events++; missed_windows += (gap - 1); }
+            last_seen = cur;
+        }
         addms(&next, POLL_US / 1000);
         clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &next, NULL);
     }
-    printf("lecturas=%u ventanas_totales=%u eventos_de_perdida=%u ventanas_perdidas=%u gap_maximo=%u\n",
-           reads, last_seen, missed_events, missed_windows, max_gap);
+    printf("lecturas=%u ventanas_nuevas=%u eventos_de_perdida=%u ventanas_perdidas=%u gap_maximo=%u\n",
+           reads, last_seen - primer_valor, missed_events, missed_windows, max_gap);
     return NULL;
 }
 
 int main(void) {
-    pthread_t pt, ct;
+    int fd = open("/dev/mem", O_RDONLY);
+    if (fd < 0) { perror("open /dev/mem (necesita root)"); return 1; }
+    void *map = mmap(NULL, REG_MAP_SIZE, PROT_READ, MAP_SHARED, fd, REG_BASE);
+    close(fd);
+    if (map == MAP_FAILED) { perror("mmap /dev/mem"); return 1; }
+    g_window_count_reg = (volatile uint32_t *)((char *)map + OFF_WINDOW_COUNT);
+
+    pthread_t ct;
     pthread_attr_t attr;
     struct sched_param sp;
     int modo_rt = 1;
-
-    pthread_create(&pt, NULL, productor, NULL);
 
     pthread_attr_init(&attr);
     memset(&sp, 0, sizeof(sp));
@@ -97,13 +108,13 @@ int main(void) {
         pthread_create(&ct, NULL, consumidor, NULL);
     }
 
-    printf("Modo: %s | ventana=%dms poll=%dus duracion=%ds\n",
+    printf("Modo: %s | registro real AREA_WINDOW_COUNT (0x%lX) | poll=%dus duracion=%ds\n",
            modo_rt ? "SCHED_FIFO (tiempo real)" : "prioridad normal (sin privilegios RT)",
-           WINDOW_MS, POLL_US, DURATION_S);
+           REG_BASE + OFF_WINDOW_COUNT, POLL_US, DURATION_S);
 
     sleep(DURATION_S);
     atomic_store(&stop_flag, 1);
-    pthread_join(pt, NULL);
     pthread_join(ct, NULL);
+    munmap(map, REG_MAP_SIZE);
     return 0;
 }
