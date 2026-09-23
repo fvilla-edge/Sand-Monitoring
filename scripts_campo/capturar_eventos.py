@@ -15,6 +15,7 @@ c/capturar_eventos.cpp).
 Uso:
   python3 capturar_eventos.py [--umbral 5.0] [--destino /root/eventos]
                               [--dec 32] [--estado-s 10] [--duracion-s 0]
+                              [--host 127.0.0.1]
 """
 import os
 import sys
@@ -38,6 +39,11 @@ def main():
                      help='cada cuantos segundos loguear una linea de ESTADO (default 10)')
     ap.add_argument('--duracion-s', type=int, default=0,
                      help='cortar solo despues de N segundos (default 0 = hasta Ctrl+C/SIGTERM)')
+    ap.add_argument('--host', default='127.0.0.1',
+                     help='IP del streaming-server (default 127.0.0.1). "auto" = descubrimiento '
+                          'por broadcast del vendor, que ata la conexion a la IP de eth0: con '
+                          'eth0 abajo (corte de Starlink) el stream se congela y se pierde la '
+                          'señal cruda. Con IP fija no (probado en rp-f0fd8c, 2026-09-23).')
     args = ap.parse_args()
 
     if not os.access(BINARIO, os.X_OK):
@@ -52,7 +58,8 @@ def main():
                        '--destino', args.destino,
                        '--dec', str(args.dec),
                        '--estado-s', str(args.estado_s),
-                       '--duracion-s', str(args.duracion_s)])
+                       '--duracion-s', str(args.duracion_s)]
+             + ([] if args.host == 'auto' else ['--host', args.host]))
 
 
 if __name__ == '__main__':
