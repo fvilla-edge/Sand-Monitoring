@@ -8,6 +8,8 @@ Para cada evento guardado por el hardware:
      DAC por red mete silencios, asi que cada evento se ubica por separado,
      no con un desplazamiento unico),
   2. se calcula la kurtosis en software sobre EXACTAMENTE esas muestras
+     (con el bitstream portado a Release_2026.1 el .bin guardado es la señal
+     CRUDA; la FPGA calcula la kurtosis sobre su propio pasabanda)
      (pasabanda de area_kurtosis.py aplicado al tramo entero, para no meter
      el transitorio de arranque del filtro), con la media restada (criterio
      de software) y con media=0 (aproximacion de la FPGA), y se compara con
@@ -64,6 +66,9 @@ def main():
     ap.add_argument('tramo')
     ap.add_argument('carpeta')
     ap.add_argument('--umbral', type=float, default=5.0)
+    ap.add_argument('--corr-min', type=float, default=0.7,
+                    help='correlacion minima para dar por ubicado un evento (por el cable OUT1->IN1 se suma '
+                         'el ruido de la entrada, no llega a 0.9)')
     args = ap.parse_args()
 
     x = np.fromfile(args.tramo, dtype='<i2').astype(np.float64)
@@ -91,13 +96,14 @@ def main():
         else:
             pred = previo[1] + (e['indice_inicio'] - previo[0]['indice_inicio'])
             pos, r = ubicar(x, huella, pred, int(0.5 * FS))
-            if r < 0.9:  # el DAC pudo meter un silencio largo: buscar en todo el tramo
+            if r < args.corr_min:  # el DAC pudo meter un silencio largo: buscar en todo el tramo
                 pos, r = ubicar(x, huella, len(x) // 2, len(x))
         e['pos'], e['corr'] = pos, r
-        if pos is not None and r >= 0.9:
+        if pos is not None and r >= args.corr_min:
             previo = (e, pos)
             ubicados.append(e)
-    print(f'eventos ubicados en el tramo (correlacion >= 0.9): {len(ubicados)}/{len(eventos)}')
+    print(f'eventos ubicados en el tramo (correlacion >= {args.corr_min}): {len(ubicados)}/{len(eventos)} '
+          f'| correlacion mediana {np.median([e["corr"] for e in ubicados]) if ubicados else float("nan"):.3f}')
     for e in eventos:
         if e not in ubicados:
             print(f'  NO UBICADO {e["archivo"]}: corr={e["corr"]:.2f} kurt_fpga={e["kurtosis"]:.1f} '

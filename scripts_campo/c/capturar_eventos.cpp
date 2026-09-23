@@ -52,7 +52,8 @@
 //   Genera N pulsos por OUT1 y corta sola ~3s despues del ultimo.
 //   --prueba-archivo RUTA [--dac-escala 4] [--dac-rate 7812500]: en vez de
 //   pulsos, reproduce una vez un tramo de señal real (int16 LE) por el DAC
-//   (Fase 3 etapa B) y corta sola ~3s despues.
+//   (Fase 3 etapa B) y corta sola ~3s despues. --dac-xor-signo compensa el
+//   bit de signo invertido del loopback digital en el bitstream 2026.1.
 //
 // OJO: el streaming-server acepta UNA sola conexion de configuracion. Si otro
 // cliente se conecta, a este le llega "End of file" y la libreria del vendor
@@ -415,6 +416,7 @@ int main(int argc, char** argv) {
     bool loopback_digital = false;
     std::string prueba_archivo;
     double dac_escala = 4;
+    bool dac_xor_signo = false;
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
         auto sig = [&](void) -> const char* {
@@ -437,6 +439,7 @@ int main(int argc, char** argv) {
         else if (a == "--pulso-loopback-digital") loopback_digital = true;
         else if (a == "--prueba-archivo") prueba_archivo = sig();
         else if (a == "--dac-escala") dac_escala = atof(sig());
+        else if (a == "--dac-xor-signo") dac_xor_signo = true;
         else if (a == "--dac-rate") pp.rate = atof(sig());
         else { fprintf(stderr, "argumento desconocido: %s\n", a.c_str()); return 2; }
     }
@@ -478,7 +481,8 @@ int main(int argc, char** argv) {
     std::shared_ptr<GeneradorArchivo> gen_archivo;
     FILE* pulsos_log = nullptr;
     if (!prueba_archivo.empty()) {
-        gen_archivo = std::make_shared<GeneradorArchivo>(prueba_archivo, dac_escala, pp.rate);
+        gen_archivo = std::make_shared<GeneradorArchivo>(prueba_archivo, dac_escala, pp.rate,
+                                                         dac_xor_signo ? 0x8000 : 0);
         if (!gen_archivo->ok()) { log("ERROR no se pudo leer %s", prueba_archivo.c_str()); return 1; }
         char rate[32];
         snprintf(rate, sizeof rate, "%.0f", pp.rate);

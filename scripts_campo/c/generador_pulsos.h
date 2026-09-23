@@ -91,7 +91,11 @@ class GeneradorPulsos : public DACCallback {
 // bits altos del DAC). Medio segundo de silencio antes y despues.
 class GeneradorArchivo : public DACCallback {
    public:
-    GeneradorArchivo(const std::string& ruta, double escala, double rate) {
+    // xor_signo: con el bitstream portado a Release_2026.1 el loopback digital
+    // DAC->ADC invierte el bit de signo (DAC en 0 llega como ~-32589, medido en
+    // HW 2026-09-23); 0x8000 lo compensa. 0 = sin compensar (cable OUT1->IN1).
+    GeneradorArchivo(const std::string& ruta, double escala, double rate, uint16_t xor_signo = 0)
+        : xor_signo_(xor_signo) {
         FILE* f = fopen(ruta.c_str(), "rb");
         if (!f) return;
         fseek(f, 0, SEEK_END);
@@ -117,7 +121,7 @@ class GeneradorArchivo : public DACCallback {
             uint64_t k = pos_ + i;
             int16_t v = 0;
             if (k >= silencio_ && k - silencio_ < datos_.size()) v = datos_[k - silencio_];
-            if (ch1) ch1[i] = v;
+            if (ch1) ch1[i] = (int16_t)((uint16_t)v ^ xor_signo_);
         }
         pos_ += size;
         if (pos_ >= silencio_ * 2 + datos_.size()) terminado_ = true;
@@ -128,6 +132,7 @@ class GeneradorArchivo : public DACCallback {
 
    private:
     std::vector<int16_t> datos_;
+    uint16_t xor_signo_ = 0;
     uint64_t silencio_ = 0, pos_ = 0;
     std::atomic<bool> terminado_{false};
 };
