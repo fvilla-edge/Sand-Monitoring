@@ -2,7 +2,7 @@
 API = /root/rpsa_client/streaming_api
 CXXFLAGS = -O2 -Wall -Wextra -std=c++17
 
-capturar_eventos: capturar_eventos.cpp
+capturar_eventos: capturar_eventos.cpp generador_pulsos.h
 	g++ $(CXXFLAGS) -isystem $(API) -o $@ $< -L$(API) -lstreaming_api -Wl,-rpath,$(API) -lpthread
 
 clean:
