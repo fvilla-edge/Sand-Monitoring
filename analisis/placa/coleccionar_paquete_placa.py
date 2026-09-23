@@ -27,10 +27,11 @@ ARQUITECTURA:
   de referencia - sirve para probar el resto del pipeline sin placa.
   LectorRegistrosHW (Etapa 7/8, 2026-09-22) lee los registros REALES via
   mmap de /dev/mem en los offsets de AREA_WINDOW_COUNT/AREA_SUM_*
-  (0x40000000+0x22C..0x40000000+0x248, confirmados en
-  RedPitaya-FPGA-Release_2025.2/prj/stream_app/ip/rp_oscilloscope/scope_cfg.sv,
-  la .rst del repo esta desactualizada) - corre EN la placa con el
-  bitstream nuevo cargado. El resto del script (deteccion de ventana
+  (0x40000000+0x32C..0x348 en el bitstream portado a Release_2026.1,
+  0x22C..0x248 en el etapa7 viejo de Release_2025.2 — se detecta solo,
+  ver LectorRegistrosHW._detectar_bloque; offsets en scope_cfg.sv del
+  repo FPGA, la .rst del repo esta desactualizada) - corre EN la placa
+  con un bitstream con el acumulador cargado. El resto del script (deteccion de ventana
   nueva, calculo de area/kurtosis, armado del paquete) es el mismo para
   los dos lectores.
 
@@ -201,6 +202,9 @@ class LectorRegistrosHW(LectorRegistros):
     _REG_BASE = 0x40000000
     _MAP_SIZE = 0x1000  # cubre de sobra hasta 0x248
 
+    # offsets del etapa7 viejo; el port a Release_2026.1 los tiene +0x100
+    # (2026.1 ocupo 0x200-0x214 con registros de timestamp)
+    _OFF_WINDOW_SAMPLES = 0x228
     _OFF_WINDOW_COUNT = 0x22C
     _OFF_SUM_ABS_LO = 0x230
     _OFF_SUM_ABS_HI = 0x234
@@ -222,9 +226,21 @@ class LectorRegistrosHW(LectorRegistros):
                                   offset=self._REG_BASE)
         finally:
             os.close(fd)
+        self._base = self._detectar_bloque()
+
+    def _detectar_bloque(self):
+        """0x100 si el acumulador responde en 0x328 (port 2026.1), 0 si en
+        0x228 (etapa7 viejo). El registro de muestras por ventana es R/W con
+        default 195312 y los registros sin mapear se leen 0 en ambos."""
+        if struct.unpack_from("<I", self._mm, self._OFF_WINDOW_SAMPLES + 0x100)[0] != 0:
+            return 0x100
+        if struct.unpack_from("<I", self._mm, self._OFF_WINDOW_SAMPLES)[0] != 0:
+            return 0
+        raise RuntimeError("el bitstream cargado no tiene el acumulador de area/kurtosis "
+                           "(ni en 0x328 ni en 0x228)")
 
     def _leer_reg(self, offset):
-        return struct.unpack_from("<I", self._mm, offset)[0]
+        return struct.unpack_from("<I", self._mm, offset + self._base)[0]
 
     def fs_hz(self):
         return self._fs

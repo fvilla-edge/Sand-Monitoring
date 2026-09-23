@@ -41,6 +41,10 @@
 #define DURATION_S     60
 #define REG_BASE       0x40000000UL
 #define REG_MAP_SIZE   0x1000UL
+// etapa7 viejo (Release_2025.2): 0x228/0x22C; port a Release_2026.1: +0x100
+// (2026.1 ocupo 0x200-0x214). Se detecta en main() con el registro de muestras
+// por ventana (R/W, default 195312; lo no mapeado se lee 0).
+#define OFF_WINDOW_SAMPLES 0x228
 #define OFF_WINDOW_COUNT 0x22C
 
 static atomic_int stop_flag = 0;
@@ -87,7 +91,13 @@ int main(void) {
     void *map = mmap(NULL, REG_MAP_SIZE, PROT_READ, MAP_SHARED, fd, REG_BASE);
     close(fd);
     if (map == MAP_FAILED) { perror("mmap /dev/mem"); return 1; }
-    g_window_count_reg = (volatile uint32_t *)((char *)map + OFF_WINDOW_COUNT);
+    unsigned long base = 0;
+    if (*(volatile uint32_t *)((char *)map + OFF_WINDOW_SAMPLES + 0x100) != 0) base = 0x100;
+    else if (*(volatile uint32_t *)((char *)map + OFF_WINDOW_SAMPLES) == 0) {
+        fprintf(stderr, "el bitstream cargado no tiene el acumulador de area/kurtosis (ni en 0x328 ni en 0x228)\n");
+        return 1;
+    }
+    g_window_count_reg = (volatile uint32_t *)((char *)map + OFF_WINDOW_COUNT + base);
 
     pthread_t ct;
     pthread_attr_t attr;
@@ -110,7 +120,7 @@ int main(void) {
 
     printf("Modo: %s | registro real AREA_WINDOW_COUNT (0x%lX) | poll=%dus duracion=%ds\n",
            modo_rt ? "SCHED_FIFO (tiempo real)" : "prioridad normal (sin privilegios RT)",
-           REG_BASE + OFF_WINDOW_COUNT, POLL_US, DURATION_S);
+           REG_BASE + OFF_WINDOW_COUNT + base, POLL_US, DURATION_S);
 
     sleep(DURATION_S);
     atomic_store(&stop_flag, 1);

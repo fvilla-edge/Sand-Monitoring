@@ -13,7 +13,9 @@
 //   - Streaming NET continuo, cada paquete se copia a un buffer circular en
 //     RAM con los ultimos BUFFER_VENTANAS x 50ms de señal cruda.
 //   - Hilo principal sondea el acumulador de area/kurtosis de la FPGA
-//     (window_count + sumas, 0x4000022C..0x248) cada 2ms. Si una ventana
+//     (window_count + sumas, 0x4000032C..0x348 en el bitstream portado a
+//     Release_2026.1, 0x4000022C..0x248 en el etapa7 viejo — se detecta
+//     solo, ver Registros::abrir) cada 2ms. Si una ventana
 //     cruza kurtosis>=umbral, recorta esa ventana del buffer y la guarda
 //     (.bin int16 LE + .json) con un margen de --margen-ms (default 10ms) a
 //     cada lado. Las ventanas tranquilas no se guardan.
@@ -90,6 +92,9 @@ const int POLL_US = 2000;
 const int64_t TOLERANCIA_DERIVA = 4 * 32768;  // 4 paquetes; jitter normal medido < 2
 
 const uint32_t REG_BASE = 0x40000000;
+// Offsets del etapa7 viejo (Release_2025.2); el bitstream portado a
+// Release_2026.1 tiene el mismo bloque +0x100 (2026.1 ocupo 0x200-0x214).
+const uint32_t OFF_WINDOW_SAMPLES = 0x228;
 const uint32_t OFF_WINDOW_COUNT = 0x22C, OFF_SUM_ABS_LO = 0x230, OFF_SUM_ABS_HI = 0x234,
                OFF_SUM_X2_LO = 0x238, OFF_SUM_X2_HI = 0x23C, OFF_SUM_X4_LO = 0x240,
                OFF_SUM_X4_MID = 0x244, OFF_SUM_X4_HI = 0x248;
@@ -208,6 +213,10 @@ class CB : public ADCCallback {
 
 class Registros {
    public:
+    // Detecta en que bloque esta el acumulador: el registro de muestras por
+    // ventana (R/W, default 195312) responde en 0x328 (port 2026.1) o en
+    // 0x228 (etapa7 viejo). Si no responde en ninguno, el bitstream cargado
+    // no tiene el acumulador (p.ej. el stream_app del vendor).
     bool abrir() {
         int fd = open("/dev/mem", O_RDONLY | O_SYNC);
         if (fd < 0) return false;
@@ -215,25 +224,38 @@ class Registros {
         close(fd);
         if (m == MAP_FAILED) return false;
         r_ = (volatile uint32_t*)m;
+        if (r_[(OFF_WINDOW_SAMPLES + 0x100) / 4] != 0) {
+            base_ = 0x100;
+            nombre_ = "Release_2026.1 (0x328..)";
+        } else if (r_[OFF_WINDOW_SAMPLES / 4] != 0) {
+            base_ = 0;
+            nombre_ = "etapa7 viejo (0x228..)";
+        } else {
+            return false;
+        }
         return true;
     }
-    uint32_t window_count() const { return r_[OFF_WINDOW_COUNT / 4]; }
+    const char* nombre() const { return nombre_; }
+    uint32_t window_samples() const { return r(OFF_WINDOW_SAMPLES); }
+    uint32_t window_count() const { return r(OFF_WINDOW_COUNT); }
     // Lee las sumas de la ultima ventana completa. Se relee window_count al
     // final: si cambio en el medio, las sumas pueden ser de dos ventanas
     // distintas y se vuelve a leer.
     uint32_t leer(double& s_abs, double& s_x2, double& s_x4) const {
         for (;;) {
             uint32_t wc = window_count();
-            s_abs = r_[OFF_SUM_ABS_LO / 4] + ldexp((double)r_[OFF_SUM_ABS_HI / 4], 32);
-            s_x2 = r_[OFF_SUM_X2_LO / 4] + ldexp((double)r_[OFF_SUM_X2_HI / 4], 32);
-            s_x4 = r_[OFF_SUM_X4_LO / 4] + ldexp((double)r_[OFF_SUM_X4_MID / 4], 32) +
-                   ldexp((double)r_[OFF_SUM_X4_HI / 4], 64);
+            s_abs = r(OFF_SUM_ABS_LO) + ldexp((double)r(OFF_SUM_ABS_HI), 32);
+            s_x2 = r(OFF_SUM_X2_LO) + ldexp((double)r(OFF_SUM_X2_HI), 32);
+            s_x4 = r(OFF_SUM_X4_LO) + ldexp((double)r(OFF_SUM_X4_MID), 32) + ldexp((double)r(OFF_SUM_X4_HI), 64);
             if (window_count() == wc) return wc;
         }
     }
 
    private:
+    uint32_t r(uint32_t off) const { return r_[(off + base_) / 4]; }
     volatile uint32_t* r_ = nullptr;
+    uint32_t base_ = 0;
+    const char* nombre_ = "";
 };
 
 // Misma formula que _area_kurtosis_de_suma (coleccionar_paquete_placa.py).
@@ -422,7 +444,12 @@ int main(int argc, char** argv) {
     const int64_t N = (int64_t)(fs * VENTANA_S);
 
     Registros reg;
-    if (!reg.abrir()) { log("ERROR no se pudo mapear /dev/mem"); return 1; }
+    if (!reg.abrir()) {
+        log("ERROR no se encontro el acumulador de area/kurtosis de la FPGA (¿bitstream sin el, o sin permisos "
+            "para /dev/mem?)");
+        return 1;
+    }
+    log("Acumulador de la FPGA: %s, %u muestras por ventana", reg.nombre(), reg.window_samples());
 
     const int64_t M = (int64_t)(fs * margen_ms / 1000);
     if (2 * M >= (int64_t)N * (BUFFER_VENTANAS - 2)) { log("ERROR --margen-ms demasiado grande para el buffer"); return 1; }
