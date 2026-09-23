@@ -48,6 +48,9 @@
 //   [--pulso-loopback-digital]  (DAC->ADC canal 1 dentro de la FPGA, registro
 //   0x40000040 bit1 — con el bitstream etapa7 la salida fisica OUT1 no anda)
 //   Genera N pulsos por OUT1 y corta sola ~3s despues del ultimo.
+//   --prueba-archivo RUTA [--dac-escala 4] [--dac-rate 7812500]: en vez de
+//   pulsos, reproduce una vez un tramo de señal real (int16 LE) por el DAC
+//   (Fase 3 etapa B) y corta sola ~3s despues.
 //
 // OJO: el streaming-server acepta UNA sola conexion de configuracion. Si otro
 // cliente se conecta, a este le llega "End of file" y la libreria del vendor
@@ -388,6 +391,8 @@ int main(int argc, char** argv) {
     std::string host;    // vacio = descubrimiento por broadcast (default del vendor)
     ParamsPulsos pp;     // modo prueba, apagado si pp.n == 0
     bool loopback_digital = false;
+    std::string prueba_archivo;
+    double dac_escala = 4;
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
         auto sig = [&](void) -> const char* {
@@ -408,6 +413,9 @@ int main(int argc, char** argv) {
         else if (a == "--pulso-amp") pp.amp = atof(sig());
         else if (a == "--pulso-log") pp.log = sig();
         else if (a == "--pulso-loopback-digital") loopback_digital = true;
+        else if (a == "--prueba-archivo") prueba_archivo = sig();
+        else if (a == "--dac-escala") dac_escala = atof(sig());
+        else if (a == "--dac-rate") pp.rate = atof(sig());
         else { fprintf(stderr, "argumento desconocido: %s\n", a.c_str()); return 2; }
     }
     const double fs = 125e6 / dec;
@@ -440,8 +448,20 @@ int main(int argc, char** argv) {
     // de configuracion tira la primera, ver generador_pulsos.h).
     std::shared_ptr<DACStreamClient> dac;
     std::shared_ptr<GeneradorPulsos> gen;
+    std::shared_ptr<GeneradorArchivo> gen_archivo;
     FILE* pulsos_log = nullptr;
-    if (pp.n > 0) {
+    if (!prueba_archivo.empty()) {
+        gen_archivo = std::make_shared<GeneradorArchivo>(prueba_archivo, dac_escala, pp.rate);
+        if (!gen_archivo->ok()) { log("ERROR no se pudo leer %s", prueba_archivo.c_str()); return 1; }
+        char rate[32];
+        snprintf(rate, sizeof rate, "%.0f", pp.rate);
+        conf->sendConfig("dac_pass_mode", "DAC_NET");
+        conf->sendConfig("dac_rate", rate);
+        log("PRUEBA: dac_rate pedido=%s leido=%s", rate, conf->getConfig("dac_rate").c_str());
+        dac = std::make_shared<DACStreamClient>(conf);
+        dac->setVerbose(false);
+        dac->setCallback(gen_archivo);
+    } else if (pp.n > 0) {
         pulsos_log = fopen(pp.log.c_str(), "w");
         if (!pulsos_log) { log("ERROR no se pudo abrir %s", pp.log.c_str()); return 1; }
         char rate[32];
@@ -479,6 +499,15 @@ int main(int argc, char** argv) {
 
     // el DAC arranca despues de calibrar, para no meter pulsos en la calibracion
     int64_t t_fin_pulsos = 0;
+    if (gen_archivo) {
+        if (!dac->startStreamingFromMemorySink(host.empty() ? "127.0.0.1" : host, true, false, DAC_16BIT)) {
+            log("ERROR no arranco el DAC");
+            adc->stopStreaming();
+            return 1;
+        }
+        log("PRUEBA: reproduciendo %s por el DAC (%zu muestras, %.1fs a %.0f Hz, escala %.1f)",
+            prueba_archivo.c_str(), gen_archivo->muestras(), gen_archivo->muestras() / pp.rate, pp.rate, dac_escala);
+    }
     if (gen) {
         if (!dac->startStreamingFromMemorySink(host.empty() ? "127.0.0.1" : host, true, false, DAC_16BIT)) {
             log("ERROR no arranco el DAC");
@@ -641,7 +670,7 @@ int main(int argc, char** argv) {
             kurt_max_periodo = 0;
         }
         if (duracion_s > 0 && t - t_inicio >= duracion_s * 1000LL) break;
-        if (gen && gen->terminado()) {
+        if ((gen && gen->terminado()) || (gen_archivo && gen_archivo->terminado())) {
             if (t_fin_pulsos == 0) t_fin_pulsos = t;
             else if (t - t_fin_pulsos > 3000) break;
         }

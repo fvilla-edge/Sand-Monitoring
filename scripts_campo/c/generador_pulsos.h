@@ -23,7 +23,9 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <algorithm>
 #include <cstring>
+#include <string>
 #include <vector>
 
 struct ParamsPulsos {
@@ -81,6 +83,53 @@ class GeneradorPulsos : public DACCallback {
     std::vector<int16_t> pulso_;
     uint64_t periodo_, primero_, pos_ = 0;
     std::atomic<uint64_t> emitidos_{0};
+};
+
+// Modo archivo (Fase 3 etapa B): reproduce UNA vez por el DAC un tramo de
+// señal real (int16 LE, cuentas de ADC, a la misma tasa que --pulso-rate),
+// multiplicado por `escala` (4 con el loopback digital: el ADC recibe los 14
+// bits altos del DAC). Medio segundo de silencio antes y despues.
+class GeneradorArchivo : public DACCallback {
+   public:
+    GeneradorArchivo(const std::string& ruta, double escala, double rate) {
+        FILE* f = fopen(ruta.c_str(), "rb");
+        if (!f) return;
+        fseek(f, 0, SEEK_END);
+        long bytes = ftell(f);
+        fseek(f, 0, SEEK_SET);
+        datos_.resize(bytes / 2);
+        size_t leidos = fread(datos_.data(), 2, datos_.size(), f);
+        fclose(f);
+        datos_.resize(leidos);
+        for (auto& v : datos_) {
+            long y = lround(v * escala);
+            v = (int16_t)std::max(-32767L, std::min(32767L, y));
+        }
+        silencio_ = (uint64_t)(rate / 2);
+    }
+
+    bool ok() const { return !datos_.empty(); }
+    size_t muestras() const { return datos_.size(); }
+
+    bool streamData16Bit(DACStreamClient*, int16_t* ch1, int16_t* ch2, size_t size) override {
+        if (ch2) memset(ch2, 0, size * sizeof(int16_t));
+        for (size_t i = 0; i < size; i++) {
+            uint64_t k = pos_ + i;
+            int16_t v = 0;
+            if (k >= silencio_ && k - silencio_ < datos_.size()) v = datos_[k - silencio_];
+            if (ch1) ch1[i] = v;
+        }
+        pos_ += size;
+        if (pos_ >= silencio_ * 2 + datos_.size()) terminado_ = true;
+        return false;
+    }
+
+    bool terminado() const { return terminado_; }
+
+   private:
+    std::vector<int16_t> datos_;
+    uint64_t silencio_ = 0, pos_ = 0;
+    std::atomic<bool> terminado_{false};
 };
 
 #endif
