@@ -73,7 +73,17 @@ scripts_campo/capturar_eventos.py (lanzador)
 - Cada fin de corrida queda en `/root/logs_campo/modo_evento_reinicios.log`
   (`resultado=core-dump estado=SEGV` = caída, `success` = parada limpia).
   Core dumps en `/root/logs_campo`, podados al límite de `config_campo.json`.
-- Destino y umbral: `Environment=DESTINO=... UMBRAL=...` en la unit.
+- **Destino: `/mnt/usb/eventos`** (storage externo, automontaje de
+  `scripts_campo_comun/udev-automount/`), **nunca la SD**:
+  - al arrancar, si `/mnt/usb` no es un montaje real no arranca (queda
+    `sin_usb` en el log de reinicios) y reintenta cada 60s hasta que aparezca;
+  - durante la corrida, `capturar_eventos` verifica antes de cada escritura
+    que el destino siga en el mismo dispositivo; si el USB se desconecta
+    (el automontaje hace `umount -l` y `/mnt/usb` pasa a ser carpeta de la
+    SD) corta con código 4 en el mismo segundo.
+  - Probado con `umount -l`: corte inmediato, 0 archivos en la SD, al
+    remontar retomó solo en el siguiente reintento.
+- Umbral: `Environment=UMBRAL=...` en la unit.
 - **El server acepta un solo cliente**: para usar `capturar_stream.py` en la
   misma placa, antes `systemctl disable --now modo-evento`.
 
@@ -138,7 +148,12 @@ Pruebas de banco (loopback OUT1->IN1 con cable, reproduciendo un tramo real
 por el DAC): scripts en `/root/prueba_eth0/` de `rp-f0fd8c` (fuera de git):
 `etapaB_lv.sh T RATE` (umbral 5, a la SD), `etapaB_lv_todo.sh` (umbral 1),
 `etapaB_lv_shm.sh` (umbral 1, a RAM), `larga.sh T SEGUNDOS` (sin DAC, con
-monitor de RAM/CPU). **Antes de lanzar, verificar que el nombre `T` no exista**
+monitor de RAM/CPU), `pase_u1.sh T SEGUNDOS` (umbral 1 a `/mnt/usb`, peor
+caso de escritura). `--dac-repetir N` repite el tramo N veces seguidas (pase
+largo por cable). **El loopback digital (`--pulso-loopback-digital`) NO sirve
+para reproducir el tramo con el bitstream 2026.1** (kurtosis fija ~2.99, K1 del
+23/9 y PASE1 del 24/9): usar el cable OUT1->IN1 con el jumper en LV.
+Antes de estas pruebas, `systemctl stop modo-evento` (un solo cliente). **Antes de lanzar, verificar que el nombre `T` no exista**
 (los scripts borran `ev_T` y pisan los logs), y **espaciar las corridas
 ~60s** (el streaming-server queda residual si se lanzan en ráfaga).
 
@@ -210,6 +225,7 @@ OUT1->IN1 (jumper IN1 en LV) reproduciendo el tramo real
 | R2 | umbral 1, a SD | 2 saltadas marcadas en el CSV, `perdidas_fpga` = total del log |
 | **HV15** | umbral 5, a SD, sin DAC, **jumper HV**, 15 min | 18000 ventanas, 0 saltadas, 0 muestras perdidas, **0 eventos**, kurtosis p50 2.98 / máx 3.06, área de reposo 0.515 |
 | Supervisor | 5 SIGSEGV, matar el server, stop/start, 2 reinicios de la placa | 5/5 recuperados (~74s de hueco c/u); server caído -> el cliente muere (SIGSEGV del vendor) y se recupera; `stop` no relanza; al boot arranca solo (1er reinicio falló por la carrera con el overlay del vendor y se recuperó en el reintento; con `After=` arrancó al primer intento) |
+| **PASE2** | **peor caso de escritura**: umbral 1 (todas las ventanas) a `/mnt/usb`, 30 min, HV | 35981 eventos (19GB, ~10.8MB/s), 0 perdidos por cola, **0 errores de USB/ext4**, RAM estable; **0.59% de muestras perdidas** (en ráfagas) y **18 ventanas saltadas** (0.05%) |
 | **L1** | umbral 5, a SD, **sin DAC, 90 min** (15:06-16:36 UTC) | 107999 ventanas, 0 saltadas, 100% muestras; **rotación de hora OK**; RAM/CPU planas (29.6MB / 21.5%); 1 evento (pico aislado de ~1ms, probable interferencia del banco) |
 
 Detector (FPGA vs software sobre las mismas muestras que llegaron): mediana
@@ -230,8 +246,11 @@ Detector (FPGA vs software sobre las mismas muestras que llegaron): mediana
   **datos viejos** del buffer circular (~300ms antes), no ceros, y el JSON no
   dice dónde. `reconstruir_senal.py` omite esos eventos. Pendiente: guardar la
   posición del hueco en el JSON.
-- **La SD es el cuello de botella**: escribir muchos eventos (~10MB/s) hace
-  perder muestras y ventanas (V2). Con umbral 5 en reposo no pasa.
+- **Escribir mucho hace perder muestras**: a la SD (V2) mucho; al USB
+  (PASE2, ~10.8MB/s, el doble de un pase real) 0.59% de muestras y 0.05% de
+  ventanas. Causa probable: el kernel vacía de golpe ~30MB de páginas sucias
+  y frena la captura. Sin probar: `vm.dirty_bytes` más chico o `fsync` más
+  seguido. Con umbral 5 en reposo no pasa.
 - **`pkill -f streaming-server` mataba cualquier proceso** con ese texto en
   su línea de comando (una sesión SSH, un `grep`). Arreglado a
   `pkill -x streaming-serve` en `campo_common.asegurar_servidor` y

@@ -85,17 +85,19 @@ class GeneradorPulsos : public DACCallback {
     std::atomic<uint64_t> emitidos_{0};
 };
 
-// Modo archivo (Fase 3 etapa B): reproduce UNA vez por el DAC un tramo de
-// señal real (int16 LE, cuentas de ADC, a la misma tasa que --pulso-rate),
-// multiplicado por `escala` (4 con el loopback digital: el ADC recibe los 14
-// bits altos del DAC). Medio segundo de silencio antes y despues.
+// Modo archivo (Fase 3 etapa B): reproduce por el DAC un tramo de señal real
+// (int16 LE, cuentas de ADC, a la misma tasa que --pulso-rate), multiplicado
+// por `escala` (4 con el loopback digital: el ADC recibe los 14 bits altos
+// del DAC), `repetir` veces seguidas sin pausa (--dac-repetir, para simular un
+// pase de arena largo sin cargar un archivo enorme en RAM). Medio segundo de
+// silencio antes y despues.
 class GeneradorArchivo : public DACCallback {
    public:
     // xor_signo: con el bitstream portado a Release_2026.1 el loopback digital
     // DAC->ADC invierte el bit de signo (DAC en 0 llega como ~-32589, medido en
     // HW 2026-09-23); 0x8000 lo compensa. 0 = sin compensar (cable OUT1->IN1).
-    GeneradorArchivo(const std::string& ruta, double escala, double rate, uint16_t xor_signo = 0)
-        : xor_signo_(xor_signo) {
+    GeneradorArchivo(const std::string& ruta, double escala, double rate, uint16_t xor_signo = 0, int repetir = 1)
+        : xor_signo_(xor_signo), repetir_(repetir < 1 ? 1 : repetir) {
         FILE* f = fopen(ruta.c_str(), "rb");
         if (!f) return;
         fseek(f, 0, SEEK_END);
@@ -114,17 +116,19 @@ class GeneradorArchivo : public DACCallback {
 
     bool ok() const { return !datos_.empty(); }
     size_t muestras() const { return datos_.size(); }
+    int repetir() const { return repetir_; }
+    uint64_t muestras_total() const { return (uint64_t)datos_.size() * repetir_; }
 
     bool streamData16Bit(DACStreamClient*, int16_t* ch1, int16_t* ch2, size_t size) override {
         if (ch2) memset(ch2, 0, size * sizeof(int16_t));
         for (size_t i = 0; i < size; i++) {
             uint64_t k = pos_ + i;
             int16_t v = 0;
-            if (k >= silencio_ && k - silencio_ < datos_.size()) v = datos_[k - silencio_];
+            if (k >= silencio_ && k - silencio_ < muestras_total()) v = datos_[(k - silencio_) % datos_.size()];
             if (ch1) ch1[i] = (int16_t)((uint16_t)v ^ xor_signo_);
         }
         pos_ += size;
-        if (pos_ >= silencio_ * 2 + datos_.size()) terminado_ = true;
+        if (pos_ >= silencio_ * 2 + muestras_total()) terminado_ = true;
         return false;
     }
 
@@ -133,6 +137,7 @@ class GeneradorArchivo : public DACCallback {
    private:
     std::vector<int16_t> datos_;
     uint16_t xor_signo_ = 0;
+    int repetir_ = 1;
     uint64_t silencio_ = 0, pos_ = 0;
     std::atomic<bool> terminado_{false};
 };

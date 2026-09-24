@@ -34,6 +34,9 @@
 //     en la PC. Las ventanas que el sondeo no llego a leer van con
 //     estado=saltada y area/kurtosis vacias (el registro de la FPGA solo
 //     guarda la ultima). Escribe su propio hilo, igual que los eventos.
+//   - Destino vigilado: se anota el dispositivo de --destino al arrancar y se
+//     verifica antes de cada escritura; si cambia (USB desconectado -> /mnt/usb
+//     queda como carpeta de la SD) corta con codigo 4 en vez de escribir en la SD.
 //   - La escritura a disco va en un hilo aparte (cola acotada): escribir ~0.5MB
 //     en la SD puede tardar mas que una ventana y el registro de la FPGA solo
 //     guarda la ultima — escribir en el hilo de sondeo hacia perder ventanas.
@@ -59,9 +62,10 @@
 //   0x40000040 bit1 — con el bitstream etapa7 la salida fisica OUT1 no anda)
 //   Genera N pulsos por OUT1 y corta sola ~3s despues del ultimo.
 //   --prueba-archivo RUTA [--dac-escala 4] [--dac-rate 7812500]: en vez de
-//   pulsos, reproduce una vez un tramo de señal real (int16 LE) por el DAC
-//   (Fase 3 etapa B) y corta sola ~3s despues. --dac-xor-signo compensa el
-//   bit de signo invertido del loopback digital en el bitstream 2026.1.
+//   pulsos, reproduce un tramo de señal real (int16 LE) por el DAC (Fase 3
+//   etapa B) y corta sola ~3s despues. --dac-repetir N lo repite N veces
+//   seguidas (pase de arena largo). --dac-xor-signo compensa el bit de signo
+//   invertido del loopback digital en el bitstream 2026.1.
 //
 // OJO: el streaming-server acepta UNA sola conexion de configuracion. Si otro
 // cliente se conecta, a este le llega "End of file" y la libreria del vendor
@@ -90,6 +94,7 @@
 #include <string>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <sys/sysmacros.h>
 #include <thread>
 #include <unistd.h>
 #include <vector>
@@ -110,6 +115,14 @@ const uint32_t OFF_WINDOW_COUNT = 0x22C, OFF_SUM_ABS_LO = 0x230, OFF_SUM_ABS_HI 
                OFF_SUM_X4_MID = 0x244, OFF_SUM_X4_HI = 0x248;
 
 std::atomic<bool> g_stop{false};
+
+// Destino vigilado: se anota el dispositivo (st_dev) de --destino al arrancar
+// y se verifica antes de cada escritura. Si el USB se desconecta, el
+// automontaje hace umount -l y /mnt/usb pasa a ser una carpeta comun de la SD:
+// sin este chequeo, los archivos siguientes caerian en la SD sin aviso. Si
+// cambia, se corta con codigo 4 y el supervisor relanza (y espera al USB).
+dev_t g_dev_destino = 0;
+std::atomic<bool> g_destino_perdido{false};
 
 void on_signal(int) { g_stop = true; }
 
@@ -304,8 +317,20 @@ Evento nuevo_evento(uint32_t wc) {
     return e;
 }
 
-void guardar_evento(const std::string& destino, const Evento& e) {
-    mkdir(destino.c_str(), 0755);
+bool destino_ok(const std::string& destino) {
+    if (g_dev_destino == 0) return true;
+    struct stat st;
+    if (stat(destino.c_str(), &st) == 0 && st.st_dev == g_dev_destino) return true;
+    if (!g_destino_perdido.exchange(true)) {
+        log("ERROR %s ya no esta en el mismo dispositivo que al arrancar (¿USB desconectado?) — se corta "
+            "para no escribir en otro disco", destino.c_str());
+        g_stop = true;
+    }
+    return false;
+}
+
+bool guardar_evento(const std::string& destino, const Evento& e) {
+    if (!destino_ok(destino)) return false;
     std::string bin = destino + "/" + e.base + ".bin";
     FILE* f = fopen(bin.c_str(), "wb");
     if (f) {
@@ -326,6 +351,7 @@ void guardar_evento(const std::string& destino, const Evento& e) {
                 (long long)e.indice_inicio, e.area, e.kurt, e.con_hueco ? "true" : "false", e.iso.c_str());
         fclose(f);
     }
+    return true;
 }
 
 // Escribe los eventos en disco desde un hilo propio. Cola acotada: si se
@@ -372,8 +398,7 @@ class Escritor {
                 e = std::move(cola_.front());
                 cola_.pop_front();
             }
-            guardar_evento(destino_, e);
-            escritos_++;
+            if (guardar_evento(destino_, e)) escritos_++;
         }
     }
 
@@ -456,7 +481,11 @@ class RegistroVentanas {
                 lote.swap(filas_);
                 fin = fin_;
             }
-            for (const auto& f : lote) escribir(f);
+            if (destino_ok(destino_)) {
+                for (const auto& f : lote) escribir(f);
+            } else {
+                descartadas_ += lote.size();
+            }
             if (f_) fflush(f_);
             lote.clear();
             if (fin) return;
@@ -471,7 +500,6 @@ class RegistroVentanas {
         strftime(hora, sizeof hora, "%Y%m%d_%H", &tm);
         if (!f_ || hora_ != hora) {  // rota por hora UTC
             if (f_) fclose(f_);
-            mkdir(destino_.c_str(), 0755);
             std::string ruta = destino_ + "/ventanas_" + hora + ".csv";
             bool nuevo = access(ruta.c_str(), F_OK) != 0;
             f_ = fopen(ruta.c_str(), "a");
@@ -519,6 +547,7 @@ int main(int argc, char** argv) {
     bool con_registro = true;
     double dac_escala = 4;
     bool dac_xor_signo = false;
+    int dac_repetir = 1;
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
         auto sig = [&](void) -> const char* {
@@ -543,6 +572,7 @@ int main(int argc, char** argv) {
         else if (a == "--sin-registro") con_registro = false;
         else if (a == "--dac-escala") dac_escala = atof(sig());
         else if (a == "--dac-xor-signo") dac_xor_signo = true;
+        else if (a == "--dac-repetir") dac_repetir = atoi(sig());
         else if (a == "--dac-rate") pp.rate = atof(sig());
         else { fprintf(stderr, "argumento desconocido: %s\n", a.c_str()); return 2; }
     }
@@ -560,6 +590,13 @@ int main(int argc, char** argv) {
     const int64_t M = (int64_t)(fs * margen_ms / 1000);
     if (2 * M >= (int64_t)N * (BUFFER_VENTANAS - 2)) { log("ERROR --margen-ms demasiado grande para el buffer"); return 1; }
     BufferCircular buf((size_t)N * BUFFER_VENTANAS);
+    mkdir(destino.c_str(), 0755);
+    {
+        struct stat st;
+        if (stat(destino.c_str(), &st) != 0) { log("ERROR no se pudo crear/leer el destino %s", destino.c_str()); return 1; }
+        g_dev_destino = st.st_dev;
+        log("Destino %s (dispositivo %u:%u)", destino.c_str(), major(st.st_dev), minor(st.st_dev));
+    }
     Escritor escritor(destino);
     std::unique_ptr<RegistroVentanas> registro;
     if (con_registro) registro.reset(new RegistroVentanas(destino));
@@ -587,7 +624,7 @@ int main(int argc, char** argv) {
     FILE* pulsos_log = nullptr;
     if (!prueba_archivo.empty()) {
         gen_archivo = std::make_shared<GeneradorArchivo>(prueba_archivo, dac_escala, pp.rate,
-                                                         dac_xor_signo ? 0x8000 : 0);
+                                                         dac_xor_signo ? 0x8000 : 0, dac_repetir);
         if (!gen_archivo->ok()) { log("ERROR no se pudo leer %s", prueba_archivo.c_str()); return 1; }
         char rate[32];
         snprintf(rate, sizeof rate, "%.0f", pp.rate);
@@ -647,9 +684,10 @@ int main(int argc, char** argv) {
             return 1;
         }
         t_replay = ahora_ms();
-        dur_replay_ms = (int64_t)((gen_archivo->muestras() + pp.rate) / pp.rate * 1000);
-        log("PRUEBA: reproduciendo %s por el DAC (%zu muestras, %.1fs a %.0f Hz, escala %.1f)",
-            prueba_archivo.c_str(), gen_archivo->muestras(), gen_archivo->muestras() / pp.rate, pp.rate, dac_escala);
+        dur_replay_ms = (int64_t)((gen_archivo->muestras_total() + pp.rate) / pp.rate * 1000);
+        log("PRUEBA: reproduciendo %s por el DAC (%zu muestras, %.1fs a %.0f Hz, escala %.1f) x%d = %.1fs",
+            prueba_archivo.c_str(), gen_archivo->muestras(), gen_archivo->muestras() / pp.rate, pp.rate, dac_escala,
+            gen_archivo->repetir(), gen_archivo->muestras_total() / pp.rate);
     }
     if (gen) {
         if (!dac->startStreamingFromMemorySink(host.empty() ? "127.0.0.1" : host, true, false, DAC_16BIT)) {
@@ -860,5 +898,6 @@ int main(int argc, char** argv) {
         log("PRUEBA: pulsos emitidos=%llu", (unsigned long long)gen->emitidos());
         fclose(pulsos_log);
     }
+    if (g_destino_perdido) return 4;
     return 0;
 }

@@ -30,7 +30,11 @@ After=redpitaya_startup.service redpitaya_e3_controller.service
 
 [Service]
 Type=simple
-Environment=DESTINO=/root/eventos
+# /mnt/usb: el storage externo de campo (automontaje, scripts_campo_comun/
+# udev-automount). Nunca la SD: si el USB no esta montado, supervisor_eventos.sh
+# no deja arrancar (reintenta cada RestartSec), y si se desconecta en medio
+# capturar_eventos corta con codigo 4 (ver "Destino vigilado" en el .cpp).
+Environment=DESTINO=/mnt/usb/eventos
 Environment=UMBRAL=5
 # directorio de logs de campo: ahi caen los core dumps (core_pattern relativo)
 WorkingDirectory=/root/logs_campo
