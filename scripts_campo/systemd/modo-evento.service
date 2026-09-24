@@ -1,0 +1,48 @@
+# modo-evento.service — supervisor del modo evento (captura continua,
+# docs/modo_evento.md). Arranca solo al encender la placa y relanza
+# capturar_eventos si se cae (SIGSEGV del vendor, streaming-server caido,
+# lo que sea), sin rendirse nunca: StartLimitIntervalSec=0 anula el limite
+# de reintentos de systemd — en campo, rendirse = quedar sin medir hasta que
+# alguien entre por SSH.
+#
+# RestartSec=60: espacio entre arranques pedido por el usuario (2026-09-24);
+# lanzar sesiones en rafaga deja el streaming-server residual (visto en
+# rp-f0fbda y rp-f0fd8c). Cada relanzamiento recarga el bitstream, asi que el
+# window_count vuelve a empezar: el CSV queda con un hueco de ~60s+arranque y
+# ventanas_a_paquete.py lo separa en tramos.
+#
+# OJO: el streaming-server acepta UN solo cliente. Con este servicio activo no
+# se puede correr capturar_stream.py en la misma placa:
+#   systemctl disable --now modo-evento   (y al reves: enable --now)
+#
+# Destino y umbral: editar Environment= (o un drop-in con systemctl edit).
+# Instalar:
+#   cp /root/scripts_campo/systemd/modo-evento.service /etc/systemd/system/
+#   systemctl daemon-reload && systemctl enable --now modo-evento
+[Unit]
+Description=Modo evento: captura continua, guarda la señal cruda solo si kurtosis>=umbral
+StartLimitIntervalSec=0
+# Al boot, redpitaya_e3_controller carga su propio overlay de la FPGA; si el
+# nuestro llega a la vez, overlay.sh falla con "overlays/Full: File exists" y
+# el acumulador no aparece (visto en rp-f0fd8c 2026-09-24: primer arranque
+# fallido, recuperado en el reintento). After= solo ordena, no exige que existan.
+After=redpitaya_startup.service redpitaya_e3_controller.service
+
+[Service]
+Type=simple
+Environment=DESTINO=/root/eventos
+Environment=UMBRAL=5
+# directorio de logs de campo: ahi caen los core dumps (core_pattern relativo)
+WorkingDirectory=/root/logs_campo
+LimitCORE=infinity
+ExecStartPre=/bin/bash /root/scripts_campo/supervisor_eventos.sh antes
+ExecStart=/usr/bin/python3 -u /root/scripts_campo/capturar_eventos.py --umbral ${UMBRAL} --destino ${DESTINO}
+ExecStopPost=/bin/bash /root/scripts_campo/supervisor_eventos.sh despues
+Restart=always
+RestartSec=60
+# SIGTERM corta en ~1s; capturar_eventos tiene su propio vigia de 10s sobre stopStreaming
+TimeoutStopSec=30
+KillMode=mixed
+
+[Install]
+WantedBy=multi-user.target

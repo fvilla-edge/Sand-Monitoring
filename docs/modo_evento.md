@@ -57,6 +57,34 @@ scripts_campo/capturar_eventos.py (lanzador)
 - `analisis/placa/ventanas_a_paquete.py`, `analisis/placa/reconstruir_senal.py`,
   `analisis/visores/ver_paquete.py`, `analisis/placa/verificar_etapaB.py` — PC.
 
+## Supervisor (`modo-evento.service`)
+
+`scripts_campo/systemd/modo-evento.service` + `scripts_campo/supervisor_eventos.sh`.
+
+- **Arranca solo al encender** (después de `redpitaya_startup` y
+  `redpitaya_e3_controller`: si carga el overlay a la vez que el del vendor,
+  `overlay.sh` falla con `overlays/Full: File exists` y el acumulador no
+  aparece).
+- **Relanza siempre** que el proceso se cae, **sin rendirse**
+  (`StartLimitIntervalSec=0`), con **60s** de espera (`RestartSec`). Cada
+  relanzamiento recarga el bitstream → `window_count` vuelve a empezar → el
+  CSV queda con un hueco de **~74s** y `ventanas_a_paquete.py` lo separa en
+  tramos.
+- Cada fin de corrida queda en `/root/logs_campo/modo_evento_reinicios.log`
+  (`resultado=core-dump estado=SEGV` = caída, `success` = parada limpia).
+  Core dumps en `/root/logs_campo`, podados al límite de `config_campo.json`.
+- Destino y umbral: `Environment=DESTINO=... UMBRAL=...` en la unit.
+- **El server acepta un solo cliente**: para usar `capturar_stream.py` en la
+  misma placa, antes `systemctl disable --now modo-evento`.
+
+```bash
+cp /root/scripts_campo/systemd/modo-evento.service /etc/systemd/system/
+systemctl daemon-reload && systemctl enable --now modo-evento
+systemctl status modo-evento            # estado
+journalctl -u modo-evento -f            # log en vivo
+systemctl stop modo-evento              # parar (no lo relanza)
+```
+
 ## Formatos
 
 ### Registro continuo: `ventanas_AAAAMMDD_HH.csv` (uno por hora UTC)
@@ -181,6 +209,7 @@ OUT1->IN1 (jumper IN1 en LV) reproduciendo el tramo real
 | W2, R1, P1 | umbral 5, a SD (como producción) | 0 saltadas; W2: 3 "pérdidas", 2 explicadas por la alineación y 1 en el umbral (5.15) |
 | R2 | umbral 1, a SD | 2 saltadas marcadas en el CSV, `perdidas_fpga` = total del log |
 | **HV15** | umbral 5, a SD, sin DAC, **jumper HV**, 15 min | 18000 ventanas, 0 saltadas, 0 muestras perdidas, **0 eventos**, kurtosis p50 2.98 / máx 3.06, área de reposo 0.515 |
+| Supervisor | 5 SIGSEGV, matar el server, stop/start, 2 reinicios de la placa | 5/5 recuperados (~74s de hueco c/u); server caído -> el cliente muere (SIGSEGV del vendor) y se recupera; `stop` no relanza; al boot arranca solo (1er reinicio falló por la carrera con el overlay del vendor y se recuperó en el reintento; con `After=` arrancó al primer intento) |
 | **L1** | umbral 5, a SD, **sin DAC, 90 min** (15:06-16:36 UTC) | 107999 ventanas, 0 saltadas, 100% muestras; **rotación de hora OK**; RAM/CPU planas (29.6MB / 21.5%); 1 evento (pico aislado de ~1ms, probable interferencia del banco) |
 
 Detector (FPGA vs software sobre las mismas muestras que llegaron): mediana
@@ -203,6 +232,11 @@ Detector (FPGA vs software sobre las mismas muestras que llegaron): mediana
   posición del hueco en el JSON.
 - **La SD es el cuello de botella**: escribir muchos eventos (~10MB/s) hace
   perder muestras y ventanas (V2). Con umbral 5 en reposo no pasa.
+- **`pkill -f streaming-server` mataba cualquier proceso** con ese texto en
+  su línea de comando (una sesión SSH, un `grep`). Arreglado a
+  `pkill -x streaming-serve` en `campo_common.asegurar_servidor` y
+  `relanzar_captura.sh` (2026-09-24). En la placa de campo sigue el código
+  viejo hasta que se actualice.
 - **El streaming-server acepta una sola conexión de configuración**: un
   segundo cliente tira al primero y la librería del vendor muere por SIGSEGV.
   No correr otro cliente contra el server a la vez.
