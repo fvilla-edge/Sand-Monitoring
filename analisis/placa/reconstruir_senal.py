@@ -56,8 +56,10 @@ from ventanas_a_paquete import VENTANA_S, _iso, leer_filas, partir_en_tramos  # 
 
 FS_HZ = 125e6 / 32
 # piso de ruido del area de la FPGA (bitstream port-2026.1, decimacion 32),
-# medido con R2 en rp-f0fd8c el 2026-09-24 — ver calibrar_area()
-PISO_FPGA_DEFAULT = 0.2333
+# medido en rp-f0fd8c el 2026-09-24 — ver calibrar_area(). DEPENDE DEL JUMPER
+# de IN1: HV (campo) 0.3074 (395 ventanas de reposo), LV 0.2333 (R2). Que
+# cambie con el jumper indica que no es solo redondeo interno de la FPGA.
+PISO_FPGA_DEFAULT = 0.3074  # HV, como en campo
 ESCALA_FPGA_DEFAULT = 0.9992
 
 
@@ -76,9 +78,10 @@ def cargar_eventos(carpeta, umbral=None):
 def calibrar_area(eventos, area_reposo, fs, piso_default=PISO_FPGA_DEFAULT, escala_default=ESCALA_FPGA_DEFAULT):
     """Relacion entre el area de la FPGA (f) y la del software sobre las mismas
     muestras (sw), modelada como señal + piso de ruido propio de la FPGA
-    (filtro en punto fijo: los redondeos suman ruido que solo se nota con
-    señal chica): sw = sqrt((c*f)^2 - q^2). Medido en rp-f0fd8c (2026-09-24):
-    con señal fuerte sw/f = 0.999, en reposo (f ~0.63) sw/f = 0.897.
+    (causa sin confirmar: se penso en redondeo del filtro en punto fijo, pero
+    q cambia con el jumper HV/LV): sw = sqrt((c*f)^2 - q^2). Medido en
+    rp-f0fd8c (2026-09-24, LV): con señal fuerte sw/f = 0.999, en reposo
+    (f ~0.63) sw/f = 0.897. En HV, c no esta medido (sin señal fuerte).
 
     c sale de los eventos con area alta (o `escala_default` si hay menos de
     5); q de los eventos de reposo (area

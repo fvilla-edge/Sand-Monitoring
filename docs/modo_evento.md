@@ -153,12 +153,15 @@ señal continua. Decisiones:
   reconstruyen tramos de hasta 300s; para mirar días enteros está el paquete
   liviano en `ver_paquete.py`.
 - **Área FPGA -> software**: `sw = sqrt((c·fpga)² − q²)`. Con señal fuerte
-  c ≈ 0.999; en reposo la FPGA mide ~11% de más (piso de ruido, probable
-  redondeo del filtro en punto fijo). `c` se mide con ≥5 eventos fuertes y `q`
-  con eventos de reposo real (kurtosis < 4); si no hay, se usan los valores del
-  banco `ESCALA_FPGA_DEFAULT = 0.9992` y `PISO_FPGA_DEFAULT = 0.2333`
-  (bitstream port-2026.1, decimación 32 — **re-medir si cambia el bitstream**).
-  Con umbral 5, casi nunca hay reposo guardado.
+  c ≈ 0.999; en reposo la FPGA mide de más (piso de ruido). `c` se mide con ≥5
+  eventos fuertes y `q` con eventos de reposo real (kurtosis < 4); si no hay,
+  se usan los valores del banco `ESCALA_FPGA_DEFAULT = 0.9992` y
+  `PISO_FPGA_DEFAULT = 0.3074` (bitstream port-2026.1, decimación 32, **jumper
+  HV** como en campo; en LV da 0.2333 — **re-medir si cambia el bitstream o el
+  jumper**). Que el piso cambie con el jumper indica que no es solo redondeo
+  interno de la FPGA (causa sin confirmar). En HV, `c` no está medido (falta
+  una prueba con señal fuerte en HV). Con umbral 5, casi nunca hay reposo
+  guardado.
 
 Validación (R2, umbral 1, simulando umbral 5): nivel del relleno +4% de
 mediana (p10-p90 0.996-1.057), kurtosis del relleno 3.00 (real 3.05), 0
@@ -177,6 +180,7 @@ OUT1->IN1 (jumper IN1 en LV) reproduciendo el tramo real
 | W1, W3 | umbral 1, a RAM | 0 saltadas, **0 pérdidas de sensibilidad**, 200/200 ventanas del tramo |
 | W2, R1, P1 | umbral 5, a SD (como producción) | 0 saltadas; W2: 3 "pérdidas", 2 explicadas por la alineación y 1 en el umbral (5.15) |
 | R2 | umbral 1, a SD | 2 saltadas marcadas en el CSV, `perdidas_fpga` = total del log |
+| **HV15** | umbral 5, a SD, sin DAC, **jumper HV**, 15 min | 18000 ventanas, 0 saltadas, 0 muestras perdidas, **0 eventos**, kurtosis p50 2.98 / máx 3.06, área de reposo 0.515 |
 | **L1** | umbral 5, a SD, **sin DAC, 90 min** (15:06-16:36 UTC) | 107999 ventanas, 0 saltadas, 100% muestras; **rotación de hora OK**; RAM/CPU planas (29.6MB / 21.5%); 1 evento (pico aislado de ~1ms, probable interferencia del banco) |
 
 Detector (FPGA vs software sobre las mismas muestras que llegaron): mediana
@@ -206,8 +210,8 @@ Detector (FPGA vs software sobre las mismas muestras que llegaron): mediana
   antes de reproducirlo): sirve para inyectar señal, no como referencia de
   tiempo. `--prueba-archivo` espera la duración real del replay antes de
   cortar.
-- **Reposo del banco en LV**: dio kurtosis ~6.4 el 23/9 y ~3.0 el 24/9, sin
-  explicar qué cambió.
+- **Reposo del banco**: el 23/9 dio kurtosis ~5.3 (HV) / ~6.4 (LV); el 24/9
+  ~3.0 en LV y 2.98 (máx 3.06, 15 min) en HV. Sin explicar qué cambió.
 - **Sesgo +4%** del nivel del relleno en la reconstrucción, sin explicar.
 
 ## Pendientes
