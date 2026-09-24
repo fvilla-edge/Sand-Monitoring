@@ -33,6 +33,8 @@ Sand Monitoring/
 ├── scripts_campo/          # Captura en campo (corren en la Red Pitaya)
 │   ├── capturar_stream.py     # Recomendado — streaming FILE mode, ~98% eficiencia, --canales 1|2
 │   ├── probar_dual_stream.py  # Prueba de banco de solo lectura (2 canales)
+│   ├── capturar_eventos.py    # Modo evento (rama modo-evento): captura 24h, guarda cruda solo si kurtosis>=umbral + CSV de todas las ventanas — ver docs/modo_evento.md
+│   ├── c/                     # Nucleo C++ del modo evento (capturar_eventos.cpp, compilar en la placa)
 │   ├── PLAN_CAMPO.md          # Indice de la guia operativa, mono y dual (--canales 1|2)
 │   └── plan_campo/            # Guias detalladas: setup, operacion, formato, troubleshooting
 ├── scripts_campo_comun/    # Codigo y supervisor compartidos
@@ -77,7 +79,7 @@ Sand Monitoring/
 │   └── systemd/                # Unit que corre restaurar_hora.sh en el boot (antes de ntpsec y del mux de PS_MIO10)
 ├── relay/                  # Foto/referencia del modulo de rele biestable
 ├── datos_campo/            # Capturas de campo (gitignoreado)
-├── docs/                   # Roadmap del proyecto y notas tecnicas
+├── docs/                   # Roadmap del proyecto y notas tecnicas (modo_evento.md: modo evento, registro continuo y reconstruccion)
 ├── Click_shield_for_Red_Pitaya_v102_Schematic.pdf  # Esquematico de la Click Shield
 ├── requirements.txt        # Dependencias de analisis/ (PC) — numpy, scipy, pytest
 ├── COMANDOS.md             # Referencia rapida de todos los scripts y sus argumentos

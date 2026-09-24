@@ -99,6 +99,17 @@ no es parte del flujo operativo normal.
 
 ---
 
+### `scripts_campo/capturar_eventos.py` — modo evento (rama `modo-evento`)
+
+Captura continua; guarda la señal cruda solo de las ventanas con kurtosis ≥ umbral
+y un CSV por hora con área/kurtosis de todas. Detalle completo, formatos y pruebas
+en `docs/modo_evento.md`.
+
+```bash
+make -C /root/scripts_campo/c      # compilar el nucleo C++ en la placa (una vez)
+python3 /root/scripts_campo/capturar_eventos.py --umbral 5 --destino /root/eventos
+```
+
 ## Análisis (corren en la PC)
 
 ### `analisis/revisar.py` — revisión rápida
@@ -116,6 +127,16 @@ es dual). No usa `argparse` — rutas posicionales.
 | Argumento | Descripción |
 |---|---|
 | rutas (posicional) | Archivos `.bin` o directorios (busca `campo_*.bin` recursivamente) |
+
+### Modo evento: `ventanas_a_paquete.py`, `reconstruir_senal.py`, `ver_paquete.py`
+
+```bash
+.venv/bin/python analisis/placa/ventanas_a_paquete.py CARPETA --unir -o dia.paquete.json   # CSV -> paquete liviano
+./analisis/visores/abrir_paquete.sh                                                          # visor (horas/dias)
+.venv/bin/python analisis/placa/reconstruir_senal.py CARPETA --desde 120 --duracion-s 10 --png   # señal continua (max 300s)
+```
+
+Ver `docs/modo_evento.md`.
 
 ### `analisis/tests/` — tests del parser y la lógica de detección
 
