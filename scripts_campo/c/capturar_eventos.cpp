@@ -26,6 +26,14 @@
 //     y el retraso cambia entre corridas. Sin margen, un pulso cerca del borde
 //     quedaba en la ventana cruda de al lado. El .json dice donde empieza la
 //     ventana "oficial" dentro del archivo (`inicio_ventana_en_archivo`).
+//   - Registro continuo (--sin-registro lo apaga): area y kurtosis de TODAS
+//     las ventanas (no solo las que cruzan el umbral) en CSVs por hora UTC,
+//     `ventanas_AAAAMMDD_HH.csv` en --destino. Da la linea de tiempo completa
+//     (y una señal de vida: carpeta sin eventos != sensor muerto), permite
+//     reanalizar con otro umbral y escalar el relleno al reconstruir la señal
+//     en la PC. Las ventanas que el sondeo no llego a leer van con
+//     estado=saltada y area/kurtosis vacias (el registro de la FPGA solo
+//     guarda la ultima). Escribe su propio hilo, igual que los eventos.
 //   - La escritura a disco va en un hilo aparte (cola acotada): escribir ~0.5MB
 //     en la SD puede tardar mas que una ventana y el registro de la FPGA solo
 //     guarda la ultima — escribir en el hilo de sondeo hacia perder ventanas.
@@ -40,7 +48,7 @@
 //     eth0), se recalibra y se loguea.
 //
 // Uso: capturar_eventos [--umbral 5.0] [--destino DIR] [--dec 32]
-//                       [--estado-s 10] [--duracion-s 0] [--host IP] [--margen-ms 10]
+//                       [--estado-s 10] [--duracion-s 0] [--host IP] [--margen-ms 10] [--sin-registro]
 //   --host: conectar a esa IP fija en vez del descubrimiento por broadcast
 //           del vendor (que ata la conexion a la IP de eth0).
 //
@@ -77,6 +85,7 @@
 #include <deque>
 #include <fcntl.h>
 #include <condition_variable>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <sys/mman.h>
@@ -402,6 +411,98 @@ int64_t calibrar(const Registros& reg, BufferCircular& buf, int64_t n, int dur_m
     return mejor;
 }
 
+// Registro continuo de area/kurtosis por ventana. El hilo de sondeo solo
+// agrega filas a un vector en RAM; un hilo propio las baja al CSV cada ~1s
+// (fflush a la SD puede trabarse, ver Escritor). Cota: 10 min de filas en
+// RAM — si el disco no responde se descartan y se cuentan.
+class RegistroVentanas {
+   public:
+    static const size_t MAX_FILAS = 20 * 600;
+    struct Fila { uint32_t wc; int64_t t_ms; double area, kurt; bool saltada; uint64_t perdidas; };
+
+    explicit RegistroVentanas(std::string destino) : destino_(std::move(destino)), hilo_([this] { correr(); }) {}
+    ~RegistroVentanas() {
+        if (hilo_.joinable()) cerrar();
+    }
+
+    void agregar(const Fila& f) {
+        std::lock_guard<std::mutex> g(mtx_);
+        if (filas_.size() >= MAX_FILAS) { descartadas_++; return; }
+        filas_.push_back(f);
+    }
+
+    void cerrar() {
+        {
+            std::lock_guard<std::mutex> g(mtx_);
+            fin_ = true;
+        }
+        cv_.notify_one();
+        hilo_.join();
+        if (f_) fclose(f_);
+        f_ = nullptr;
+    }
+
+    uint64_t escritas() const { return escritas_; }
+    uint64_t descartadas() const { return descartadas_; }
+
+   private:
+    void correr() {
+        std::vector<Fila> lote;
+        for (;;) {
+            bool fin;
+            {
+                std::unique_lock<std::mutex> g(mtx_);
+                cv_.wait_for(g, std::chrono::seconds(1), [this] { return fin_; });
+                lote.swap(filas_);
+                fin = fin_;
+            }
+            for (const auto& f : lote) escribir(f);
+            if (f_) fflush(f_);
+            lote.clear();
+            if (fin) return;
+        }
+    }
+
+    void escribir(const Fila& f) {
+        time_t t = (time_t)(f.t_ms / 1000);
+        struct tm tm;
+        gmtime_r(&t, &tm);
+        char hora[16];
+        strftime(hora, sizeof hora, "%Y%m%d_%H", &tm);
+        if (!f_ || hora_ != hora) {  // rota por hora UTC
+            if (f_) fclose(f_);
+            mkdir(destino_.c_str(), 0755);
+            std::string ruta = destino_ + "/ventanas_" + hora + ".csv";
+            bool nuevo = access(ruta.c_str(), F_OK) != 0;
+            f_ = fopen(ruta.c_str(), "a");
+            hora_ = hora;
+            if (!f_) { log("WARNING no se pudo abrir %s", ruta.c_str()); return; }
+            if (nuevo) fprintf(f_, "window_count,t_utc_ms,area,kurtosis,estado,perdidas_fpga\n");
+        }
+        if (!f_) return;
+        if (f.saltada)
+            fprintf(f_, "%u,%lld,,,saltada,%llu\n", f.wc, (long long)f.t_ms, (unsigned long long)f.perdidas);
+        else
+            fprintf(f_, "%u,%lld,%.6g,%.6g,ok,%llu\n", f.wc, (long long)f.t_ms, f.area, f.kurt,
+                    (unsigned long long)f.perdidas);
+        escritas_++;
+    }
+
+    std::string destino_, hora_;
+    FILE* f_ = nullptr;
+    std::mutex mtx_;
+    std::condition_variable cv_;
+    std::vector<Fila> filas_;
+    bool fin_ = false;
+    std::atomic<uint64_t> escritas_{0}, descartadas_{0};
+    std::thread hilo_;
+};
+
+int64_t ahora_utc_ms() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::system_clock::now().time_since_epoch()).count();
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -415,6 +516,7 @@ int main(int argc, char** argv) {
     ParamsPulsos pp;     // modo prueba, apagado si pp.n == 0
     bool loopback_digital = false;
     std::string prueba_archivo;
+    bool con_registro = true;
     double dac_escala = 4;
     bool dac_xor_signo = false;
     for (int i = 1; i < argc; i++) {
@@ -438,6 +540,7 @@ int main(int argc, char** argv) {
         else if (a == "--pulso-log") pp.log = sig();
         else if (a == "--pulso-loopback-digital") loopback_digital = true;
         else if (a == "--prueba-archivo") prueba_archivo = sig();
+        else if (a == "--sin-registro") con_registro = false;
         else if (a == "--dac-escala") dac_escala = atof(sig());
         else if (a == "--dac-xor-signo") dac_xor_signo = true;
         else if (a == "--dac-rate") pp.rate = atof(sig());
@@ -458,6 +561,8 @@ int main(int argc, char** argv) {
     if (2 * M >= (int64_t)N * (BUFFER_VENTANAS - 2)) { log("ERROR --margen-ms demasiado grande para el buffer"); return 1; }
     BufferCircular buf((size_t)N * BUFFER_VENTANAS);
     Escritor escritor(destino);
+    std::unique_ptr<RegistroVentanas> registro;
+    if (con_registro) registro.reset(new RegistroVentanas(destino));
     Stats st;
 
     auto conf = std::make_shared<ConfigStreamClient>();
@@ -530,12 +635,19 @@ int main(int argc, char** argv) {
 
     // el DAC arranca despues de calibrar, para no meter pulsos en la calibracion
     int64_t t_fin_pulsos = 0;
+    // el DAC por red consume el archivo mas rapido que el tiempo real (el
+    // server lo bufferea): terminado() llega segundos antes de que la cola
+    // del tramo salga por OUT1. Se espera al menos la duracion real del replay
+    // (silencios de 0.5s incluidos) antes de la cuenta de 3s de cierre.
+    int64_t t_replay = 0, dur_replay_ms = 0;
     if (gen_archivo) {
         if (!dac->startStreamingFromMemorySink(host.empty() ? "127.0.0.1" : host, true, false, DAC_16BIT)) {
             log("ERROR no arranco el DAC");
             adc->stopStreaming();
             return 1;
         }
+        t_replay = ahora_ms();
+        dur_replay_ms = (int64_t)((gen_archivo->muestras() + pp.rate) / pp.rate * 1000);
         log("PRUEBA: reproduciendo %s por el DAC (%zu muestras, %.1fs a %.0f Hz, escala %.1f)",
             prueba_archivo.c_str(), gen_archivo->muestras(), gen_archivo->muestras() / pp.rate, pp.rate, dac_escala);
     }
@@ -564,6 +676,7 @@ int main(int argc, char** argv) {
     int64_t fuera_min = INT64_MAX, fuera_max = INT64_MIN;
     int64_t t_disturbio = 0;  // ultima reanudacion o reporte de fpgaLost
     uint64_t lost_visto = 0;
+    uint64_t lost_registro = st.fpga_lost;  // perdidas_fpga del CSV: delta desde la fila anterior
     bool en_corte = false;
     int64_t deriva_min = INT64_MAX, deriva_max = INT64_MIN;
     uint64_t muestras_ult = buf.total(), lost_ult = st.fpga_lost;
@@ -582,6 +695,13 @@ int main(int argc, char** argv) {
         if (wc != ultimo_wc) {
             uint32_t salto = wc - ultimo_wc;
             if (salto > 1) ventanas_saltadas += salto - 1;
+            int64_t t_utc = ahora_utc_ms();
+            uint64_t lost_ahora = st.fpga_lost;
+            if (registro) {
+                // saltadas: sin datos (la FPGA solo guarda la ultima ventana); tiempo estimado hacia atras
+                for (uint32_t k = 1; k < salto && k <= 20 * 60; k++)
+                    registro->agregar({ultimo_wc + k, t_utc - (int64_t)((salto - k) * VENTANA_S * 1000), 0, 0, true, 0});
+            }
             ventanas_vistas++;
             ultimo_wc = wc;
 
@@ -631,6 +751,10 @@ int main(int argc, char** argv) {
             double area, kurt;
             area_kurtosis(sa, s2, s4, (double)N, fs, area, kurt);
             kurt_max_periodo = std::max(kurt_max_periodo, kurt);
+            if (registro) {
+                registro->agregar({wc, t_utc, area, kurt, false, lost_ahora - lost_registro});
+                lost_registro = lost_ahora;
+            }
             if (kurt >= umbral) pendientes.push_back({wc, area, kurt, ahora_ms()});
         }
 
@@ -701,7 +825,8 @@ int main(int argc, char** argv) {
             kurt_max_periodo = 0;
         }
         if (duracion_s > 0 && t - t_inicio >= duracion_s * 1000LL) break;
-        if ((gen && gen->terminado()) || (gen_archivo && gen_archivo->terminado())) {
+        if ((gen && gen->terminado()) ||
+            (gen_archivo && gen_archivo->terminado() && t - t_replay >= dur_replay_ms)) {
             if (t_fin_pulsos == 0) t_fin_pulsos = t;
             else if (t - t_fin_pulsos > 3000) break;
         }
@@ -719,6 +844,11 @@ int main(int argc, char** argv) {
     parado = true;
     vigia.join();
     escritor.cerrar();
+    if (registro) {
+        registro->cerrar();
+        log("Registro continuo: %llu filas escritas, %llu descartadas", (unsigned long long)registro->escritas(),
+            (unsigned long long)registro->descartadas());
+    }
 
     log("Modo evento terminado. paquetes=%llu fpgaLost_total=%llu ventanas=%llu saltadas=%llu eventos=%llu "
         "(escritos=%llu) eventos_perdidos=%llu recalibraciones=%llu",
