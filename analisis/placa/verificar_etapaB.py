@@ -69,6 +69,8 @@ def main():
     ap.add_argument('--corr-min', type=float, default=0.7,
                     help='correlacion minima para dar por ubicado un evento (por el cable OUT1->IN1 se suma '
                          'el ruido de la entrada, no llega a 0.9)')
+    ap.add_argument('--corr-min-prediccion', type=float, default=0.3,
+                    help='correlacion minima para aceptar un evento ubicado por prediccion desde su vecino')
     args = ap.parse_args()
 
     x = np.fromfile(args.tramo, dtype='<i2').astype(np.float64)
@@ -102,6 +104,27 @@ def main():
         if pos is not None and r >= args.corr_min:
             previo = (e, pos)
             ubicados.append(e)
+    # segunda pasada: ventanas de arena con pocos picos sobre fondo tranquilo
+    # tienen kurtosis alta pero casi todo su contenido es ruido del banco ->
+    # correlacion baja contra el tramo. Se las ubica por PREDICCION desde el
+    # vecino ubicado mas cercano en el stream (mismo avance de indice), con
+    # una busqueda local chica y un umbral de correlacion bajo.
+    por_prediccion = 0
+    for e in eventos:
+        if e in ubicados:
+            continue
+        cerca = min(ubicados, key=lambda u: abs(u['indice_inicio'] - e['indice_inicio']), default=None)
+        if cerca is None:
+            continue
+        pred = cerca['pos'] + (e['indice_inicio'] - cerca['indice_inicio'])
+        ofi = e['x'][e['inicio_ventana_en_archivo']:e['inicio_ventana_en_archivo'] + N]
+        pos, r = ubicar(x, ofi, pred, 4096)
+        if pos is not None and r >= args.corr_min_prediccion:
+            e['pos'], e['corr'], e['por_prediccion'] = pos, r, True
+            ubicados.append(e)
+            por_prediccion += 1
+    ubicados.sort(key=lambda e: e['indice_inicio'])
+    print(f'ubicados por prediccion (vecino + busqueda local, corr >= {args.corr_min_prediccion}): {por_prediccion}')
     print(f'eventos ubicados en el tramo (correlacion >= {args.corr_min}): {len(ubicados)}/{len(eventos)} '
           f'| correlacion mediana {np.median([e["corr"] for e in ubicados]) if ubicados else float("nan"):.3f}')
     for e in eventos:
