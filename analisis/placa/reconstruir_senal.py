@@ -58,6 +58,7 @@ FS_HZ = 125e6 / 32
 # piso de ruido del area de la FPGA (bitstream port-2026.1, decimacion 32),
 # medido con R2 en rp-f0fd8c el 2026-09-24 — ver calibrar_area()
 PISO_FPGA_DEFAULT = 0.2333
+ESCALA_FPGA_DEFAULT = 0.9992
 
 
 def cargar_eventos(carpeta, umbral=None):
@@ -72,14 +73,15 @@ def cargar_eventos(carpeta, umbral=None):
     return eventos
 
 
-def calibrar_area(eventos, area_reposo, fs, piso_default=PISO_FPGA_DEFAULT):
+def calibrar_area(eventos, area_reposo, fs, piso_default=PISO_FPGA_DEFAULT, escala_default=ESCALA_FPGA_DEFAULT):
     """Relacion entre el area de la FPGA (f) y la del software sobre las mismas
     muestras (sw), modelada como señal + piso de ruido propio de la FPGA
     (filtro en punto fijo: los redondeos suman ruido que solo se nota con
     señal chica): sw = sqrt((c*f)^2 - q^2). Medido en rp-f0fd8c (2026-09-24):
     con señal fuerte sw/f = 0.999, en reposo (f ~0.63) sw/f = 0.897.
 
-    c sale de los eventos con area alta; q de los eventos de reposo (area
+    c sale de los eventos con area alta (o `escala_default` si hay menos de
+    5); q de los eventos de reposo (area
     cerca de `area_reposo`, la mediana del registro continuo en ventanas
     tranquilas, y kurtosis < 4). Con --umbral 5 casi no se guardan ventanas de reposo: si hay
     menos de 5, se usa `piso_default` (medido en el banco, depende del
@@ -98,7 +100,13 @@ def calibrar_area(eventos, area_reposo, fs, piso_default=PISO_FPGA_DEFAULT):
         raise SystemExit("no hay eventos sin hueco para calibrar el area")
     f, sw, k = np.array(f), np.array(sw), np.array(k)
     fuertes = f >= 3 * area_reposo
-    c = float(np.median(sw[fuertes] / f[fuertes])) if fuertes.sum() >= 5 else float(np.median(sw / f))
+    # con pocos eventos fuertes no se estima c con los de nivel bajo: ahi el
+    # cociente ya trae el piso adentro y se restaria dos veces (visto en L1,
+    # 1 evento de reposo -> c=0.88)
+    if fuertes.sum() >= 5:
+        c, origen_c = float(np.median(sw[fuertes] / f[fuertes])), f"medida ({int(fuertes.sum())} eventos fuertes)"
+    else:
+        c, origen_c = escala_default, "default del banco"
     # solo reposo de verdad (kurtosis < 4): con --umbral 5 las ventanas de area
     # baja que se guardan tienen picos sueltos y el piso sale ~0 (visto en R1/R2)
     quietos = (f > 0.5 * area_reposo) & (f < 1.5 * area_reposo) & (k < 4)
@@ -107,7 +115,7 @@ def calibrar_area(eventos, area_reposo, fs, piso_default=PISO_FPGA_DEFAULT):
         origen = f"medido ({int(quietos.sum())} eventos de reposo)"
     else:
         q, origen = piso_default, "default del banco (sin eventos de reposo en la corrida)"
-    return c, q, origen, len(f)
+    return c, q, f"escala {origen_c}, piso {origen}", len(f)
 
 
 def area_software(f, c, q):
@@ -264,7 +272,7 @@ def main():
     print(f"{salida}: {len(r['senal']) / r['fs_hz']:.1f}s desde {r['inicio_utc']} | "
           f"{len(r['eventos'])} eventos ({len(r['eventos_con_hueco_omitidos'])} con hueco omitidos) | real {np.mean(m == 1) * 100:.1f}% relleno {np.mean(m == 0) * 100:.1f}% "
           f"sin dato {np.mean(m == 2) * 100:.1f}% | area sw=sqrt(({r['escala_area']:.4g}*fpga)^2-{r['piso_fpga']:.4g}^2), "
-          f"piso {r['origen_piso']}")
+          f"{r['origen_piso']}")
 
 
 if __name__ == "__main__":
