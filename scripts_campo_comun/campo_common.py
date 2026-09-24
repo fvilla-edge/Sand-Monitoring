@@ -145,13 +145,17 @@ def asegurar_servidor(log_path, max_intentos=3):
     verifica que el proceso siga vivo unos segundos despues de lanzarlo y,
     si murio, se reintenta el bitstream+arranque desde cero.
     """
-    r = subprocess.run(['pgrep', '-f', 'streaming-server'], capture_output=True)
+    # -x por nombre de proceso exacto (comm, truncado a 15 caracteres): con -f
+    # se mataba CUALQUIER proceso con "streaming-server" en su linea de
+    # comando — incluida una sesion SSH de un operador (visto en rp-f0fd8c,
+    # 2026-09-24, con el supervisor del modo evento relanzando solo)
+    r = subprocess.run(['pgrep', '-x', 'streaming-serve'], capture_output=True)
     if r.returncode == 0:
         log('INFO', '  Deteniendo streaming-server previo...')
-        subprocess.run(['pkill', '-f', 'streaming-server'])
+        subprocess.run(['pkill', '-x', 'streaming-serve'])
         for _ in range(10):  # ~5s de margen para que termine de morir
             time.sleep(0.5)
-            if subprocess.run(['pgrep', '-f', 'streaming-server'], capture_output=True).returncode != 0:
+            if subprocess.run(['pgrep', '-x', 'streaming-serve'], capture_output=True).returncode != 0:
                 break
         else:
             log('WARNING', '  [!] streaming-server previo no terminó de morir — se sigue igual')
