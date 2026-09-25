@@ -44,6 +44,9 @@ ExecStart=/usr/bin/python3 -u /root/scripts_campo/capturar_eventos.py --umbral $
 ExecStopPost=/bin/bash /root/scripts_campo/supervisor_eventos.sh despues
 Restart=always
 RestartSec=60
+# supervisor_eventos.sh antes espera hasta 90s de uptime al boot (bug del
+# vendor al arrancar muy temprano): el default de 90s no alcanza
+TimeoutStartSec=150
 # SIGTERM corta en ~1s; capturar_eventos tiene su propio vigia de 10s sobre stopStreaming
 TimeoutStopSec=30
 KillMode=mixed

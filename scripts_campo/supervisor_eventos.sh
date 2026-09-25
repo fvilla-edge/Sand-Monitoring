@@ -13,6 +13,20 @@ mkdir -p "$LOG_DIR"
 
 case "${1:-}" in
 antes)
+    # Al boot, no arrancar antes de UPTIME_MIN_S de encendida. Si arranca
+    # antes, startStreaming() del vendor falla por dentro y su camino de stop
+    # crashea (SIGSEGV en requestStopStreamingCommon, libstreaming_api.so; 7/8
+    # arranques en rp-f0fd8c 2026-09-25, el reintento a ~90s anduvo 6/6).
+    # Causa de fondo sin identificar: no es el salto de reloj de NTP ni
+    # startup.sh del vendor (probado). Con la placa ya andando (caida o
+    # restart a mano) el uptime supera el minimo y no hay espera extra.
+    # TimeoutStartSec del .service tiene que cubrir esta espera.
+    UPTIME_MIN_S=90
+    uptime_s=$(cut -d. -f1 /proc/uptime)
+    if [ "$uptime_s" -lt "$UPTIME_MIN_S" ]; then
+        echo "[supervisor] placa recien encendida (${uptime_s}s), espero hasta ${UPTIME_MIN_S}s de uptime"
+        sleep $((UPTIME_MIN_S - uptime_s))
+    fi
     # destino en el storage externo: exigir que /mnt/usb sea un montaje real
     # (sin USB es una carpeta comun de la SD). Salir con error = systemd
     # reintenta en RestartSec, hasta que el USB aparezca.
