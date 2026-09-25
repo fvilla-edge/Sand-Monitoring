@@ -163,6 +163,7 @@ _cola_pendientes = []       # nombres de archivo en PENDIENTES_DIR por mandar, d
 _ultimo_listado = 0.0       # time.monotonic() del ultimo listado de PENDIENTES_DIR
 _ultimo_pendiente = 0.0     # time.monotonic() del ultimo resumen mandado
 _modo_evento_cache = (0.0, False)  # (time.monotonic() del chequeo, activo)
+_esp32_avisado = False      # ya se aviso que no hay ESP32 (se vuelve a avisar si aparece y se pierde)
 
 
 def _crear_dispositivo():
@@ -480,15 +481,21 @@ def revisar_periodico(device):
 
 
 def _abrir_serial():
-    """Abre el puerto del ESP32, o None si no esta (se reintenta desde main)."""
+    """Abre el puerto del ESP32, o None si no esta (se reintenta desde main).
+    Avisa solo el primer fallo de cada racha: sin ESP32 (placa de pruebas)
+    seria una linea por minuto en un journal de 5MB que vive en RAM."""
+    global _esp32_avisado
     puerto = resolver_puerto()
     try:
         ser = serial.Serial(puerto, BAUDRATE, timeout=1)
     except (serial.SerialException, OSError) as exc:
-        print(f"ESP32 no disponible en {puerto} ({exc}), sigo sin panel solar; "
-              f"reintento en {REINTENTO_SERIAL_S}s", file=sys.stderr)
+        if not _esp32_avisado:
+            print(f"ESP32 no disponible en {puerto} ({exc}), sigo sin panel solar; "
+                  f"reintento cada {REINTENTO_SERIAL_S}s sin volver a avisar", file=sys.stderr)
+            _esp32_avisado = True
         return None
     print(f"Leyendo {puerto} @ {BAUDRATE}")
+    _esp32_avisado = False
     return ser
 
 
