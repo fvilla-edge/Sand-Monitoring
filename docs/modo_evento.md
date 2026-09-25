@@ -83,6 +83,15 @@ scripts_campo/capturar_eventos.py (lanzador)
     SD) corta con código 4 en el mismo segundo.
   - Probado con `umount -l`: corte inmediato, 0 archivos en la SD, al
     remontar retomó solo en el siguiente reintento.
+- **Espacio libre** (`modo_evento.minimo_libre_mb` en `config_campo.json`,
+  default 2048; 0 = sin control): por debajo se **pausa la señal cruda** de
+  los eventos y el CSV sigue (~3MB/h: la línea de tiempo no se pierde); se
+  reanuda con un 25% de margen (2560MB). Mientras está pausada existe
+  `/run/modo-evento/cruda_pausada`, que el anotador manda a Losant como
+  `me_cruda_pausada`, y la línea `ESTADO` dice `CRUDA PAUSADA` (siempre trae
+  `libre_mb=`). Si igual se llena el disco, un evento que no entra se borra y
+  se cuenta (`fallidos`, en el log el 1ro y 1 de cada 100), y el CSV avisa
+  una vez, se recorta a la última fila completa y retoma solo al haber lugar.
 - Umbral: `Environment=UMBRAL=...` en la unit.
 - **El server acepta un solo cliente**: para usar `capturar_stream.py` en la
   misma placa, antes `systemctl disable --now modo-evento`.
@@ -227,6 +236,7 @@ OUT1->IN1 (jumper IN1 en LV) reproduciendo el tramo real
 | Supervisor | 5 SIGSEGV, matar el server, stop/start, 2 reinicios de la placa | 5/5 recuperados (~74s de hueco c/u); server caído -> el cliente muere (SIGSEGV del vendor) y se recupera; `stop` no relanza; al boot arranca solo (1er reinicio falló por la carrera con el overlay del vendor y se recuperó en el reintento; con `After=` arrancó al primer intento) |
 | **PASE2** | **peor caso de escritura**: umbral 1 (todas las ventanas) a `/mnt/usb`, 30 min, HV | 35981 eventos (19GB, ~10.8MB/s), 0 perdidos por cola, **0 errores de USB/ext4**, RAM estable; **0.59% de muestras perdidas** (en ráfagas) y **18 ventanas saltadas** (0.05%) |
 | **L1** | umbral 5, a SD, **sin DAC, 90 min** (15:06-16:36 UTC) | 107999 ventanas, 0 saltadas, 100% muestras; **rotación de hora OK**; RAM/CPU planas (29.6MB / 21.5%); 1 evento (pico aislado de ~1ms, probable interferencia del banco) |
+| **Espacio** (2026-09-25) | disco de prueba de 400MB (ext4 en loop), umbral 1 (~11MB/s) | A, mínimo 100MB: pausa a 97MB libres, 480 eventos completos + 1319 no guardados, CSV 1800/1800. B, sin control: disco al 100%, 535 eventos fallidos borrados, 0 archivos a medias, sin caída. C/D, arranca lleno y se libera en marcha: el CSV avisa una vez, sin líneas cortadas, con encabezado, retoma solo al liberar |
 
 Detector (FPGA vs software sobre las mismas muestras que llegaron): mediana
 0.12-0.26%, 0 desacuerdos de clasificación, con la alineación corregida.

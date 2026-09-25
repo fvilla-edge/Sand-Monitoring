@@ -46,12 +46,19 @@
 //     fpgaLost ~= esperadas) avanzan el indice igual, asi un descarte no
 //     desalinea: el hueco queda registrado y un evento que lo toque se marca
 //     con "con_hueco": true.
+//   - Espacio libre (--minimo-libre-mb, default 2048; 0 = sin control): por
+//     debajo se pausa la señal cruda de los eventos y el CSV sigue (~3MB/h,
+//     la linea de tiempo nunca se pierde); se reanuda con un 25% de margen.
+//     Estado visible afuera en /run/modo-evento/cruda_pausada (lo manda a
+//     Losant resumen_modo_evento.py). Si una escritura falla igual (disco
+//     lleno), el archivo a medias se borra y se cuenta, sin cortar la medicion.
 //   - Si la deriva medida (window_count vs muestras propias) se sale de
 //     TOLERANCIA_DERIVA (ej. stream congelado sin fpgaLost, visto al bajar
 //     eth0), se recalibra y se loguea.
 //
 // Uso: capturar_eventos [--umbral 5.0] [--destino DIR] [--dec 32]
 //                       [--estado-s 10] [--duracion-s 0] [--host IP] [--margen-ms 10] [--sin-registro]
+//                       [--minimo-libre-mb 2048]
 //   --host: conectar a esa IP fija en vez del descubrimiento por broadcast
 //           del vendor (que ata la conexion a la IP de eth0).
 //
@@ -79,6 +86,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cerrno>
 #include <cmath>
 #include <csignal>
 #include <cstdarg>
@@ -94,6 +102,7 @@
 #include <string>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <sys/statvfs.h>
 #include <sys/sysmacros.h>
 #include <thread>
 #include <unistd.h>
@@ -332,15 +341,25 @@ bool destino_ok(const std::string& destino) {
 bool guardar_evento(const std::string& destino, const Evento& e) {
     if (!destino_ok(destino)) return false;
     std::string bin = destino + "/" + e.base + ".bin";
+    // Disco lleno: fwrite/fprintf fallan sin avisar y quedaba un archivo vacio o
+    // cortado. Se chequea todo y, si algo falla, se borra el par .bin/.json.
     FILE* f = fopen(bin.c_str(), "wb");
+    bool ok = f != nullptr;
     if (f) {
-        fwrite(e.x.data(), sizeof(int16_t), e.x.size(), f);  // ARM es little-endian
-        fclose(f);
+        ok = fwrite(e.x.data(), sizeof(int16_t), e.x.size(), f) == e.x.size();  // ARM es little-endian
+        if (fclose(f) != 0) ok = false;
+    }
+    if (!ok) {
+        int err = errno;  // unlink puede pisarlo; el llamador lo loguea
+        unlink(bin.c_str());
+        errno = err;
+        return false;
     }
     std::string js = destino + "/" + e.base + ".json";
     f = fopen(js.c_str(), "w");
+    ok = f != nullptr;
     if (f) {
-        fprintf(f,
+        ok = fprintf(f,
                 "{\n  \"formato\": \"evento_ventana_cruda_int16_le\",\n  \"fs_hz\": %.1f,\n"
                 "  \"ventana_s\": %.2f,\n  \"ventana_muestras\": %lld,\n  \"margen_muestras\": %lld,\n"
                 "  \"inicio_ventana_en_archivo\": %lld,\n  \"muestras\": %zu,\n  \"window_count\": %u,\n"
@@ -348,11 +367,67 @@ bool guardar_evento(const std::string& destino, const Evento& e) {
                 "  \"area\": %.9g,\n  \"kurtosis\": %.6g,\n  \"con_hueco\": %s,\n"
                 "  \"timestamp_iso\": \"%s\"\n}\n",
                 e.fs, VENTANA_S, (long long)e.ventana, (long long)e.margen, (long long)e.margen, e.x.size(), e.wc,
-                (long long)e.indice_inicio, e.area, e.kurt, e.con_hueco ? "true" : "false", e.iso.c_str());
-        fclose(f);
+                (long long)e.indice_inicio, e.area, e.kurt, e.con_hueco ? "true" : "false", e.iso.c_str()) > 0;
+        if (fclose(f) != 0) ok = false;
     }
-    return true;
+    if (!ok) {
+        int err = errno;
+        unlink(js.c_str());
+        unlink(bin.c_str());
+        errno = err;
+    }
+    return ok;
 }
+
+// Espacio libre en --destino. Por debajo de minimo_mb se pausa la señal cruda
+// de los eventos (el CSV sigue); se reanuda recien con un 25% de margen, para
+// no alternar evento a evento justo en el borde. El estado queda visible
+// afuera del proceso con un archivo bandera en /run (tmpfs: no escribe en la
+// SD ni en el USB lleno), que lee resumen_modo_evento.py.
+class VigiaEspacio {
+   public:
+    static constexpr const char* DIR_BANDERA = "/run/modo-evento";
+    static constexpr const char* BANDERA = "/run/modo-evento/cruda_pausada";
+
+    VigiaEspacio(std::string destino, int64_t minimo_mb) : destino_(std::move(destino)), minimo_mb_(minimo_mb) {
+        unlink(BANDERA);  // de una corrida anterior
+    }
+    // al terminar: sin proceso no hay nada pausado (si se cae, la borra el proximo arranque)
+    ~VigiaEspacio() { unlink(BANDERA); }
+
+    void revisar(int64_t t_ms) {
+        if (t_ms - t_ult_ < 2000) return;
+        t_ult_ = t_ms;
+        struct statvfs sv;
+        if (statvfs(destino_.c_str(), &sv) != 0) return;
+        libre_mb_ = (int64_t)sv.f_bavail * (int64_t)sv.f_frsize / (1024 * 1024);
+        if (minimo_mb_ <= 0) return;  // sin control: solo se informa en ESTADO
+        if (!pausada_ && libre_mb_ < minimo_mb_) {
+            pausada_ = true;
+            log("WARNING quedan %lld MB libres en %s (minimo %lld): se PAUSA la señal cruda de los eventos, "
+                "el registro de ventanas sigue", (long long)libre_mb_, destino_.c_str(), (long long)minimo_mb_);
+            mkdir(DIR_BANDERA, 0755);
+            int fd = open(BANDERA, O_CREAT | O_WRONLY | O_TRUNC, 0644);
+            if (fd >= 0) close(fd);
+        } else if (pausada_ && libre_mb_ >= reanudar_mb()) {
+            pausada_ = false;
+            log("Espacio recuperado (%lld MB libres): se REANUDA la señal cruda de los eventos", (long long)libre_mb_);
+            unlink(BANDERA);
+        }
+    }
+
+    bool pausada() const { return pausada_; }
+    int64_t libre_mb() const { return libre_mb_; }
+
+   private:
+    int64_t reanudar_mb() const { return minimo_mb_ + minimo_mb_ / 4; }
+
+    std::string destino_;
+    int64_t minimo_mb_;
+    int64_t libre_mb_ = -1;
+    int64_t t_ult_ = INT64_MIN / 2;
+    bool pausada_ = false;
+};
 
 // Escribe los eventos en disco desde un hilo propio. Cola acotada: si se
 // llena (disco trabado), el evento se descarta y se cuenta, en vez de
@@ -386,6 +461,7 @@ class Escritor {
     }
 
     uint64_t escritos() const { return escritos_; }
+    uint64_t fallidos() const { return fallidos_; }
 
    private:
     void correr() {
@@ -398,7 +474,12 @@ class Escritor {
                 e = std::move(cola_.front());
                 cola_.pop_front();
             }
-            if (guardar_evento(destino_, e)) escritos_++;
+            if (guardar_evento(destino_, e)) {
+                escritos_++;
+            } else if (++fallidos_ % 100 == 1) {  // el 1ro y despues 1 de cada 100: sin inundar el log
+                log("WARNING no se pudo guardar el evento %s (%s) — %llu fallidos hasta ahora", e.base.c_str(),
+                    strerror(errno), (unsigned long long)fallidos_.load());
+            }
         }
     }
 
@@ -407,7 +488,7 @@ class Escritor {
     std::condition_variable cv_;
     std::deque<Evento> cola_;
     bool fin_ = false;
-    std::atomic<uint64_t> escritos_{0};
+    std::atomic<uint64_t> escritos_{0}, fallidos_{0};
     std::thread hilo_;
 };
 
@@ -486,7 +567,28 @@ class RegistroVentanas {
             } else {
                 descartadas_ += lote.size();
             }
-            if (f_) fflush(f_);
+            if (f_ && (fflush(f_) != 0 || ferror(f_))) {
+                // Disco lleno: las filas del lote se pierden (se avisa una vez por
+                // racha). stdio pudo dejar media fila en el archivo: se cierra y se
+                // recorta a la ultima fila completa, si no la fila siguiente quedaria
+                // pegada a esa mitad. escribir() lo reabre en la proxima vuelta.
+                int err = errno;
+                descartadas_ += lote.size();
+                escritas_ -= lote.size();
+                fclose(f_);
+                f_ = nullptr;
+                if (truncate(ruta_.c_str(), (off_t)pos_bueno_) != 0)
+                    log("WARNING no se pudo recortar %s (%s)", ruta_.c_str(), strerror(errno));
+                hora_.clear();
+                if (!error_csv_) log("WARNING no se pudo escribir el registro de ventanas (%s)", strerror(err));
+                error_csv_ = true;
+            } else if (f_) {
+                pos_bueno_ = ftell(f_);
+            }
+            if (error_csv_ && f_ && !lote.empty()) {
+                log("Registro de ventanas: se volvio a escribir bien");
+                error_csv_ = false;
+            }
             lote.clear();
             if (fin) return;
         }
@@ -501,10 +603,15 @@ class RegistroVentanas {
         if (!f_ || hora_ != hora) {  // rota por hora UTC
             if (f_) fclose(f_);
             std::string ruta = destino_ + "/ventanas_" + hora + ".csv";
-            bool nuevo = access(ruta.c_str(), F_OK) != 0;
+            // vacio cuenta como nuevo: con el disco lleno el encabezado puede no haber
+            // llegado a escribirse y el recorte deja el archivo en 0 bytes
+            struct stat st_csv;
+            bool nuevo = stat(ruta.c_str(), &st_csv) != 0 || st_csv.st_size == 0;
             f_ = fopen(ruta.c_str(), "a");
             hora_ = hora;
             if (!f_) { log("WARNING no se pudo abrir %s", ruta.c_str()); return; }
+            ruta_ = ruta;
+            pos_bueno_ = ftell(f_);  // en modo "a" queda al final: lo ya escrito esta completo
             if (nuevo) fprintf(f_, "window_count,t_utc_ms,area,kurtosis,estado,perdidas_fpga\n");
         }
         if (!f_) return;
@@ -518,6 +625,9 @@ class RegistroVentanas {
 
     std::string destino_, hora_;
     FILE* f_ = nullptr;
+    std::string ruta_;       // CSV abierto
+    long pos_bueno_ = 0;     // hasta donde el CSV tiene filas completas (ultimo flush bueno)
+    bool error_csv_ = false;
     std::mutex mtx_;
     std::condition_variable cv_;
     std::vector<Fila> filas_;
@@ -548,6 +658,7 @@ int main(int argc, char** argv) {
     double dac_escala = 4;
     bool dac_xor_signo = false;
     int dac_repetir = 1;
+    int64_t minimo_libre_mb = 2048;
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
         auto sig = [&](void) -> const char* {
@@ -570,6 +681,7 @@ int main(int argc, char** argv) {
         else if (a == "--pulso-loopback-digital") loopback_digital = true;
         else if (a == "--prueba-archivo") prueba_archivo = sig();
         else if (a == "--sin-registro") con_registro = false;
+        else if (a == "--minimo-libre-mb") minimo_libre_mb = atoll(sig());
         else if (a == "--dac-escala") dac_escala = atof(sig());
         else if (a == "--dac-xor-signo") dac_xor_signo = true;
         else if (a == "--dac-repetir") dac_repetir = atoi(sig());
@@ -598,6 +710,7 @@ int main(int argc, char** argv) {
         log("Destino %s (dispositivo %u:%u)", destino.c_str(), major(st.st_dev), minor(st.st_dev));
     }
     Escritor escritor(destino);
+    VigiaEspacio espacio(destino, minimo_libre_mb);
     std::unique_ptr<RegistroVentanas> registro;
     if (con_registro) registro.reset(new RegistroVentanas(destino));
     Stats st;
@@ -709,7 +822,7 @@ int main(int argc, char** argv) {
     }
 
     uint64_t ventanas_vistas = 0, ventanas_saltadas = 0, eventos = 0, eventos_perdidos = 0,
-             recalibraciones = 0, sin_senal_periodo = 0;
+             recalibraciones = 0, sin_senal_periodo = 0, no_guardados = 0;
     int ventanas_fuera = 0;  // ventanas seguidas con deriva fuera de tolerancia y stream fluyendo
     int64_t fuera_min = INT64_MAX, fuera_max = INT64_MIN;
     int64_t t_disturbio = 0;  // ultima reanudacion o reporte de fpgaLost
@@ -803,7 +916,9 @@ int main(int argc, char** argv) {
             auto r = buf.extraer(idx_ini, (size_t)(N + 2 * M), ventana, con_hueco);
             // si la señal no llega en 2s (stream congelado), se da por perdida
             if (r == BufferCircular::TODAVIA_NO && ahora_ms() - p.t_ms < 2000) break;
-            if (r == BufferCircular::OK) {
+            if (r == BufferCircular::OK && espacio.pausada()) {
+                no_guardados++;  // sin log por evento: va resumido en la linea de ESTADO
+            } else if (r == BufferCircular::OK) {
                 Evento e = nuevo_evento(p.wc);
                 e.x = std::move(ventana);
                 e.fs = fs;
@@ -836,6 +951,7 @@ int main(int argc, char** argv) {
         }
 
         int64_t t = ahora_ms();
+        espacio.revisar(t);
         bool corte = t - st.ultimo_paquete_ms > 1000;
         if (corte != en_corte) {
             en_corte = corte;
@@ -848,12 +964,12 @@ int main(int argc, char** argv) {
             double dt = (t - t_ult_estado) / 1000.0;
             double pct = (m - muestras_ult - (l - lost_ult)) / (fs * dt) * 100;
             log("ESTADO muestras=%.1f%% perdidas_fpga=+%llu ventanas=%llu saltadas=%llu deriva=[%lld,%lld] "
-                "kurt_max=%.2f raw_max=%d eventos=%llu sin_senal=%llu%s",
+                "kurt_max=%.2f raw_max=%d eventos=%llu sin_senal=%llu libre_mb=%lld%s%s",
                 pct, (unsigned long long)(l - lost_ult), (unsigned long long)ventanas_vistas,
                 (unsigned long long)ventanas_saltadas, (long long)deriva_min, (long long)deriva_max,
                 kurt_max_periodo, st.raw_max.exchange(0), (unsigned long long)eventos,
-                (unsigned long long)sin_senal_periodo,
-                corte ? "  SIN PAQUETES >1s" : "");
+                (unsigned long long)sin_senal_periodo, (long long)espacio.libre_mb(),
+                espacio.pausada() ? "  CRUDA PAUSADA" : "", corte ? "  SIN PAQUETES >1s" : "");
             sin_senal_periodo = 0;
             muestras_ult = m;
             lost_ult = l;
@@ -889,10 +1005,11 @@ int main(int argc, char** argv) {
     }
 
     log("Modo evento terminado. paquetes=%llu fpgaLost_total=%llu ventanas=%llu saltadas=%llu eventos=%llu "
-        "(escritos=%llu) eventos_perdidos=%llu recalibraciones=%llu",
+        "(escritos=%llu fallidos=%llu no_guardados_por_espacio=%llu) eventos_perdidos=%llu recalibraciones=%llu",
         (unsigned long long)st.paquetes.load(), (unsigned long long)st.fpga_lost.load(),
         (unsigned long long)ventanas_vistas, (unsigned long long)ventanas_saltadas, (unsigned long long)eventos,
-        (unsigned long long)escritor.escritos(), (unsigned long long)eventos_perdidos,
+        (unsigned long long)escritor.escritos(), (unsigned long long)escritor.fallidos(),
+        (unsigned long long)no_guardados, (unsigned long long)eventos_perdidos,
         (unsigned long long)recalibraciones);
     if (gen) {
         log("PRUEBA: pulsos emitidos=%llu", (unsigned long long)gen->emitidos());

@@ -23,6 +23,7 @@ import argparse
 
 sys.path.insert(0, '/root/scripts_campo_comun')
 import campo_common as cc
+import cfg
 
 BINARIO = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'c', 'capturar_eventos')
 
@@ -44,7 +45,13 @@ def main():
                           'por broadcast del vendor, que ata la conexion a la IP de eth0: con '
                           'eth0 abajo (corte de Starlink) el stream se congela y se pierde la '
                           'señal cruda. Con IP fija no (probado en rp-f0fd8c, 2026-09-23).')
+    ap.add_argument('--minimo-libre-mb', type=int, default=None,
+                     help='debajo de estos MB libres en --destino se pausa la señal cruda de los '
+                          'eventos (el CSV sigue). Default: modo_evento.minimo_libre_mb de '
+                          'config_campo.json; 0 = sin control')
     args = ap.parse_args()
+    minimo_libre_mb = (args.minimo_libre_mb if args.minimo_libre_mb is not None
+                       else cfg.obtener('modo_evento.minimo_libre_mb'))
 
     if not os.access(BINARIO, os.X_OK):
         sys.exit(f'ERROR: falta {BINARIO} — compilar en la placa con: make -C {os.path.dirname(BINARIO)}')
@@ -58,7 +65,8 @@ def main():
                        '--destino', args.destino,
                        '--dec', str(args.dec),
                        '--estado-s', str(args.estado_s),
-                       '--duracion-s', str(args.duracion_s)]
+                       '--duracion-s', str(args.duracion_s),
+                       '--minimo-libre-mb', str(minimo_libre_mb)]
              + ([] if args.host == 'auto' else ['--host', args.host]))
 
 

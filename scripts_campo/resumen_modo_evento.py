@@ -42,6 +42,8 @@ INTERVALO_S = 60
 # 1440 = un dia de minutos. Pasado eso se descartan los mas viejos.
 MAX_EN_RAM = 1440
 LOG_REINICIOS = os.path.join(cfg.obtener("rutas.log_dir"), "modo_evento_reinicios.log")
+# La crea/borra capturar_eventos al pausar/reanudar la señal cruda por espacio
+BANDERA_CRUDA_PAUSADA = "/run/modo-evento/cruda_pausada"
 
 
 def log(msg):
@@ -239,6 +241,9 @@ def resumir(filas, lector, contadores, activo, umbral, ahora):
             data["area_mediana_1min"] = round(statistics.median(areas), 4)
             # area mas alta del ultimo minuto
             data["area_max_1min"] = round(max(areas), 4)
+    # true si capturar_eventos pauso la señal cruda de los eventos por poco
+    # espacio en el USB (el registro de ventanas sigue igual)
+    data["me_cruda_pausada"] = os.path.exists(BANDERA_CRUDA_PAUSADA)
     reinicios = reinicios_hoy(dia)
     if reinicios is not None:
         # veces que se cayo la medicion en el dia (UTC) y el supervisor la relanzo
