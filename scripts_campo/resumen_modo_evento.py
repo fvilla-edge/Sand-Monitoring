@@ -44,6 +44,8 @@ MAX_EN_RAM = 1440
 LOG_REINICIOS = os.path.join(cfg.obtener("rutas.log_dir"), "modo_evento_reinicios.log")
 # La crea/borra capturar_eventos al pausar/reanudar la señal cruda por espacio
 BANDERA_CRUDA_PAUSADA = "/run/modo-evento/cruda_pausada"
+# Sensor de temperatura del Zynq (XADC)
+XADC = "/sys/bus/iio/devices/iio:device0"
 
 
 def log(msg):
@@ -117,9 +119,10 @@ class LectorCSV:
                 wc, t_ms = int(partes[0]), int(partes[1])
                 area = float(partes[2]) if partes[2] else None
                 kurt = float(partes[3]) if partes[3] else None
+                perdidas = int(partes[5]) if partes[5] else 0
             except ValueError:
                 continue
-            yield wc, t_ms, area, kurt, partes[4]
+            yield wc, t_ms, area, kurt, partes[4], perdidas
 
     def _leer_archivo(self, ruta):
         try:
@@ -198,6 +201,83 @@ def reinicios_hoy(dia):
     return n
 
 
+def ram_disponible_mb():
+    """MemAvailable de /proc/meminfo: lo que el kernel puede dar sin swap
+    (incluye la cache que se puede liberar), en MB."""
+    try:
+        with open("/proc/meminfo") as f:
+            for linea in f:
+                if linea.startswith("MemAvailable:"):
+                    return int(linea.split()[1]) // 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    return None
+
+
+def uptime_s():
+    try:
+        with open("/proc/uptime") as f:
+            return int(float(f.read().split()[0]))
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def temperatura_c():
+    """Temperatura del chip en °C: (raw + offset) * scale / 1000."""
+    try:
+        valores = []
+        for nombre in ("in_temp0_raw", "in_temp0_offset", "in_temp0_scale"):
+            with open(os.path.join(XADC, nombre)) as f:
+                valores.append(float(f.read()))
+        raw, offset, escala = valores
+        return round((raw + offset) * escala / 1000, 1)
+    except (OSError, ValueError):
+        return None
+
+
+def ntp_sincronizado():
+    """True si el reloj esta sincronizado (sin RTC, sin esto las horas del CSV
+    y de Losant pueden estar corridas)."""
+    try:
+        salida = subprocess.run(
+            ["timedatectl", "show", "-p", "NTPSynchronized", "--value"],
+            capture_output=True, text=True, timeout=10,
+        ).stdout.strip()
+    except Exception:
+        return None
+    return {"yes": True, "no": False}.get(salida)
+
+
+def salud_placa():
+    """Atributos de salud de la placa (no de la medicion). Todas lecturas de
+    /proc, /sys o statvfs: no agregan carga que perturbe el streaming."""
+    usb_montado = os.path.ismount("/mnt/usb")
+    data = {
+        # memoria RAM disponible en MB (~300 en regimen; bajando = algo pierde memoria)
+        "ram_disp_mb": ram_disponible_mb(),
+        # segundos desde que arranco la placa: si baja, la placa se reinicio
+        "uptime_s": uptime_s(),
+        # temperatura del chip de la placa en °C
+        "temp_cpu_c": temperatura_c(),
+        # true si el reloj esta sincronizado por NTP
+        "ntp_sincronizado": ntp_sincronizado(),
+        # true si el disco USB esta montado (sin el, no se guardan eventos)
+        "usb_montado": usb_montado,
+    }
+    try:
+        # espacio libre en la SD (sistema, journal y cores de caidas), en MB
+        data["sd_libre_mb"] = shutil.disk_usage("/").free // (1024 * 1024)
+    except OSError:
+        pass
+    if usb_montado:
+        try:
+            # espacio libre en el disco USB, en MB
+            data["usb_libre_mb"] = shutil.disk_usage("/mnt/usb").free // (1024 * 1024)
+        except OSError:
+            pass
+    return {k: v for k, v in data.items() if v is not None}
+
+
 def resumir(filas, lector, contadores, activo, umbral, ahora):
     ok = [f for f in filas if f[4] == "ok" and f[3] is not None]
     kurts = [f[3] for f in ok]
@@ -219,6 +299,10 @@ def resumir(filas, lector, contadores, activo, umbral, ahora):
         # ventanas sobre el umbral en el dia (UTC) = eventos guardados en el USB.
         # Cota superior: no descuenta los que capturar_eventos descarte por cola llena
         "me_eventos_hoy": contadores.eventos,
+        # muestras de la señal cruda que el streaming-server perdio en el ultimo
+        # minuto (de ~234 millones). No afecta area/kurtosis (salen de la FPGA),
+        # solo deja huecos en la cruda de un evento. Lo normal es 0
+        "me_muestras_perdidas_1min": sum(f[5] for f in filas),
     }
     if lector.ultima_fila is not None:
         # segundos desde la ultima ventana medida: señal de vida (lo normal es <2)
@@ -248,11 +332,7 @@ def resumir(filas, lector, contadores, activo, umbral, ahora):
     if reinicios is not None:
         # veces que se cayo la medicion en el dia (UTC) y el supervisor la relanzo
         data["me_reinicios_hoy"] = reinicios
-    try:
-        # espacio libre en el disco USB, en MB
-        data["usb_libre_mb"] = shutil.disk_usage("/mnt/usb").free // (1024 * 1024)
-    except OSError:
-        pass
+    data.update(salud_placa())
     return {"time": t_ms, "data": data}
 
 
