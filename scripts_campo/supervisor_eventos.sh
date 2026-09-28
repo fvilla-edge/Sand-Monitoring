@@ -10,6 +10,8 @@ CFG=/root/scripts_campo_comun/cfg.py
 LOG_DIR=$(python3 "$CFG" rutas.log_dir)
 MAX_CORE_DUMPS=$(python3 "$CFG" limpieza.max_core_dumps)
 mkdir -p "$LOG_DIR"
+# la crea control_starlink.sh justo antes de detener el servicio
+MARCA_PARADA_RELE=/run/modo_evento_parada_rele
 
 case "${1:-}" in
 antes)
@@ -48,6 +50,15 @@ antes)
     fi
     ;;
 despues)
+    # control_starlink.sh detiene el servicio para leer el rele (a veces todavia
+    # en la espera de uptime del boot, que termina en resultado=signal): no es
+    # una caida, se anota sin "resultado=" para que no la cuente el anotador
+    if [ -e "$MARCA_PARADA_RELE" ]; then
+        rm -f "$MARCA_PARADA_RELE"
+        echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) parada_por_verificacion_rele (${SERVICE_RESULT:-?})" \
+            >> "$LOG_DIR/modo_evento_reinicios.log"
+        exit 0
+    fi
     # exited/0 = parada limpia (systemctl stop o --duracion-s); killed/SEGV, exited/1... = caida
     echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) resultado=${SERVICE_RESULT:-?} codigo=${EXIT_CODE:-?} estado=${EXIT_STATUS:-?}" \
         >> "$LOG_DIR/modo_evento_reinicios.log"

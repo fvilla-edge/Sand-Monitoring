@@ -17,6 +17,12 @@
 # siempre, cortando la captura activa antes. El pulso de control (PS_MIO10)
 # no depende de esto.
 #
+# Modo evento (modo-evento.service): tambien usa el streaming-server y un
+# bitstream propio, asi que se detiene con systemctl (parada limpia, no cuenta
+# como caida) antes de reprogramar y se reanuda al salir, pase lo que pase
+# (trap EXIT). aplicar_objetivo.sh evita llamar a este script mientras mide,
+# salvo al conmutar o en la verificacion periodica.
+#
 # En "on" reinicia ntpsec para forzar un STEP de reloj (sin RTC, llega
 # desviado a cada ventana). El atajo de mas abajo evita el pulso si el rele
 # ya esta, de verdad, en el estado pedido — STATE_FILE es solo copia
@@ -43,6 +49,7 @@ STATE_FILE=$(python3 "$CFG" rutas.state_file)
 TIMEOUT_STOP=$(python3 "$CFG" starlink.timeout_stop_s)   # seg de margen para el corte limpio, mayor al chunk mas largo que se use en campo
 FALLOS_FILE=$(python3 "$CFG" rutas.fallos_consecutivos_file)
 UMBRAL_ALERTA=$(python3 "$CFG" starlink.alerta_fallos_consecutivos)
+VERIF_FILE=$(python3 "$CFG" rutas.ultima_verificacion_rele_file)
 AVISOS_DIR=$(python3 "$CFG" rutas.avisos_pendientes_dir)
 MARKER_FILE=$(python3 "$CFG" rutas.reconciliador_pendiente_file)
 
@@ -133,7 +140,29 @@ actualizar_contador_fallos() {
   fi
 }
 
+MODO_EVENTO_PARADO=0
+reanudar_modo_evento() {
+  if [ "$MODO_EVENTO_PARADO" -eq 1 ]; then
+    # si el stop no llego a correr ExecStopPost, que la marca no tape una caida real futura
+    rm -f /run/modo_evento_parada_rele
+    # --no-block: no retener el lock del rele mientras arranca (~15s)
+    systemctl start --no-block modo-evento \
+      || echo "ADVERTENCIA: no se pudo reanudar modo-evento (systemctl start modo-evento)" >&2
+    echo "modo evento reanudado"
+  fi
+}
+trap reanudar_modo_evento EXIT
+
 parar_captura_si_corre() {
+  case "$(systemctl is-active modo-evento 2>/dev/null || true)" in
+    active|activating|reloading)
+      echo "modo evento activo, se detiene mientras se verifica el rele (se reanuda al terminar)"
+      MODO_EVENTO_PARADO=1
+      touch /run/modo_evento_parada_rele   # supervisor_eventos.sh: no anotarla como caida
+      systemctl stop modo-evento || echo "ADVERTENCIA: systemctl stop modo-evento fallo" >&2
+      ;;
+  esac
+
   # SIGTERM = mismo handler que Ctrl+C: corta el chunk en curso y sale con
   # exit 0, para que relanzar_captura.sh no la relance. Si no corta a
   # tiempo, se fuerza.
@@ -176,6 +205,8 @@ fi
 
 # Atajo obligatorio, no optimizacion (ver header).
 ESTADO_REAL=$(leer_estado_real)
+mkdir -p "$(dirname "$VERIF_FILE")"
+date +%s > "$VERIF_FILE"   # ultima lectura real del rele (aplicar_objetivo.sh, modo evento)
 if [ "$ESTADO_REAL" = "$ACCION" ]; then
   echo "OK: el rele ya esta en '$ACCION' (verificado por HW), no hago nada"
   echo "$ESTADO_REAL" > "$STATE_FILE"
