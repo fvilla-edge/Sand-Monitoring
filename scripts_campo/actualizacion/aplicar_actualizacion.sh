@@ -14,15 +14,32 @@
 # Uso:   bash /root/actualizacion/<id>/aplicar_actualizacion.sh
 # Ver:   journalctl -u actualizacion -f
 # Ensayo de falla (solo pruebas): FALLA_EN=instalar|verificar bash ... aplicar_actualizacion.sh
+# Solo chequeos previos, sin cambiar nada (sirve con un paquete ya enviado,
+# aunque su propio aplicar sea mas viejo):
+#   SOLO_CHEQUEAR=1 bash aplicar_actualizacion.sh /root/actualizacion/<id>
 set -u
 
-PKG=$(dirname "$(readlink -f "$0")")
+PKG=$(readlink -f "${1:-$(dirname "$(readlink -f "$0")")}")
 ID=$(basename "$PKG")
+
+if [ -n "${SOLO_CHEQUEAR:-}" ]; then
+    ok=1
+    chk() { if eval "$2" >/dev/null 2>&1; then echo "OK    $1"; else echo "FALLA $1"; ok=0; fi; }
+    echo "== chequeos previos de $ID (no se cambia nada)"
+    chk "MANIFIESTO del paquete" "cd '$PKG/archivos' && sha256sum -c --quiet ../MANIFIESTO"
+    chk "paquete no aplicado antes" "[ ! -e /root/respaldos_actualizacion/$ID ]"
+    chk "SD con >300MB libres ($(df -m --output=avail / | tail -1 | tr -d ' ')MB)" "[ \$(df -m --output=avail / | tail -1) -gt 300 ]"
+    chk "/mnt/usb montado" "mountpoint -q /mnt/usb"
+    chk "sin capturar_stream.py corriendo" "! pgrep -f 'python3.*capturar_stream\\.py'"
+    chk "sin otra actualizacion en curso" "! systemctl is-active --quiet actualizacion"
+    [ "$ok" -eq 1 ] && echo "== todo OK para aplicar" || echo "== HAY CHEQUEOS QUE FALLAN: no aplicar asi"
+    [ "$ok" -eq 1 ]; exit $?
+fi
 
 if [ -z "${ACTUALIZACION_DESACOPLADA:-}" ]; then
     if ! systemd-run --unit=actualizacion --collect --quiet \
             --setenv=ACTUALIZACION_DESACOPLADA=1 --setenv=FALLA_EN="${FALLA_EN:-}" \
-            /bin/bash "$PKG/aplicar_actualizacion.sh"; then
+            /bin/bash "$PKG/aplicar_actualizacion.sh" "$PKG"; then
         echo "no se pudo lanzar (¿ya hay una en curso? systemctl status actualizacion)" >&2
         exit 1
     fi

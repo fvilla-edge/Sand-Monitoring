@@ -129,6 +129,11 @@ estado de cada placa quedan fuera de git (`paquetes_actualizacion/`,
    ```bash
    bash scripts_campo/actualizacion/enviar_paquete.sh root@<IP_CAMPO> paquetes_actualizacion/actualizacion_<id>.tgz
    ```
+   Antes de aplicar, chequeos previos sin cambiar nada (checksums, USB
+   montado, espacio, sin captura, paquete no aplicado antes):
+   ```bash
+   ssh root@<IP_CAMPO> 'SOLO_CHEQUEAR=1 bash /root/actualizacion/<id>/aplicar_actualizacion.sh /root/actualizacion/<id>'
+   ```
 5. Aplicar. Se desacopla solo (un corte de SSH no lo frena) y tarda ~1-2 min:
    ```bash
    ssh root@<IP_CAMPO> 'bash /root/actualizacion/<id>/aplicar_actualizacion.sh'
@@ -140,7 +145,9 @@ estado de cada placa quedan fuera de git (`paquetes_actualizacion/`,
    `cambiar_modo.sh evento` → verifica (servicios, cartero sin reinicios,
    reconciliador, bitstream propio). Si algo falla después de empezar a
    instalar, **vuelve solo** al respaldo. Log: `/root/logs_campo/actualizacion_<id>.log`.
-6. Verificar desde afuera: puntos nuevos en Losant del Device de campo
+6. Verificar con `ssh root@<IP_CAMPO> 'bash -s' < scripts_campo_comun/estado_placa.sh`
+   (solo lectura: modo, servicios, ESTADO, temperatura, relé, cartero,
+   resultado de la actualización) y desde afuera: puntos nuevos en Losant del Device de campo
    (`device_state=modo_evento`, `me_activo=true`, ventanas ~1200/min) y
    `journalctl -u modo-evento -n 3` en la placa.
 
