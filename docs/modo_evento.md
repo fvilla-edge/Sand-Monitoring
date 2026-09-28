@@ -94,7 +94,7 @@ scripts_campo/capturar_eventos.py (lanzador)
   una vez, se recorta a la última fila completa y retoma solo al haber lugar.
 - Umbral: `Environment=UMBRAL=...` en la unit.
 - **El server acepta un solo cliente**: para usar `capturar_stream.py` en la
-  misma placa, antes `systemctl disable --now modo-evento`.
+  misma placa, antes pasar a modo clásico (`cambiar_modo.sh clasico`, abajo).
 
 ```bash
 cp /root/scripts_campo/systemd/modo-evento.service /etc/systemd/system/
@@ -103,6 +103,45 @@ systemctl status modo-evento            # estado
 journalctl -u modo-evento -f            # log en vivo
 systemctl stop modo-evento              # parar (no lo relanza)
 ```
+
+### Vuelta atrás: modo clásico (`cambiar_modo.sh`)
+
+Si el modo evento se porta mal en campo, se vuelve al esquema anterior
+(bitstream del vendor, capturas a pedido con el comando "capturar" de Losant
+o `capturar_stream.py`/`repetir_captura.sh`) y después se retoma:
+
+```bash
+bash /root/scripts_campo/cambiar_modo.sh clasico   # o: evento
+journalctl -u cambiar-modo -f                      # seguirlo
+cat /root/logs_campo/cambiar_modo.log              # historial de cambios
+```
+
+- **El bitstream lo elige el modo**: `asegurar_servidor(bitstream_propio=True)`
+  en `capturar_eventos.py` carga `/opt/stream_app/fpga.bin`
+  (`overlay.sh stream_app propio`); `capturar_stream.py` carga el stream_app
+  del vendor. No hay que tocar nada más para cambiar de bitstream.
+- Corre como unidad transitoria de systemd (`cambiar-modo`): un corte de SSH
+  o de Starlink en el medio no lo interrumpe; un segundo cambio mientras hay
+  uno en curso se rechaza; repetir el mismo modo no reinicia nada.
+- `clasico`: `disable --now modo-evento` (no vuelve al reiniciar), carga el
+  stream_app del vendor y verifica `/tmp/loaded_fpga.inf` = `stream_app` y el
+  registro del acumulador (0x40000328) en 0.
+- `evento`: rechaza si hay un `capturar_stream.py` corriendo;
+  `enable --now modo-evento`, espera el primer `ESTADO` (tope 4 min, cubre la
+  espera de 90s de uptime al boot) y verifica `stream_app_propio` y el
+  registro en 195312.
+- `resumen-modo-evento` sigue en los dos modos: en clásico manda
+  `me_activo=false` (y `me_seg_sin_datos` crece, es esperable) junto con la
+  salud de la placa.
+- Al reiniciar en clásico la placa queda con el bitstream del arranque del
+  vendor (`v0.94`); cada captura carga el stream_app del vendor.
+
+Probado en `rp-f0fd8c` (2026-09-28): evento → clásico en 7s; captura clásica
+de 1 min (2 chunks, 97%/94% de eficiencia, acumulador en 0); reboot en clásico
+(sigue deshabilitado); clásico → evento en 30s con la sesión SSH cortada
+(`kill -9`) al segundo de lanzarlo: midiendo al 100%, `NRestarts=0`;
+repetir `evento` no reinició el servicio; un segundo cambio simultáneo fue
+rechazado.
 
 ## Formatos
 

@@ -57,7 +57,7 @@ def main():
         sys.exit(f'ERROR: falta {BINARIO} — compilar en la placa con: make -C {os.path.dirname(BINARIO)}')
 
     cc.log('INFO', 'Asegurando streaming-server (mata previo + carga bitstream)...')
-    cc.asegurar_servidor('/root/capturar_eventos_server.log')
+    cc.asegurar_servidor('/root/capturar_eventos_server.log', bitstream_propio=True)
 
     # exec: el binario reemplaza a este proceso, asi SIGINT/SIGTERM le llegan directo
     os.execv(BINARIO, [BINARIO,
