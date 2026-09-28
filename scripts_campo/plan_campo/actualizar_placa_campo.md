@@ -39,9 +39,10 @@ Mismo ecosistema en las dos placas (v3.00 `e00665135`, build 57, Ubuntu
 - [ ] Units: `scripts_campo/systemd/modo-evento.service` y
       `resumen-modo-evento.service` en `/etc/systemd/system/`,
       `daemon-reload`, `enable`.
-- [ ] Destino `/mnt/usb/eventos` (nunca la SD). En campo va el **disco de
-      1TB**: probar formato, montaje y velocidad antes (pendiente, no hay
-      disco todavía).
+- [ ] Destino `/mnt/usb/eventos` (nunca la SD). La prueba previa del disco
+      de 1TB **no se hace** (decidido 2026-09-28): al instalarlo en campo
+      verificar montaje (`findmnt /mnt/usb`), `usb_libre_mb` en Losant y que el
+      modo evento escriba el CSV sin saltadas.
 
 ## 3. Control de Starlink (`starlink_remoto/`)
 
@@ -52,6 +53,13 @@ Mismo ecosistema en las dos placas (v3.00 `e00665135`, build 57, Ubuntu
 - [ ] Probar en campo con el relé real: conmutación on/off con modo evento
       corriendo, y que la verificación cada 2h confirme el estado. En la placa
       de pruebas no hay relé: solo se probó el parar/reanudar.
+- [ ] Primera noche en campo: revisar en el journal el paso por hora_off y la
+      vuelta en hora_on (pérdida de DHCP, IP link-local 169.254.x con el link
+      arriba, modo evento sin huecos ni reinicios, cartero al día al volver
+      Starlink). **Ese caso no se pudo probar en la placa de pruebas**: el
+      DHCP de networkd entra por socket crudo (no lo frena iptables) y el
+      kernel no tiene `tc`; hace falta un switch entre la placa y el router
+      de Starlink, que no hay (2026-09-28).
 
 ## 4. Losant (cartero y Device de campo)
 
@@ -101,5 +109,8 @@ Mismo ecosistema en las dos placas (v3.00 `e00665135`, build 57, Ubuntu
 
 - Opción 2 del relé: registro de lectura de los DIO en el bitstream propio
   (confirmar el relé sin cortar la medición). Antes ver el esquema del
-  circuito del feedback. Después del piloto.
-- Piloto con sensor y arena real sobre el modo evento.
+  circuito del feedback.
+- Piloto con sensor y arena real: **no se hace** (decidido 2026-09-28). La
+  validación de la detección queda para los primeros días en campo: cruzar
+  los eventos (`kurt_max_1min`, `me_eventos_hoy`, `evento_*.json`) con los
+  pases de arena que informe el pozo, como con las 3 franjas del 21/9.
