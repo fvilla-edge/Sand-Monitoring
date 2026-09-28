@@ -176,6 +176,38 @@ de por nombre de dispositivo (`usb1`, `1-1`), porque el devpath puede cambiar en
 boots — cubre el root hub y cualquier hub externo que se conecte, y se re-aplica sola en
 cada `add` (incluido el boot), sin necesitar `echo on` a mano.
 
+## 3c. Journal persistente en la SD (una sola vez)
+
+`/var/log` es un tmpfs de 5MB a propósito (no desgastar la SD), así que por defecto el
+journal vive en RAM: se pierde en cada reboot y rota en ~1 día. Sin esto no queda
+rastro de un problema de un fin de semana ni del arranque anterior a una caída.
+Se monta un directorio de la SD sobre `/var/log/journal` y se limita el tamaño.
+
+**Por qué en la SD y no en el USB:** el USB lo monta `mnt-usb-automount@` recién
+después de `systemd-journal-flush`, así que se perderían justo los primeros segundos del
+arranque, y si el disco se desconecta journald queda con archivos abiertos en un
+dispositivo que ya no existe. El volumen es chico (~8MB/día medido en modo evento).
+
+```bash
+ssh root@<IP_PLACA> '
+cp -a /etc/fstab /etc/fstab.bak.$(date -u +%Y%m%d_%H%M%S)
+mkdir -p /var/lib/journal-persist /etc/systemd/journald.conf.d
+grep -q journal-persist /etc/fstab || echo "/var/lib/journal-persist /var/log/journal none bind,nofail,x-systemd.makedirs 0 0" >> /etc/fstab
+printf "[Journal]\nStorage=persistent\nSystemMaxUse=200M\n" > /etc/systemd/journald.conf.d/persistente.conf
+systemctl daemon-reload
+mkdir -p /var/log/journal && mount /var/log/journal
+systemctl restart systemd-journald && journalctl --flush
+findmnt /var/log/journal
+'
+```
+
+Verificar con un reboot real: `journalctl --list-boots` tiene que mostrar el arranque
+anterior. La primera entrada de cada boot puede aparecer con fecha vieja (sin RTC la
+hora se corrige después, por NTP). Reiniciar `systemd-journald` no corta los servicios
+que están corriendo (probado con modo evento: 0 reinicios, 100% muestras).
+La placa de campo (`rp-f0fbda`) tiene lo mismo desde el 2026-08-03 pero con
+`SystemMaxUse=50M` (~6 días); la de pruebas usa 200M (~25 días).
+
 ## 4. Setup para modo RED (solo si se usa `--destino red`)
 
 La placa necesita poder conectarse a la PC por SSH sin password.
