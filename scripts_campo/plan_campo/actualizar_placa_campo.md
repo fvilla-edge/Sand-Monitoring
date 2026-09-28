@@ -80,8 +80,9 @@ Mismo ecosistema en las dos placas (v3.00 `e00665135`, build 57, Ubuntu
       sec.3c).
 - [ ] `dummy0` (ya aplicado el 22/9) y `/etc/hosts` con el hostname: verificar
       que sigan.
-- [ ] Decidir `apt-daily` / `apt-daily-upgrade` / `motd-news` (causan pérdidas
-      de muestras de la señal cruda; pendiente).
+- `apt-daily` / `apt-daily-upgrade` / `motd-news`: **se dejan como están**
+  (decidido 2026-09-28). Sin `unattended-upgrades` ni `APT::Periodic` no
+  actualizan nada; a veces dejan un hueco de ms en la cruda, no en área/kurtosis.
 - [ ] Temperatura: el chip da ~71°C en el laboratorio (grado comercial, tope
       ~85°C). Revisar disipación/ventilación de la caja.
 - [ ] Jumper de IN1 en **HV** (campo ya está en HV; confirmar).
