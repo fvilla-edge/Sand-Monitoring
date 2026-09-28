@@ -95,15 +95,67 @@ Mismo ecosistema en las dos placas (v3.00 `e00665135`, build 57, Ubuntu
       ~85°C). Revisar disipación/ventilación de la caja.
 - [ ] Jumper de IN1 en **HV** (campo ya está en HV; confirmar).
 
-## 6. Procedimiento de actualización (a diseñar antes de tocarla)
+## 6. Procedimiento de actualización (`scripts_campo/actualizacion/`)
 
-- Hacerlo dentro de la ventana de Starlink (hora_on) y con tiempo para volver.
-- Todo lo que corta la conexión a mitad de camino tiene que dejar la placa
-  como estaba o en un estado conocido (`nohup`/`systemd-run`, checksums).
-- Plan de vuelta atrás: `cambiar_modo.sh clasico` + `revertir_bitstream.sh`;
-  guardar copia de los archivos que se reemplazan (`*.bak_<fecha>`).
-- Verificación final: modo evento midiendo (`ESTADO`), puntos en Losant del
-  Device de campo, relé confirmado.
+Ensayado el 2026-09-28 en la placa de pruebas puesta en **estado campo**
+(copia exacta de `rp-f0fbda` según `inventario_placa.sh`): actualización
+normal, paquete cortado a mitad de camino, SSH cortado al lanzar, falla
+forzada al final (vuelve sola) y vuelta atrás a mano. Los paquetes y el
+estado de cada placa quedan fuera de git (`paquetes_actualizacion/`,
+`datos_campo/inventarios/`).
+
+**Antes (en la oficina):**
+
+1. Crear en el Device de campo los atributos de la sección 4 (si no, Losant
+   descarta esos datos).
+2. Inventario de la placa de campo (solo lectura) y compararlo con el último,
+   para ver que no cambió nada por fuera desde el inventario del 2026-09-28:
+   ```bash
+   ssh root@<IP_CAMPO> 'bash -s' < scripts_campo_comun/inventario_placa.sh \
+       > datos_campo/inventarios/inventario_rp-f0fbda_<fecha>.txt
+   ```
+3. Armar el paquete desde el commit a instalar (compila el binario en la
+   placa de pruebas, en `/tmp`, sin tocar lo instalado):
+   ```bash
+   bash scripts_campo/actualizacion/armar_paquete_actualizacion.sh \
+       --bitstream ~/RedPitaya-FPGA-Release_2025.2/prj/stream_app/out/red_pitaya.bin \
+       --compilar-en root@192.168.0.136
+   ```
+
+**En la ventana de Starlink (hora_on), con tiempo para volver:**
+
+4. Mandar el paquete. No toca nada instalado; reintenta si se corta y lo
+   verifica por sha256 en la placa:
+   ```bash
+   bash scripts_campo/actualizacion/enviar_paquete.sh root@<IP_CAMPO> paquetes_actualizacion/actualizacion_<id>.tgz
+   ```
+5. Aplicar. Se desacopla solo (un corte de SSH no lo frena) y tarda ~1-2 min:
+   ```bash
+   ssh root@<IP_CAMPO> 'bash /root/actualizacion/<id>/aplicar_actualizacion.sh'
+   ssh root@<IP_CAMPO> 'cat /root/actualizacion/RESULTADO_<id>'   # ok / abortada / revertida
+   ```
+   Hace: chequeos previos (sin cambiar nada) → pausa del control de Starlink
+   → respaldo en `/root/respaldos_actualizacion/<id>/` → instala (la config se
+   fusiona: agrega claves, no pisa valores; `losant_config.py` no se toca) →
+   `cambiar_modo.sh evento` → verifica (servicios, cartero sin reinicios,
+   reconciliador, bitstream propio). Si algo falla después de empezar a
+   instalar, **vuelve solo** al respaldo. Log: `/root/logs_campo/actualizacion_<id>.log`.
+6. Verificar desde afuera: puntos nuevos en Losant del Device de campo
+   (`device_state=modo_evento`, `me_activo=true`, ventanas ~1200/min) y
+   `journalctl -u modo-evento -n 3` en la placa.
+
+**Si después algo se porta mal:**
+
+- Pasar a modo clásico sin desinstalar: `bash /root/scripts_campo/cambiar_modo.sh clasico`.
+- Volver a como estaba antes de la actualización:
+  ```bash
+  ssh root@<IP_CAMPO> 'R=/root/respaldos_actualizacion/<id>; systemd-run --unit=revertir --collect bash $R/revertir_actualizacion.sh $R'
+  ```
+
+**Lo que el ensayo no cubrió (diferencias de la placa de pruebas):** relé real
+(en pruebas un cable fija el feedback en "on" y Starlink queda en modo manual),
+ESP32, RTC, fail2ban y el Device de campo de Losant. Tampoco un enlace
+Starlink real durante la transferencia (el ensayo fue por LAN).
 
 ## Después (no bloquea)
 
