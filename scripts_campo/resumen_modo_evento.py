@@ -24,6 +24,7 @@ Uso:
     python3 resumen_modo_evento.py [--pendientes /mnt/usb/losant_pendientes]
 """
 import argparse
+import ctypes
 import json
 import os
 import shutil
@@ -46,6 +47,7 @@ LOG_REINICIOS = os.path.join(cfg.obtener("rutas.log_dir"), "modo_evento_reinicio
 BANDERA_CRUDA_PAUSADA = "/run/modo-evento/cruda_pausada"
 # Sensor de temperatura del Zynq (XADC)
 XADC = "/sys/bus/iio/devices/iio:device0"
+_LIBC = ctypes.CDLL(None, use_errno=True)
 
 
 def log(msg):
@@ -235,17 +237,28 @@ def temperatura_c():
         return None
 
 
+class _Timex(ctypes.Structure):
+    # struct timex (linux/timex.h): solo los campos que se usan; el resto
+    # queda en un relleno generoso para que adjtimex() no escriba afuera
+    _fields_ = [("modes", ctypes.c_uint), ("offset", ctypes.c_long),
+                ("freq", ctypes.c_long), ("maxerror", ctypes.c_long),
+                ("esterror", ctypes.c_long), ("status", ctypes.c_int),
+                ("_resto", ctypes.c_byte * 256)]
+
+
 def ntp_sincronizado():
     """True si el reloj esta sincronizado (sin RTC, sin esto las horas del CSV
-    y de Losant pueden estar corridas)."""
+    y de Losant pueden estar corridas). Mismo criterio que NTPSynchronized de
+    systemd (error maximo del kernel < 16s), pero leido directo con adjtimex:
+    timedatectl cada minuto activaba systemd-timedated via PID1, sospechoso
+    del reinicio por watchdog de rp-f0fd8c del 2026-09-28."""
     try:
-        salida = subprocess.run(
-            ["timedatectl", "show", "-p", "NTPSynchronized", "--value"],
-            capture_output=True, text=True, timeout=10,
-        ).stdout.strip()
-    except Exception:
+        t = _Timex()   # modes=0: solo lectura
+        if _LIBC.adjtimex(ctypes.byref(t)) < 0:
+            return None
+    except (OSError, AttributeError):
         return None
-    return {"yes": True, "no": False}.get(salida)
+    return t.maxerror < 16_000_000
 
 
 def salud_placa():
