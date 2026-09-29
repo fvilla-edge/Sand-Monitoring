@@ -9,7 +9,6 @@ kurtosis agregados por ventana.
 Uso: doble-click en abrir_paquete.sh (mismo directorio), o:
   .venv/bin/python3 analisis/placa/ver_paquete.py
 """
-import sys
 import json
 import tkinter as tk
 from pathlib import Path
@@ -21,8 +20,11 @@ matplotlib.use("TkAgg")
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 
-sys.path.insert(0, str(Path(__file__).parent.parent))  # analisis/ (revisar.py)
-from revisar import FA_THRESH  # noqa: E402
+# Umbral propio del visor = el del modo evento en la placa (kurtosis>=5 guarda
+# la cruda), para que la linea y el contador coincidan con los eventos
+# grabados. A proposito no se usa el FA_THRESH de revisar.py (6, calibrado con
+# la purga del 3/9 y compartido con revisar/acumulado).
+UMBRAL_KURT = 5
 
 try:
     from tkinterdnd2 import DND_FILES, TkinterDnD
@@ -212,7 +214,7 @@ class VisorPaquete:
 
         for canal in paquete["canales"]:
             t, area, kurt = canal["t_centro_s"], canal["area"], canal["kurtosis"]
-            n_sobre_umbral = sum(1 for k in kurt if k >= FA_THRESH)
+            n_sobre_umbral = sum(1 for k in kurt if k >= UMBRAL_KURT)
 
             frame = tk.Frame(self.notebook)
             self.notebook.add(frame, text=canal["canal"])
@@ -224,10 +226,10 @@ class VisorPaquete:
             ax_area.set_ylabel("Área")
             ax_area.set_title(canal["canal"])
 
-            ax_kurt.axhline(FA_THRESH, linestyle="--", linewidth=0.8, color="gray")
+            ax_kurt.axhline(UMBRAL_KURT, linestyle="--", linewidth=0.8, color="gray")
             ax_kurt.set_ylabel("Kurtosis")
             ax_kurt.set_xlabel(f"t (s) desde {paquete['inicio_utc']}" if "inicio_utc" in paquete else "t (s)")
-            ax_kurt.text(0.02, 0.95, f"{n_sobre_umbral}/{len(kurt)} ventanas ≥ {FA_THRESH}",
+            ax_kurt.text(0.02, 0.95, f"{n_sobre_umbral}/{len(kurt)} ventanas ≥ {UMBRAL_KURT}",
                          transform=ax_kurt.transAxes, va="top", fontsize=8)
             fig.tight_layout()
 

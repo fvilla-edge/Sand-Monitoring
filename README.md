@@ -109,3 +109,50 @@ Revision rapida de una captura de campo:
 ```
 
 Para la lista completa de scripts y argumentos ver `COMANDOS.md`.
+
+## Analizar las mediciones del modo evento (CSV de ventanas)
+
+En modo evento la placa guarda, ademas de la señal cruda de cada evento, un CSV
+por hora con el area y la kurtosis de TODAS las ventanas de 50 ms
+(`/mnt/usb/eventos/ventanas_AAAAMMDD_HH.csv`, ~3 MB/hora, hora en UTC = local + 3).
+Es liviano para bajarlo por Starlink y alcanza para ver la linea de tiempo del dia.
+Detalle del modo en `docs/modo_evento.md`.
+
+Desde la carpeta del proyecto, con Starlink prendido (horario `hora_on`-`hora_off`).
+`<IP_CAMPO>` es la IP publica actual de la placa de campo.
+
+1. Ver que horas hay en la placa (la hora en curso todavia se esta escribiendo;
+   si se la trae, viene cortada):
+   ```bash
+   ssh root@<IP_CAMPO> 'ls -la /mnt/usb/eventos/*.csv'
+   ```
+2. Traerlos a la PC, una carpeta por dia (`datos_campo/` no va a git):
+   ```bash
+   mkdir -p datos_campo/placa_campo/csv_29_sep
+   scp 'root@<IP_CAMPO>:/mnt/usb/eventos/ventanas_20260929_*.csv' datos_campo/placa_campo/csv_29_sep/
+   ```
+3. Convertirlos al formato de paquete liviano:
+   ```bash
+   # una hora -> ventanas_20260929_12.paquete.json al lado del CSV
+   .venv/bin/python3 analisis/placa/ventanas_a_paquete.py datos_campo/placa_campo/csv_29_sep/ventanas_20260929_12.csv
+   # todo el dia en un solo archivo
+   .venv/bin/python3 analisis/placa/ventanas_a_paquete.py datos_campo/placa_campo/csv_29_sep --unir -o datos_campo/placa_campo/csv_29_sep/dia_29_sep.paquete.json
+   ```
+4. Abrirlo en el visor: doble click en `analisis/visores/abrir_paquete.sh` (o
+   `bash analisis/visores/abrir_paquete.sh`) y elegir el `.paquete.json`. La linea
+   punteada y el contador "N/M ventanas ≥ 5" usan el mismo umbral que el modo
+   evento de la placa (kurtosis ≥ 5 guarda la cruda).
+5. Opcional, lista de eventos sin abrir el visor (el `LC_ALL=C` es necesario: con
+   el idioma en español awk usa coma decimal y cuenta mal):
+   ```bash
+   LC_ALL=C awk -F, 'NR>1 && $4>=5 {printf "%s UTC  kurt=%.2f  area=%.3f\n", strftime("%H:%M:%S",$2/1000,1), $4, $3}' datos_campo/placa_campo/csv_29_sep/ventanas_*.csv
+   ```
+
+Como leerlo:
+
+- **Reposo:** kurtosis ~3 y area plana.
+- **Pico aislado:** una sola ventana sobre 5 con las vecinas en ~3. Solo, no
+  alcanza para decir que es arena (puede ser ruido electrico del lugar).
+- **Pase de arena** (como los del 21/9): muchas ventanas seguidas sobre el umbral
+  durante minutos, valores altos (decenas a cientos) y el area subiendo.
+- Lo que valida es cruzar esos horarios con el informe de arena del pozo.
