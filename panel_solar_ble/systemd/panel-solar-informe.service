@@ -2,9 +2,9 @@
 # corriendo YA al bootear, antes de que Starlink conecte, para poder
 # reaccionar en el instante en que aparece la red (ver publicar_losant.py
 # — el reintento de conexion es interno al script, no de systemd).
-# Restart=always tambien cubre el caso de que el ESP32 no este conectado
-# al bootear: serial.Serial() tira una excepcion sin capturar, el proceso
-# corta, y systemd lo reintenta solo hasta que el puerto exista.
+# Sin ESP32 el proceso NO se corta (2026-09-25): sigue mandando Starlink,
+# device_state y los resumenes del modo evento, y reintenta abrir el puerto
+# cada 60s desde adentro (ver _abrir_serial en publicar_losant.py).
 [Unit]
 Description=Informa por MQTT a Losant el estado del panel solar cada vez que hay conexion (SmartSolar via ESP32 serial)
 

@@ -118,7 +118,7 @@ intento=0
 while [ "$intento" -lt "$MAX_REINTENTOS" ]; do
     if [ "$intento" -gt 0 ]; then
         echo "[supervisor] matando streaming-server residual antes de reintentar..."
-        pkill -9 -f streaming-server 2>/dev/null
+        pkill -9 -x streaming-serve 2>/dev/null  # -x: -f mataba cualquier proceso con ese texto (ver campo_common.asegurar_servidor)
         sleep "$ESPERA_ENTRE_REINTENTOS"
     fi
 

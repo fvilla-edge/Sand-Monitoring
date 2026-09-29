@@ -30,7 +30,7 @@ baseline (misma formula que rms_diferencial de revisar.py,
 sqrt(max(0,rms²-b²))/b, pero autocalibrado por archivo en vez de depender
 de una carpeta "reposo" externa — comparar contra el RMS de una sesión de
 otro día no tiene sentido, varía por causas ajenas a la arena). Defaults de
-los sliders (kurtosis=6, rd=0.5, ambos en KURT_FIJO_ACUMULADO para la
+los sliders (kurtosis=5, rd=0.5, ambos en KURT_FIJO_ACUMULADO para la
 pestaña "Acumulado" y el mismo valor a mano acá) calibrados contra el lote
 datos_campo/42_1_reposo_20260903_1*_mono_dec32 (purga de 8kg confirmada por
 planilla BPE-2421 a las 14:00 UTC = 11:00 ART) CON la banda real de este
@@ -147,7 +147,7 @@ FFT_NPERSEG = 65536
 # por ahora a pedido del usuario, no un slider — arrancamos con un solo
 # archivo para ver como se comporta antes de pensar en hacerlo configurable
 # o en pegar varios archivos como timeline_lote.py.
-KURT_FIJO_ACUMULADO = 6.0
+KURT_FIJO_ACUMULADO = 5.0
 
 # Tipos de pestaña que arma _construir_canales, con la etiqueta que ve el
 # usuario en el panel de checkboxes — en dual (IN1, IN2 y Limpia IN1-IN2)

@@ -1,0 +1,29 @@
+# resumen-modo-evento.service — "anotador" del reporte a Losant del modo
+# evento (scripts_campo/resumen_modo_evento.py): un resumen por minuto en
+# /mnt/usb/losant_pendientes/, haya o no internet. Lo manda a Losant el
+# "cartero" dentro de panel-solar-informe.service (publicar_losant.py).
+#
+# Independiente de modo-evento.service a proposito: si la captura se cae,
+# el resumen sigue saliendo (con me_activo=false), que es justo lo que hay
+# que ver desde Losant.
+#
+# Nice=10 / IOSchedulingClass=idle: que nunca le compita a capturar_eventos
+# (en NOCHE1 hasta un ls periodico coincidio con perdidas de muestras).
+#
+# Instalar:
+#   cp /root/scripts_campo/systemd/resumen-modo-evento.service /etc/systemd/system/
+#   systemctl daemon-reload && systemctl enable --now resumen-modo-evento
+[Unit]
+Description=Resumen por minuto del modo evento para Losant (anotador, buffer en /mnt/usb)
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 -u /root/scripts_campo/resumen_modo_evento.py
+Restart=always
+RestartSec=30
+Nice=10
+IOSchedulingClass=idle
+
+[Install]
+WantedBy=multi-user.target

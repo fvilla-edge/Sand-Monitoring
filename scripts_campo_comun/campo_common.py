@@ -30,6 +30,11 @@ import cfg
 # config_campo.json (cambiarlos sin cambiar el ADC/bitstream rompe la captura).
 FS_BASE     = 125_000_000
 SERVER_BIN  = '/opt/redpitaya/bin/streaming-server'
+# Bitstream propio (stream_app + filtro y acumulador de area/kurtosis, repo
+# fpga_pitaya): lo usa solo el modo evento. overlay.sh toma /opt/<nombre>/fpga.bin
+# cuando recibe un 2do argumento (que solo usa como rotulo en
+# /tmp/loaded_fpga.inf); lo instala desplegar_bitstream.sh del repo FPGA.
+BITSTREAM_PROPIO = '/opt/stream_app/fpga.bin'
 DEC_VALIDOS = {1, 2, 4, 8, 16, 32, 64}
 
 AVISOS_DIR = cfg.obtener('rutas.avisos_pendientes_dir')
@@ -127,10 +132,16 @@ def instalar_manejador_stop():
     return _StopFlag
 
 
-def asegurar_servidor(log_path, max_intentos=3):
+def asegurar_servidor(log_path, max_intentos=3, bitstream_propio=False):
     """
     Mata cualquier streaming-server que haya quedado corriendo de una
     sesion anterior y carga bitstream stream_app + arranca uno nuevo.
+
+    bitstream_propio=False carga el stream_app del vendor (modo clasico,
+    capturar_stream.py); True carga BITSTREAM_PROPIO (modo evento,
+    capturar_eventos.py, que necesita el acumulador de la FPGA). Asi el
+    bitstream lo elige el modo que arranca, y volver al modo clasico deja
+    la FPGA como la entrega el vendor.
 
     Antes se reusaba un servidor ya corriendo (pgrep positivo) sin
     reiniciarlo — pero si una sesion nueva arrancaba poco despues de que
@@ -145,21 +156,33 @@ def asegurar_servidor(log_path, max_intentos=3):
     verifica que el proceso siga vivo unos segundos despues de lanzarlo y,
     si murio, se reintenta el bitstream+arranque desde cero.
     """
-    r = subprocess.run(['pgrep', '-f', 'streaming-server'], capture_output=True)
+    if bitstream_propio and not os.path.isfile(BITSTREAM_PROPIO):
+        sys.exit(f'ERROR: falta el bitstream propio {BITSTREAM_PROPIO} '
+                 f'(instalarlo con desplegar_bitstream.sh del repo FPGA)')
+    overlay = ['/opt/redpitaya/sbin/overlay.sh', 'stream_app']
+    if bitstream_propio:
+        overlay.append('propio')
+    nombre_bitstream = 'propio' if bitstream_propio else 'del vendor'
+
+    # -x por nombre de proceso exacto (comm, truncado a 15 caracteres): con -f
+    # se mataba CUALQUIER proceso con "streaming-server" en su linea de
+    # comando — incluida una sesion SSH de un operador (visto en rp-f0fd8c,
+    # 2026-09-24, con el supervisor del modo evento relanzando solo)
+    r = subprocess.run(['pgrep', '-x', 'streaming-serve'], capture_output=True)
     if r.returncode == 0:
         log('INFO', '  Deteniendo streaming-server previo...')
-        subprocess.run(['pkill', '-f', 'streaming-server'])
+        subprocess.run(['pkill', '-x', 'streaming-serve'])
         for _ in range(10):  # ~5s de margen para que termine de morir
             time.sleep(0.5)
-            if subprocess.run(['pgrep', '-f', 'streaming-server'], capture_output=True).returncode != 0:
+            if subprocess.run(['pgrep', '-x', 'streaming-serve'], capture_output=True).returncode != 0:
                 break
         else:
             log('WARNING', '  [!] streaming-server previo no terminó de morir — se sigue igual')
 
     for intento in range(1, max_intentos + 1):
-        log('INFO', f'  Cargando bitstream stream_app... (intento {intento}/{max_intentos})')
-        subprocess.run(['/opt/redpitaya/sbin/overlay.sh', 'stream_app'],
-                       check=True, capture_output=True)
+        log('INFO', f'  Cargando bitstream stream_app {nombre_bitstream}... '
+                    f'(intento {intento}/{max_intentos})')
+        subprocess.run(overlay, check=True, capture_output=True)
         time.sleep(1)
 
         log('INFO', '  Iniciando streaming-server...')
