@@ -25,6 +25,31 @@ PS_BIT=0x400          # bit10 = MIO10
 # aplicar_objetivo.sh (para saber si hay que protegerla del reconciliador).
 PATRON_CAPTURA='python3.*capturar_stream\.py'
 
+# Lectura directa del feedback del rele (DIO2_P) con el bitstream propio que
+# la trae (repo fpga_pitaya, rama lectura-dio): rp_gpio expone los pines en
+# 0x40200078 (DIO2_P = bit2, misma mascara que 0x40000020 de v0.94) y deja
+# DIO2_P siempre como entrada, asi que se lee sin frenar la captura ni cargar
+# v0.94. 0x4020007C es un ID fijo: en cualquier otro bitstream (v0.94,
+# stream_app del vendor o el propio sin este cambio) no da este valor, y ahi
+# 0x78 no sirve (el propio viejo lee 0, que pasaria por "on").
+DIO_REG=0x40200078
+DIO_ID_REG=0x4020007C
+DIO_ID=0x534d0001      # "SM" + version 1 del bloque dio_lectura
+
+# Solo se lee el ID con un bitstream ya cargado: overlay.sh borra
+# /tmp/loaded_fpga.inf antes de programar y lo escribe al terminar, y leer la
+# logica programable mientras se reprograma (p.ej. el modo evento cargando el
+# suyo al arrancar) puede colgar el bus. Con v0.94 no hace falta leer: no lo
+# tiene (y en 0x40200000 esta el generador de señales).
+lectura_rele_directa() {
+  local inf
+  inf=$(cat /tmp/loaded_fpga.inf 2>/dev/null) || return 1
+  case "$inf" in
+    ""|v0.94) return 1 ;;
+  esac
+  [ "$("$MONITOR" "$DIO_ID_REG" 2>/dev/null)" = "$DIO_ID" ]
+}
+
 asegurar_mux_gpio() {
   if [ "$("$MONITOR" "$MUX_REG")" != "$(printf '0x%08x' "$MUX_GPIO")" ]; then
     "$MONITOR" "$MUX_REG" "$MUX_GPIO"

@@ -167,8 +167,14 @@ Starlink real durante la transferencia (el ensayo fue por LAN).
 ## Después (no bloquea)
 
 - Opción 2 del relé: registro de lectura de los DIO en el bitstream propio
-  (confirmar el relé sin cortar la medición). Antes ver el esquema del
-  circuito del feedback.
+  (confirmar el relé sin cortar la medición). **En prueba (2026-09-29), no
+  instalar en campo todavía.** Van juntos: bitstream de la rama `lectura-dio`
+  de `fpga_pitaya` (DIO2_P siempre entrada, pines en `0x40200078`, ID
+  `0x534D0001` en `0x4020007C`) y la rama `rele-sin-cortar` de este repo
+  (`mux_ps10_common.sh`, `control_starlink.sh`, `aplicar_objetivo.sh`: si el
+  ID está, leen el relé ahí sin frenar el modo evento y verifican cada 5 min;
+  si no, el camino de siempre con v0.94). Circuito del feedback: pad del
+  módulo → 1k → base NPN, colector a DIO2_P con 10k a 3.3V de la Pitaya.
 - Piloto con sensor y arena real: **no se hace** (decidido 2026-09-28). La
   validación de la detección queda para los primeros días en campo: cruzar
   los eventos (`kurt_max_1min`, `me_eventos_hoy`, `evento_*.json`) con los
