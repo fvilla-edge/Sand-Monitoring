@@ -61,7 +61,7 @@ BANDA_LOW   = 50_000    # Hz — subido de 25_000 por decision de reunion de ava
 BANDA_HIGH  = 400_000   # Hz
 FILTRO_ORD  = 4
 FA_WINDOW_S = 0.050     # 50 ms por ventana
-FA_THRESH   = 6         # kurtosis Pearson >= 6 → ventana activa (KURT_FIJO_ACUMULADO de ver_forma_onda.py, calibrado contra la purga de 8kg confirmada del 3/9 — ver sec.163/165 de la memoria del proyecto). Antes: 20, calibrado para la banda vieja (100-450kHz).
+FA_THRESH   = 5         # kurtosis Pearson >= 5 → ventana activa, igual al umbral del modo evento de la placa (decision del usuario 2026-09-29). Antes: 6 (purga de 8kg del 3/9, sec.163/165 de la memoria del proyecto) y 20 (banda vieja 100-450kHz). Tiene que coincidir con KURT_FIJO_ACUMULADO de ver_forma_onda.py.
 
 V_REF = 20.0            # ±20V con jumper HV y gain A_1_20
 
