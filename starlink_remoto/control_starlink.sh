@@ -229,6 +229,18 @@ if [ "$ESTADO_REAL" = "$ACCION" ]; then
   exit 0
 fi
 
+# Nunca pulsar para "prender" si la antena ya responde: el rele alimenta al
+# kit entero, asi que el feedback esta mintiendo (lectura al reves, cable
+# suelto). Pulsar ahi apagaria Starlink de dia y, con la lectura al reves, el
+# horario quedaria invertido sin forma de entrar. Se cuenta como fallo (aviso
+# a los alerta_fallos_consecutivos) y no se toca el rele.
+if [ "$ACCION" = "on" ] && antena_responde; then
+  echo "ADVERTENCIA: el feedback del rele dice 'off' pero la antena responde en $ANTENA_HOST:$ANTENA_PUERTO — no se pulsa (lectura del rele sospechosa)" >&2
+  rm -f "$MARKER_FILE"
+  actualizar_contador_fallos 1
+  exit 1
+fi
+
 # Confirmacion doble, solo para el reconciliador de 5 min (--reconciliar):
 # ante un boton fisico usado fuera de horario, corregir de una en el primer
 # ciclo le deja a quien lo uso casi cero margen antes de poder entrar por

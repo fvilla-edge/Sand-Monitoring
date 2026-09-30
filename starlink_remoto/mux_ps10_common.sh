@@ -50,6 +50,27 @@ lectura_rele_directa() {
   [ "$("$MONITOR" "$DIO_ID_REG" 2>/dev/null)" = "$DIO_ID" ]
 }
 
+# Antena Starlink: el rele corta la alimentacion del kit entero (dish +
+# router), asi que si el dish responde en su IP local el rele esta en "on" de
+# verdad, diga lo que diga el feedback. Prueba independiente para no pulsar
+# a "on" algo que ya esta prendido (lectura al reves o cable del feedback
+# suelto = Starlink apagado de dia). Misma direccion que starlink_api.host.
+ANTENA_HOST=192.168.100.1
+ANTENA_PUERTO=9200
+# Solo ensayos (placa de pruebas, sin Starlink): "responde" o "no_responde"
+# reemplaza la prueba real. En /run, se borra solo al reiniciar.
+ANTENA_PRUEBA_FILE=/run/starlink_antena_prueba
+
+antena_responde() {
+  local forzado
+  if forzado=$(cat "$ANTENA_PRUEBA_FILE" 2>/dev/null); then
+    echo "ADVERTENCIA: respuesta de la antena forzada por $ANTENA_PRUEBA_FILE ('$forzado'), solo para ensayos" >&2
+    [ "$forzado" = "responde" ]
+    return
+  fi
+  timeout 3 bash -c "exec 3<>/dev/tcp/$ANTENA_HOST/$ANTENA_PUERTO" 2>/dev/null
+}
+
 asegurar_mux_gpio() {
   if [ "$("$MONITOR" "$MUX_REG")" != "$(printf '0x%08x' "$MUX_GPIO")" ]; then
     "$MONITOR" "$MUX_REG" "$MUX_GPIO"
