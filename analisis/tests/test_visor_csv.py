@@ -47,3 +47,11 @@ def test_csv_y_csv_gz_con_ultima_linea_cortada(tmp_path):
         canal = paquete["canales"][0]
         assert canal["kurtosis"] == [2.98, 7.50, 3.01]
         assert paquete["ventanas_saltadas"] == 1
+
+
+def test_area_acumulada_suma_solo_kurtosis_mayor_al_umbral():
+    sys.path.insert(0, str(_ANALISIS / "visores"))
+    import visor_csv  # noqa: E402 (tkinter/matplotlib se importan, no abren ventana)
+    area = [1.0, 2.0, 4.0, 8.0]
+    kurt = [3.0, 3.8, 3.81, 10.0]  # 3.8 exacto NO suma (estrictamente mayor)
+    assert list(visor_csv.area_acumulada(area, kurt, 3.8)) == [0.0, 0.0, 4.0, 12.0]
