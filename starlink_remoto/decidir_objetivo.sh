@@ -56,11 +56,11 @@ set -euo pipefail
 CFG=/root/scripts_campo_comun/cfg.py
 TZ_CAMPO="America/Argentina/Buenos_Aires"
 
-MODO_MANUAL_FILE=$(python3 "$CFG" rutas.modo_manual_file)
-HORA_ON=$(python3 "$CFG" starlink.hora_on)
-HORA_OFF=$(python3 "$CFG" starlink.hora_off)
-DIAS_HABILITADOS=$(python3 "$CFG" starlink.dias_habilitados)   # ISO: 1=lunes .. 7=domingo, separados por coma
-RESCATE_MANUAL_HORAS=$(python3 "$CFG" starlink.rescate_manual_horas)
+# Una sola llamada a cfg.py (un valor por linea): cada python3 cuesta ~0.4s de CPU en la placa
+# DIAS_HABILITADOS: ISO 1=lunes .. 7=domingo, separados por coma
+CFG_VALORES=$(python3 "$CFG" rutas.modo_manual_file starlink.hora_on starlink.hora_off \
+  starlink.dias_habilitados starlink.rescate_manual_horas)
+{ read -r MODO_MANUAL_FILE; read -r HORA_ON; read -r HORA_OFF; read -r DIAS_HABILITADOS; read -r RESCATE_MANUAL_HORAS; } <<< "$CFG_VALORES"
 
 NTP_SYNC=$(timedatectl show -p NTPSynchronized --value)
 RTC_FLAG_OK=/run/rtc_ds3231_ok

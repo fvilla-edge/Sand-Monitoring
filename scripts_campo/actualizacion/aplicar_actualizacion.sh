@@ -149,6 +149,28 @@ exec 9>&-   # soltar el lock: cambiar_modo/control_starlink lo necesitan
 systemctl start panel-solar-informe resumen-modo-evento || fallar "no arrancaron cartero/anotador"
 CAMBIAR_MODO_DESACOPLADO=1 bash /root/scripts_campo/cambiar_modo.sh evento >> "$LOG" 2>&1 \
     || fallar "cambiar_modo.sh evento fallo (ver $LOG)"
+
+# ---- 5b. lectura directa del rele, ANTES de reanudar los timers ----
+# Se actualiza por Starlink con el control en pausa: el rele esta en "on" si o
+# si, y con el bitstream que trae la lectura directa esa lectura TIENE que dar
+# "on". Si da "off" (al reves, mal cableada), el reconciliador apagaria Starlink
+# de dia y el horario quedaria invertido: se vuelve al respaldo sin que corra
+# ningun timer. Se espera a que el modo evento cargue el bitstream nuevo (el de
+# antes tambien se llama stream_app_propio, pero no tiene el ID); si el
+# paquete trae uno sin lectura directa, queda el camino de siempre (v0.94).
+source /root/starlink_remoto/mux_ps10_common.sh   # MONITOR, DIO_REG, lectura_rele_directa, antena_responde
+directa=0
+for _ in $(seq 1 24); do lectura_rele_directa && { directa=1; break; }; sleep 5; done
+if [ "$directa" -eq 1 ]; then
+    dio=$("$MONITOR" "$DIO_REG")
+    antena="no responde"; antena_responde && antena="responde"
+    log "lectura directa del rele: $DIO_REG=$dio (bit2=0 es 'on'), antena $ANTENA_HOST: $antena"
+    [ "${FALLA_EN:-}" = "lectura_rele" ] && dio=$(printf '0x%08x' $(( dio | 0x4 )))   # ensayo: simula la lectura al reves
+    (( (dio & 0x4) == 0 )) \
+        || fallar "la lectura directa del rele da 'off' con Starlink prendido ($DIO_REG=$dio): estaria al reves, no se reanuda el control"
+else
+    log "sin lectura directa del rele (el bitstream no trae el ID): control por el camino de siempre (v0.94)"
+fi
 reanudar_starlink
 log "modo evento arrancado, control de Starlink reanudado"
 

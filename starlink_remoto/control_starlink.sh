@@ -12,13 +12,15 @@
 #
 # Feedback (DIO2_P) cableado via transistor NPN en emisor comun (el pad da
 # 0.15V/1.8V, insuficiente para logica limpia) — la lectura sale invertida:
-# bit en alto = rele en "off". Solo existe en el bitstream default (v0.94);
-# con stream_app el nivel no sobrevive el cambio, por eso se fuerza v0.94
-# siempre, cortando la captura activa antes. El pulso de control (PS_MIO10)
-# no depende de esto.
+# bit en alto = rele en "off". Con el bitstream propio que trae la lectura
+# directa (lectura_rele_directa, ver mux_ps10_common.sh) se lee en
+# 0x40200078 sin tocar nada: no se frena la captura ni se reprograma. Con
+# cualquier otro bitstream (vendor, propio viejo) solo se puede leer con
+# v0.94, por eso ahi se fuerza v0.94, cortando la captura activa antes. El
+# pulso de control (PS_MIO10) no depende de esto.
 #
-# Modo evento (modo-evento.service): tambien usa el streaming-server y un
-# bitstream propio, asi que se detiene con systemctl (parada limpia, no cuenta
+# Modo evento (modo-evento.service), solo sin lectura directa: tambien usa el
+# streaming-server y un bitstream propio, asi que se detiene con systemctl (parada limpia, no cuenta
 # como caida) antes de reprogramar y se reanuda al salir, pase lo que pase
 # (trap EXIT). aplicar_objetivo.sh evita llamar a este script mientras mide,
 # salvo al conmutar o en la verificacion periodica.
@@ -45,13 +47,13 @@ DIO2_BIT=0x4
 PULSO_S=0.2   # ancho del pulso — 19ms ya alcanzo a togglear en la placa real, esto deja margen
 
 # Parametros operativos — ver scripts_campo_comun/config_campo.json
-STATE_FILE=$(python3 "$CFG" rutas.state_file)
-TIMEOUT_STOP=$(python3 "$CFG" starlink.timeout_stop_s)   # seg de margen para el corte limpio, mayor al chunk mas largo que se use en campo
-FALLOS_FILE=$(python3 "$CFG" rutas.fallos_consecutivos_file)
-UMBRAL_ALERTA=$(python3 "$CFG" starlink.alerta_fallos_consecutivos)
-VERIF_FILE=$(python3 "$CFG" rutas.ultima_verificacion_rele_file)
-AVISOS_DIR=$(python3 "$CFG" rutas.avisos_pendientes_dir)
-MARKER_FILE=$(python3 "$CFG" rutas.reconciliador_pendiente_file)
+# Una sola llamada a cfg.py (un valor por linea): cada python3 cuesta ~0.4s de CPU en la placa.
+# TIMEOUT_STOP: seg de margen para el corte limpio, mayor al chunk mas largo que se use en campo
+CFG_VALORES=$(python3 "$CFG" rutas.state_file starlink.timeout_stop_s rutas.fallos_consecutivos_file \
+  starlink.alerta_fallos_consecutivos rutas.ultima_verificacion_rele_file rutas.avisos_pendientes_dir \
+  rutas.reconciliador_pendiente_file)
+{ read -r STATE_FILE; read -r TIMEOUT_STOP; read -r FALLOS_FILE; read -r UMBRAL_ALERTA; read -r VERIF_FILE;
+  read -r AVISOS_DIR; read -r MARKER_FILE; } <<< "$CFG_VALORES"
 
 ACCION="${1:-}"
 case "$ACCION" in
@@ -77,9 +79,15 @@ if ! flock -w 180 9; then
   exit 1
 fi
 
-# Precondicion: bitstream v0.94 ya cargado (ver header).
+# Precondicion: lectura directa disponible (LECTURA_DIRECTA=1) o bitstream
+# v0.94 ya cargado (ver header).
 leer_estado_real() {
-  local val=$("$MONITOR" "$IN_REG")
+  local val
+  if [ "$LECTURA_DIRECTA" -eq 1 ]; then
+    val=$("$MONITOR" "$DIO_REG")
+  else
+    val=$("$MONITOR" "$IN_REG")
+  fi
   if (( (val & DIO2_BIT) != 0 )); then
     echo off
   else
@@ -193,14 +201,20 @@ parar_captura_si_corre() {
   fi
 }
 
-# Corre siempre, antes de reprogramar/leer nada.
-parar_captura_si_corre
+LECTURA_DIRECTA=0
+if lectura_rele_directa; then
+  LECTURA_DIRECTA=1
+  echo "lectura directa del rele (bitstream propio con 0x40200078), sin frenar la captura"
+else
+  # Sin lectura directa: corre siempre, antes de reprogramar/leer nada.
+  parar_captura_si_corre
 
-# Reprogramar resetea los registros de logica programable (incluye IN_REG,
-# el feedback) y genera un pulso real en DIO2_P — por eso se evita si v0.94
-# ya esta cargado (ver header). Ya no afecta al pulso de control (PS_MIO10).
-if [ "$(cat "$LOADED_INF" 2>/dev/null)" != "$FPGA_NAME" ]; then
-  "$OVERLAY" "$FPGA_NAME"
+  # Reprogramar resetea los registros de logica programable (incluye IN_REG,
+  # el feedback) y genera un pulso real en DIO2_P — por eso se evita si v0.94
+  # ya esta cargado (ver header). Ya no afecta al pulso de control (PS_MIO10).
+  if [ "$(cat "$LOADED_INF" 2>/dev/null)" != "$FPGA_NAME" ]; then
+    "$OVERLAY" "$FPGA_NAME"
+  fi
 fi
 
 # Atajo obligatorio, no optimizacion (ver header).
@@ -213,6 +227,18 @@ if [ "$ESTADO_REAL" = "$ACCION" ]; then
   rm -f "$MARKER_FILE"
   actualizar_contador_fallos 0
   exit 0
+fi
+
+# Nunca pulsar para "prender" si la antena ya responde: el rele alimenta al
+# kit entero, asi que el feedback esta mintiendo (lectura al reves, cable
+# suelto). Pulsar ahi apagaria Starlink de dia y, con la lectura al reves, el
+# horario quedaria invertido sin forma de entrar. Se cuenta como fallo (aviso
+# a los alerta_fallos_consecutivos) y no se toca el rele.
+if [ "$ACCION" = "on" ] && antena_responde; then
+  echo "ADVERTENCIA: el feedback del rele dice 'off' pero la antena responde en $ANTENA_HOST:$ANTENA_PUERTO — no se pulsa (lectura del rele sospechosa)" >&2
+  rm -f "$MARKER_FILE"
+  actualizar_contador_fallos 1
+  exit 1
 fi
 
 # Confirmacion doble, solo para el reconciliador de 5 min (--reconciliar):

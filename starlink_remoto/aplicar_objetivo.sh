@@ -25,9 +25,13 @@
 # antes de que se revierta solo. Los timers de horario y los comandos
 # manuales NO pasan este flag, corrigen de inmediato como siempre.
 #
-# Con el modo evento (modo-evento.service, medicion 24h) activo: verificar
-# por HW exige cortar la medicion (control_starlink.sh la detiene y la
-# reanuda), asi que si el objetivo coincide con STATE_FILE no se verifica,
+# Con lectura directa del rele (bitstream propio con 0x40200078, ver
+# mux_ps10_common.sh) verificar no corta nada: se verifica siempre contra el
+# HW, sin los dos atajos de cache de abajo (captura clasica y modo evento).
+#
+# Sin lectura directa, con el modo evento (modo-evento.service, medicion
+# 24h) activo: verificar por HW exige cortar la medicion (control_starlink.sh
+# la detiene y la reanuda), asi que si el objetivo coincide con STATE_FILE no se verifica,
 # salvo una verificacion real cada starlink.verificacion_hw_con_modo_evento_h
 # horas mientras el objetivo es "on" (0 = nunca; solo al conmutar). Contra un
 # pulso espurio que apague Starlink de dia, sin esto no se corrige hasta el
@@ -45,12 +49,13 @@ set -euo pipefail
 
 CFG=/root/scripts_campo_comun/cfg.py
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$DIR/mux_ps10_common.sh"   # PATRON_CAPTURA
-STATE_FILE=$(python3 "$CFG" rutas.state_file)
-VERIF_FILE=$(python3 "$CFG" rutas.ultima_verificacion_rele_file)
-VERIF_MODO_EVENTO_H=$(python3 "$CFG" starlink.verificacion_hw_con_modo_evento_h)
+source "$DIR/mux_ps10_common.sh"   # PATRON_CAPTURA, lectura_rele_directa()
+# Una sola llamada a cfg.py (un valor por linea): cada python3 cuesta ~0.4s de CPU en la placa
+CFG_VALORES=$(python3 "$CFG" rutas.state_file rutas.ultima_verificacion_rele_file \
+  starlink.verificacion_hw_con_modo_evento_h starlink.sin_rele)
+{ read -r STATE_FILE; read -r VERIF_FILE; read -r VERIF_MODO_EVENTO_H; read -r SIN_RELE; } <<< "$CFG_VALORES"
 
-if [ "$(python3 "$CFG" starlink.sin_rele)" = "True" ]; then
+if [ "$SIN_RELE" = "True" ]; then
   echo "starlink.sin_rele=true, no se controla el rele (placa en banco sin rele fisico)"
   exit 0
 fi
@@ -65,6 +70,13 @@ for arg in "$@"; do
 done
 
 OBJETIVO=$("$DIR/decidir_objetivo.sh")
+
+ARGS=("$OBJETIVO")
+[ "$RECONCILIAR" -eq 1 ] && ARGS+=(--reconciliar)
+
+if lectura_rele_directa; then
+  exec "$DIR/control_starlink.sh" "${ARGS[@]}"
+fi
 
 CAPTURA_ACTIVA=0
 pgrep -f "$PATRON_CAPTURA" >/dev/null 2>&1 && CAPTURA_ACTIVA=1
@@ -91,6 +103,4 @@ if [ "$FORZAR" -eq 0 ] && [ "$MODO_EVENTO_ACTIVO" -eq 1 ] && [ "$(cat "$STATE_FI
   fi
 fi
 
-ARGS=("$OBJETIVO")
-[ "$RECONCILIAR" -eq 1 ] && ARGS+=(--reconciliar)
 exec "$DIR/control_starlink.sh" "${ARGS[@]}"
