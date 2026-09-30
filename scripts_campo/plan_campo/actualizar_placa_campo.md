@@ -30,7 +30,8 @@ y ~45 min (20:03 UTC) sin medir.
   `led_o[2]`). sha256 del `.bin`: `498e54b40fd6a834e8435ac76d95ce253c41c908173a8435d2e7f9dc48b5e817`.
 - `main` con `rele-sin-cortar` mergeado: el relé se lee sin frenar el modo
   evento y `cfg.py` lee la config en una llamada (reconciliador ~1.6s de CPU
-  en vez de ~7s). Sin el ID del bitstream, vuelve solo al camino viejo (v0.94).
+  en vez de ~7s), con las protecciones contra una lectura del relé al revés
+  (ver abajo). Sin el ID del bitstream, vuelve solo al camino viejo (v0.94).
 - Van también los archivos de GCS (sección 4b) pero **quedan inactivos**:
   `aplicar_actualizacion.sh` solo habilita `modo-evento` y
   `resumen-modo-evento`. GCS se prende después, aparte (sección 4b).
@@ -44,21 +45,38 @@ el chequeo previo (el 29/9 una copia vieja sin el flag aplicó de verdad).
 
 **Aplicar** en hora_on, igual que la sección 6 (pasos 4-6).
 
-**Primeros 5 minutos después de aplicar (crítico):** la lectura nueva del
-relé nunca se probó con el relé y el transistor reales (en la placa de
-pruebas coincidió con v0.94 sobre el mismo pin con 10k a 3.3V). En el log de
-la actualización, o en `journalctl -u starlink-reconciliador -n 5`, tiene que
-estar:
+**Lectura del relé al revés (el riesgo principal):** la lectura nueva nunca
+se probó con el relé y el transistor reales (en la placa de pruebas coincidió
+con v0.94 sobre el mismo pin con 10k a 3.3V). Si diera al revés, de día el
+reconciliador pulsaría y apagaría Starlink, y en hora_off lo prendería:
+horario invertido sin forma de entrar (el relé corta dish y router). Dos
+protecciones automáticas (`cd19c27`, probadas en la placa de pruebas el 30/9):
+
+1. `aplicar_actualizacion.sh` (paso 5b), **antes de reanudar los timers**:
+   espera al bitstream con lectura directa y comprueba que el relé se lea
+   `on` (se actualiza por Starlink, tiene que estar prendido). Si se lee
+   `off`, vuelve solo al respaldo: `RESULTADO_<id>` = `revertida ... estaria al
+   reves`. Ningún timer llega a correr con la lectura nueva.
+2. `control_starlink.sh`: nunca pulsa para `on` si la antena responde en
+   `192.168.100.1:9200`; lo cuenta como fallo (aviso a los 4). Cubre también
+   un cable del feedback suelto más adelante.
+
+En el log de la actualización tiene que estar:
 
 ```
-lectura directa del rele (bitstream propio con 0x40200078), sin frenar la captura
-OK: el rele ya esta en 'on' (verificado por HW), no hago nada
+lectura directa del rele: 0x40200078=0x00000000 (bit2=0 es 'on'), antena 192.168.100.1: responde
 ```
 
-Si en cambio dice `desacuerdo detectado (se pidio 'on', HW en 'off')` con
-Starlink andando, la lectura está al revés: el **próximo** ciclo (5 min)
-pulsaría el relé y apagaría Starlink. En ese caso, antes de 5 min:
-`systemctl stop starlink-reconciliador.timer` y volver atrás (sección 6).
+- Si dice `antena ... no responde` con Starlink andando, la protección 2 no
+  está cubriendo (la antena no contesta en esa dirección): no rompe nada,
+  pero anotarlo y revisarlo antes de dejarla sin mirar.
+- Como respaldo manual, en los primeros minutos `journalctl -u
+  starlink-reconciliador -n 5` tiene que decir `OK: el rele ya esta en 'on'
+  (verificado por HW)`. Si dice `desacuerdo detectado (se pidio 'on', HW en
+  'off')`: `systemctl stop starlink-reconciliador.timer` y volver atrás
+  (sección 6).
+- Probar la vuelta automática sin tocar campo: `FALLA_EN=lectura_rele` en la
+  placa de pruebas (igual que los otros `FALLA_EN` del ensayo del 28/9).
 
 **Verificar después:**
 
