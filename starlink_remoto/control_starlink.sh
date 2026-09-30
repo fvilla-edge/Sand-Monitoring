@@ -47,13 +47,13 @@ DIO2_BIT=0x4
 PULSO_S=0.2   # ancho del pulso — 19ms ya alcanzo a togglear en la placa real, esto deja margen
 
 # Parametros operativos — ver scripts_campo_comun/config_campo.json
-STATE_FILE=$(python3 "$CFG" rutas.state_file)
-TIMEOUT_STOP=$(python3 "$CFG" starlink.timeout_stop_s)   # seg de margen para el corte limpio, mayor al chunk mas largo que se use en campo
-FALLOS_FILE=$(python3 "$CFG" rutas.fallos_consecutivos_file)
-UMBRAL_ALERTA=$(python3 "$CFG" starlink.alerta_fallos_consecutivos)
-VERIF_FILE=$(python3 "$CFG" rutas.ultima_verificacion_rele_file)
-AVISOS_DIR=$(python3 "$CFG" rutas.avisos_pendientes_dir)
-MARKER_FILE=$(python3 "$CFG" rutas.reconciliador_pendiente_file)
+# Una sola llamada a cfg.py (un valor por linea): cada python3 cuesta ~0.4s de CPU en la placa.
+# TIMEOUT_STOP: seg de margen para el corte limpio, mayor al chunk mas largo que se use en campo
+CFG_VALORES=$(python3 "$CFG" rutas.state_file starlink.timeout_stop_s rutas.fallos_consecutivos_file \
+  starlink.alerta_fallos_consecutivos rutas.ultima_verificacion_rele_file rutas.avisos_pendientes_dir \
+  rutas.reconciliador_pendiente_file)
+{ read -r STATE_FILE; read -r TIMEOUT_STOP; read -r FALLOS_FILE; read -r UMBRAL_ALERTA; read -r VERIF_FILE;
+  read -r AVISOS_DIR; read -r MARKER_FILE; } <<< "$CFG_VALORES"
 
 ACCION="${1:-}"
 case "$ACCION" in

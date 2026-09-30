@@ -42,7 +42,11 @@ def obtener(clave):
 
 if __name__ == '__main__':
     import sys
-    if len(sys.argv) != 2:
-        print('Uso: cfg.py <clave.punteada>', file=sys.stderr)
+    if len(sys.argv) < 2:
+        print('Uso: cfg.py <clave.punteada> [<clave.punteada> ...]', file=sys.stderr)
         sys.exit(1)
-    print(obtener(sys.argv[1]))
+    # Varias claves = un valor por linea, en el mismo orden: cada arranque de
+    # python3 cuesta ~0.4s de CPU en la placa, y el reconciliador de 5 min
+    # hacia 16 (~7s, coincidian con perdidas de muestras crudas).
+    for clave in sys.argv[1:]:
+        print(obtener(clave))

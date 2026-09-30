@@ -50,11 +50,12 @@ set -euo pipefail
 CFG=/root/scripts_campo_comun/cfg.py
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$DIR/mux_ps10_common.sh"   # PATRON_CAPTURA, lectura_rele_directa()
-STATE_FILE=$(python3 "$CFG" rutas.state_file)
-VERIF_FILE=$(python3 "$CFG" rutas.ultima_verificacion_rele_file)
-VERIF_MODO_EVENTO_H=$(python3 "$CFG" starlink.verificacion_hw_con_modo_evento_h)
+# Una sola llamada a cfg.py (un valor por linea): cada python3 cuesta ~0.4s de CPU en la placa
+CFG_VALORES=$(python3 "$CFG" rutas.state_file rutas.ultima_verificacion_rele_file \
+  starlink.verificacion_hw_con_modo_evento_h starlink.sin_rele)
+{ read -r STATE_FILE; read -r VERIF_FILE; read -r VERIF_MODO_EVENTO_H; read -r SIN_RELE; } <<< "$CFG_VALORES"
 
-if [ "$(python3 "$CFG" starlink.sin_rele)" = "True" ]; then
+if [ "$SIN_RELE" = "True" ]; then
   echo "starlink.sin_rele=true, no se controla el rele (placa en banco sin rele fisico)"
   exit 0
 fi
