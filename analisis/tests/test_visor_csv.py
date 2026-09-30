@@ -47,3 +47,25 @@ def test_csv_y_csv_gz_con_ultima_linea_cortada(tmp_path):
         canal = paquete["canales"][0]
         assert canal["kurtosis"] == [2.98, 7.50, 3.01]
         assert paquete["ventanas_saltadas"] == 1
+
+
+def test_area_acumulada_suma_solo_kurtosis_mayor_al_umbral():
+    sys.path.insert(0, str(_ANALISIS / "visores"))
+    import visor_csv  # noqa: E402 (tkinter/matplotlib se importan, no abren ventana)
+    area = [1.0, 2.0, 4.0, 8.0]
+    kurt = [3.0, 3.8, 3.81, 10.0]  # 3.8 exacto NO suma (estrictamente mayor)
+    assert list(visor_csv.area_acumulada(area, kurt, 3.8)) == [0.0, 0.0, 4.0, 12.0]
+
+
+def test_grupos_se_parten_solo_con_huecos_mayores_a_una_hora():
+    sys.path.insert(0, str(_ANALISIS / "visores"))
+    import numpy as np
+    import visor_csv  # noqa: E402
+    # en segundos -> dias: 3 ventanas, corte de 44 min (no parte), 2 ventanas,
+    # corte de 3 h (parte), 2 ventanas
+    seg = [0, 0.05, 0.10, 0.10 + 44 * 60, 0.15 + 44 * 60, 0.15 + 44 * 60 + 3 * 3600, 0.20 + 44 * 60 + 3 * 3600]
+    t = np.array(seg) / 86400
+    acum = np.array([1, 2, 3, 3, 5, 6, 10], dtype=float)
+    grupos = visor_csv.partir_en_grupos(t, acum)
+    assert [(i0, i1) for i0, i1, _ in grupos] == [(0, 5), (5, 7)]
+    assert [sub for _, _, sub in grupos] == [5.0, 5.0]  # la suma de subtotales es el total

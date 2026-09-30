@@ -2,8 +2,9 @@
 """
 visor_csv.py — Visor de los CSV horarios del modo evento
 (`ventanas_AAAAMMDD_HH.csv`, o `.csv.gz` como quedan en Google Cloud Storage):
-área y kurtosis de cada ventana de 50ms, una o varias horas unidas, con la
-hora en Argentina o UTC. Es el que se arma como ejecutable portable
+kurtosis, área y área acumulada (suma del área de las ventanas con kurtosis
+mayor a un umbral editable, 3.8 por defecto) de cada ventana de 50ms, una o
+varias horas unidas, con la hora en Argentina o UTC. Es el que se arma como ejecutable portable
 (`empaquetar/`), así que solo usa numpy + matplotlib + tkinter (nada de
 scipy ni de revisar.py).
 
@@ -40,8 +41,15 @@ except ImportError:
 # Mismo umbral que el modo evento de la placa y FA_THRESH de revisar.py (no se
 # importa para no arrastrar scipy al ejecutable; un test verifica que coincidan).
 UMBRAL_KURT = 5.0
+# Area acumulada: suma el area de cada ventana con kurtosis ESTRICTAMENTE
+# mayor a este valor (editable en la ventana; 3.8 = pedido del usuario 2026-09-30).
+UMBRAL_ACUM_DEFAULT = 3.8
 ZONAS = {"Argentina (UTC-3)": timezone(timedelta(hours=-3), "ART"), "UTC": timezone.utc}
 MAX_EVENTOS_LISTA = 200
+# La seleccion se parte en grupos (A, B, ...) donde entre dos ventanas seguidas
+# hay mas de esto: cortes cortos (un reinicio de la captura) no la parten.
+HUECO_GRUPO_H = 1.0
+MAX_GRUPOS_TEXTO = 6
 DIA_S = 86400.0
 
 
@@ -58,6 +66,30 @@ def cargar_hora(ruta: Path):
         "saltadas": paquete["ventanas_saltadas"],
         "tramos": len(paquete["segmentos"]),
     }
+
+
+def area_acumulada(area, kurt, umbral):
+    """Suma corrida del area de las ventanas con kurtosis > umbral (las demas
+    aportan 0), en el orden de las ventanas."""
+    area = np.asarray(area, dtype=float)
+    kurt = np.asarray(kurt, dtype=float)
+    return np.cumsum(np.where(kurt > umbral, area, 0.0))
+
+
+def partir_en_grupos(t_dias, acum, hueco_h=HUECO_GRUPO_H):
+    """Indices [inicio, fin) de cada grupo continuo (cortes > hueco_h entre
+    ventanas seguidas) y el subtotal de area acumulada de cada uno."""
+    cortes = np.nonzero(np.diff(t_dias) > hueco_h / 24.0)[0] + 1
+    bordes = np.concatenate(([0], cortes, [len(t_dias)]))
+    grupos = []
+    for i0, i1 in zip(bordes[:-1], bordes[1:]):
+        previo = acum[i0 - 1] if i0 > 0 else 0.0
+        grupos.append((int(i0), int(i1), float(acum[i1 - 1] - previo)))
+    return grupos
+
+
+def _letra(n):
+    return chr(ord("A") + n) if n < 26 else str(n + 1)
 
 
 def _es_csv(ruta: Path):
@@ -109,6 +141,15 @@ class VisorCSV:
             tk.Radiobutton(marco_zona, text=nombre, variable=self.zona, value=nombre,
                            command=self._redibujar).pack(side="left")
 
+        marco_acum = tk.Frame(izq)
+        marco_acum.pack(fill="x", pady=(6, 0))
+        tk.Label(marco_acum, text="Acumulado: kurtosis >").pack(side="left")
+        self.umbral_acum = tk.StringVar(value=f"{UMBRAL_ACUM_DEFAULT:g}")
+        entrada = tk.Entry(marco_acum, textvariable=self.umbral_acum, width=6)
+        entrada.pack(side="left")
+        entrada.bind("<Return>", lambda _e: self._redibujar())
+        tk.Button(marco_acum, text="Aplicar", command=self._redibujar).pack(side="left", padx=(4, 0))
+
         self.info = tk.Text(izq, height=16, width=38, font=("Courier", 8), state="disabled", wrap="none")
         self.info.pack(fill="both", pady=(8, 0))
 
@@ -153,8 +194,12 @@ class VisorCSV:
                 self.archivos.append(f)
         self.archivos.sort(key=lambda p: p.name)
         self.listbox.delete(0, "end")
+        # un mismo nombre desde dos carpetas (p.ej. la misma hora en el disco y
+        # en la SD): se muestra tambien la carpeta para distinguirlas
+        repetidos = {n for n in (f.name for f in self.archivos)
+                     if sum(1 for g in self.archivos if g.name == n) > 1}
         for f in self.archivos:
-            self.listbox.insert("end", f.name)
+            self.listbox.insert("end", f"{f.parent.name}/{f.name}" if f.name in repetidos else f.name)
 
     def _seleccionar_todo(self):
         self.listbox.select_set(0, "end")
@@ -229,31 +274,65 @@ class VisorCSV:
         self._limpiar_grafico()
         tk.Label(self.der, text=texto, justify="left", font=("TkDefaultFont", 11)).pack(expand=True)
 
+    def _umbral_acum(self):
+        try:
+            return float(self.umbral_acum.get().replace(",", "."))
+        except ValueError:
+            messagebox.showwarning("Umbral inválido", f"'{self.umbral_acum.get()}' no es un número; uso {UMBRAL_ACUM_DEFAULT:g}")
+            self.umbral_acum.set(f"{UMBRAL_ACUM_DEFAULT:g}")
+            return UMBRAL_ACUM_DEFAULT
+
     def _graficar(self, d):
         tz = ZONAS[self.zona.get()]
         t, area, kurt = d["t"], d["area"], d["kurt"]
         sobre = kurt >= UMBRAL_KURT
         i_max = int(np.nanargmax(kurt))
+        u_acum = self._umbral_acum()
+        acum = area_acumulada(area, kurt, u_acum)
+        n_acum = int((kurt > u_acum).sum())
+        grupos = partir_en_grupos(t, acum)
 
         def hora(x, fmt="%d/%m %H:%M:%S"):
             return mdates.num2date(x, tz=tz).strftime(fmt)
 
         self._limpiar_grafico()
-        fig, (ax_area, ax_kurt) = plt.subplots(2, 1, figsize=(9, 6.5), sharex=True)
+        # de arriba hacia abajo: kurtosis, area bruta, area acumulada (kurtosis > u_acum)
+        fig, (ax_kurt, ax_area, ax_acum) = plt.subplots(3, 1, figsize=(9, 8), sharex=True)
         self._fig = fig
-        self._vista = VistaReducida(ax_area, ax_kurt, t, area, kurt, VENTANA_S / DIA_S)
-        ax_area.set_ylabel("Área")
-        ax_area.set_title(f"{hora(t[0])} a {hora(t[-1])} ({self.zona.get()})")
+        self._vista = VistaReducida(ax_area, ax_kurt, t, area, kurt, VENTANA_S / DIA_S,
+                                    ax_acum=ax_acum, acum=acum)
+        ax_kurt.set_title(f"{hora(t[0])} a {hora(t[-1])} ({self.zona.get()})")
         ax_kurt.axhline(UMBRAL_KURT, linestyle="--", linewidth=0.8, color="gray")
+        ax_kurt.axhline(u_acum, linestyle=":", linewidth=0.8, color="#d6612a")
         ax_kurt.set_ylim(min(0, np.nanmin(kurt)), max(np.nanmax(kurt), UMBRAL_KURT) * 1.05)
         ax_kurt.set_ylabel("Kurtosis")
-        localizador = mdates.AutoDateLocator(tz=tz)
-        ax_kurt.xaxis.set_major_locator(localizador)
-        ax_kurt.xaxis.set_major_formatter(mdates.ConciseDateFormatter(localizador, tz=tz))
         ax_kurt.text(0.01, 0.97,
                      f"{int(sobre.sum())} ventanas ≥ {UMBRAL_KURT:g} de {len(kurt)}   "
                      f"kurtosis máx {kurt[i_max]:.2f} ({hora(t[i_max], '%d/%m %H:%M:%S')})",
                      transform=ax_kurt.transAxes, va="top", fontsize=9)
+        ax_area.set_ylabel("Área")
+        ax_acum.set_ylabel("Área acumulada")
+        texto_acum = f"suma del área de {n_acum} ventanas con kurtosis > {u_acum:g}: {acum[-1]:.2f}"
+        if len(grupos) > 1:
+            partes = [f"{_letra(n)}: {g[2]:.2f}" for n, g in enumerate(grupos[:MAX_GRUPOS_TEXTO])]
+            if len(grupos) > MAX_GRUPOS_TEXTO:
+                partes.append("…")
+            texto_acum += "\n" + " · ".join(partes)
+            for n, (i0, _i1, _sub) in enumerate(grupos):
+                for ax in (ax_kurt, ax_area, ax_acum):
+                    if n > 0:
+                        ax.axvline(t[i0], color="gray", linestyle="--", linewidth=0.9)
+                ax_acum.text(t[i0], 0.02, f" {_letra(n)}", transform=ax_acum.get_xaxis_transform(),
+                             fontsize=9, fontweight="bold", va="bottom")
+        ax_acum.text(0.01, 0.97, texto_acum, transform=ax_acum.transAxes, va="top", fontsize=9)
+        localizador = mdates.AutoDateLocator(tz=tz)
+        ax_acum.xaxis.set_major_locator(localizador)
+        # formato numerico (30/09) en vez de los meses en ingles de matplotlib
+        ax_acum.xaxis.set_major_formatter(mdates.ConciseDateFormatter(
+            localizador, tz=tz,
+            formats=["%Y", "%m/%Y", "%d/%m", "%H:%M", "%H:%M", "%S.%f"],
+            zero_formats=["", "%Y", "%m/%Y", "%d/%m", "%H:%M", "%H:%M"],
+            offset_formats=["", "%Y", "%m/%Y", "%d/%m/%Y", "%d/%m/%Y", "%d/%m/%Y %H:%M"]))
         fig.tight_layout()
 
         self._canvas = FigureCanvasTkAgg(fig, master=self.der)
@@ -271,6 +350,15 @@ class VisorCSV:
             f"Área máx       : {np.nanmax(area):.4f}",
             f"Kurt mediana   : {np.nanmedian(kurt):.3f}",
             f"Ventanas ≥ {UMBRAL_KURT:g}  : {int(sobre.sum())}",
+            f"Ventanas > {u_acum:g}: {n_acum}",
+            f"Área acumulada : {acum[-1]:.3f}",
+        ]
+        if len(grupos) > 1:
+            lineas += ["", f"Grupos (cortes > {HUECO_GRUPO_H:g} h):"]
+            for n, (i0, i1, sub) in enumerate(grupos):
+                lineas.append(f"  {_letra(n)}: {hora(t[i0], '%d/%m %H:%M')} a {hora(t[i1 - 1], '%d/%m %H:%M')}"
+                              f"  acum {sub:.3f}")
+        lineas += [
             "",
             f"Ventanas ≥ {UMBRAL_KURT:g} ({self.zona.get()}):",
         ]
