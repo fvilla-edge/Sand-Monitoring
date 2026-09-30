@@ -46,6 +46,10 @@ UMBRAL_KURT = 5.0
 UMBRAL_ACUM_DEFAULT = 3.8
 ZONAS = {"Argentina (UTC-3)": timezone(timedelta(hours=-3), "ART"), "UTC": timezone.utc}
 MAX_EVENTOS_LISTA = 200
+# La seleccion se parte en grupos (A, B, ...) donde entre dos ventanas seguidas
+# hay mas de esto: cortes cortos (un reinicio de la captura) no la parten.
+HUECO_GRUPO_H = 1.0
+MAX_GRUPOS_TEXTO = 6
 DIA_S = 86400.0
 
 
@@ -70,6 +74,22 @@ def area_acumulada(area, kurt, umbral):
     area = np.asarray(area, dtype=float)
     kurt = np.asarray(kurt, dtype=float)
     return np.cumsum(np.where(kurt > umbral, area, 0.0))
+
+
+def partir_en_grupos(t_dias, acum, hueco_h=HUECO_GRUPO_H):
+    """Indices [inicio, fin) de cada grupo continuo (cortes > hueco_h entre
+    ventanas seguidas) y el subtotal de area acumulada de cada uno."""
+    cortes = np.nonzero(np.diff(t_dias) > hueco_h / 24.0)[0] + 1
+    bordes = np.concatenate(([0], cortes, [len(t_dias)]))
+    grupos = []
+    for i0, i1 in zip(bordes[:-1], bordes[1:]):
+        previo = acum[i0 - 1] if i0 > 0 else 0.0
+        grupos.append((int(i0), int(i1), float(acum[i1 - 1] - previo)))
+    return grupos
+
+
+def _letra(n):
+    return chr(ord("A") + n) if n < 26 else str(n + 1)
 
 
 def _es_csv(ruta: Path):
@@ -174,8 +194,12 @@ class VisorCSV:
                 self.archivos.append(f)
         self.archivos.sort(key=lambda p: p.name)
         self.listbox.delete(0, "end")
+        # un mismo nombre desde dos carpetas (p.ej. la misma hora en el disco y
+        # en la SD): se muestra tambien la carpeta para distinguirlas
+        repetidos = {n for n in (f.name for f in self.archivos)
+                     if sum(1 for g in self.archivos if g.name == n) > 1}
         for f in self.archivos:
-            self.listbox.insert("end", f.name)
+            self.listbox.insert("end", f"{f.parent.name}/{f.name}" if f.name in repetidos else f.name)
 
     def _seleccionar_todo(self):
         self.listbox.select_set(0, "end")
@@ -266,6 +290,7 @@ class VisorCSV:
         u_acum = self._umbral_acum()
         acum = area_acumulada(area, kurt, u_acum)
         n_acum = int((kurt > u_acum).sum())
+        grupos = partir_en_grupos(t, acum)
 
         def hora(x, fmt="%d/%m %H:%M:%S"):
             return mdates.num2date(x, tz=tz).strftime(fmt)
@@ -287,9 +312,19 @@ class VisorCSV:
                      transform=ax_kurt.transAxes, va="top", fontsize=9)
         ax_area.set_ylabel("Área")
         ax_acum.set_ylabel("Área acumulada")
-        ax_acum.text(0.01, 0.97,
-                     f"suma del área de {n_acum} ventanas con kurtosis > {u_acum:g}: {acum[-1]:.2f}",
-                     transform=ax_acum.transAxes, va="top", fontsize=9)
+        texto_acum = f"suma del área de {n_acum} ventanas con kurtosis > {u_acum:g}: {acum[-1]:.2f}"
+        if len(grupos) > 1:
+            partes = [f"{_letra(n)}: {g[2]:.2f}" for n, g in enumerate(grupos[:MAX_GRUPOS_TEXTO])]
+            if len(grupos) > MAX_GRUPOS_TEXTO:
+                partes.append("…")
+            texto_acum += "\n" + " · ".join(partes)
+            for n, (i0, _i1, _sub) in enumerate(grupos):
+                for ax in (ax_kurt, ax_area, ax_acum):
+                    if n > 0:
+                        ax.axvline(t[i0], color="gray", linestyle="--", linewidth=0.9)
+                ax_acum.text(t[i0], 0.02, f" {_letra(n)}", transform=ax_acum.get_xaxis_transform(),
+                             fontsize=9, fontweight="bold", va="bottom")
+        ax_acum.text(0.01, 0.97, texto_acum, transform=ax_acum.transAxes, va="top", fontsize=9)
         localizador = mdates.AutoDateLocator(tz=tz)
         ax_acum.xaxis.set_major_locator(localizador)
         # formato numerico (30/09) en vez de los meses en ingles de matplotlib
@@ -317,6 +352,13 @@ class VisorCSV:
             f"Ventanas ≥ {UMBRAL_KURT:g}  : {int(sobre.sum())}",
             f"Ventanas > {u_acum:g}: {n_acum}",
             f"Área acumulada : {acum[-1]:.3f}",
+        ]
+        if len(grupos) > 1:
+            lineas += ["", f"Grupos (cortes > {HUECO_GRUPO_H:g} h):"]
+            for n, (i0, i1, sub) in enumerate(grupos):
+                lineas.append(f"  {_letra(n)}: {hora(t[i0], '%d/%m %H:%M')} a {hora(t[i1 - 1], '%d/%m %H:%M')}"
+                              f"  acum {sub:.3f}")
+        lineas += [
             "",
             f"Ventanas ≥ {UMBRAL_KURT:g} ({self.zona.get()}):",
         ]

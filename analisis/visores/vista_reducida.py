@@ -57,14 +57,16 @@ class VistaReducida:
         c = self.acum[i0:i1] if self.acum is not None else np.zeros_like(t)
         paso = max(1, int(np.ceil(len(t) / self.MAX_PUNTOS)))
         if paso > 1:
-            ini = np.arange(0, len(t), paso)  # el ultimo grupo puede quedar incompleto
-            hueco = np.diff(t, prepend=t[0]) > 1.5 * self.ventana_s
+            # grupos de `paso` ventanas, pero cortando tambien en cada hueco: un
+            # grupo a caballo de un hueco quedaba con su hora promedio en el medio
+            # del hueco (se veia al unir horas de dias distintos)
+            huecos = np.nonzero(np.diff(t) > 1.5 * self.ventana_s)[0] + 1
+            ini = np.union1d(np.arange(0, len(t), paso), huecos)  # el ultimo grupo puede quedar incompleto
             tg = np.add.reduceat(t, ini) / np.diff(np.append(ini, len(t)))
-            hg = np.logical_or.reduceat(hueco, ini)
             a = np.maximum.reduceat(a, ini)
             k = np.maximum.reduceat(k, ini)
             c = np.maximum.reduceat(c, ini)  # creciente: el maximo del grupo es su ultimo valor
-            cortes = np.nonzero(hg)[0]  # la linea se corta antes de cada grupo con un hueco adentro
+            cortes = np.nonzero(np.isin(ini, huecos))[0]  # la linea se corta antes de cada grupo que empieza tras un hueco
             t_c, a_c, k_c, c_c = (np.insert(v, cortes, np.nan) for v in (tg, a, k, c))
         else:
             t_c, a_c, k_c, c_c = _cortar_en_huecos(t, a, k, c, ventana_s=self.ventana_s)
