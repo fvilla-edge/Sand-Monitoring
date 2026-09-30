@@ -275,24 +275,10 @@ Starlink real durante la transferencia (el ensayo fue por LAN).
 
 ## Después (no bloquea)
 
-- Opción 2 del relé: registro de lectura de los DIO en el bitstream propio
-  (confirmar el relé sin cortar la medición). **En prueba (2026-09-29), no
-  instalar en campo todavía.** Van juntos: bitstream de la rama `lectura-dio`
-  de `fpga_pitaya` (DIO2_P siempre entrada, pines en `0x40200078`, ID
-  `0x534D0001` en `0x4020007C`) y la rama `rele-sin-cortar` de este repo
-  (`mux_ps10_common.sh`, `control_starlink.sh`, `aplicar_objetivo.sh`: si el
-  ID está, leen el relé ahí sin frenar el modo evento y verifican cada 5 min;
-  si no, el camino de siempre con v0.94). Circuito del feedback: pad del
-  módulo → 1k → base NPN, colector a DIO2_P con 10k a 3.3V de la Pitaya.
-  - Bitstream a instalar: `7f23f7d` de `lectura-dio` (trae además el
-    **modo Master fijo**: el conector daisy chain sin nada ponía la placa en
-    Slave por ruido y el streaming-server no recibía muestras — los
-    crash-loops de campo del 29/9, 46/46 arranques en Slave fallaron). En
-    campo, después de instalar: nunca más `Detected Slave mode` en el
-    journal.
-  - `rele-sin-cortar` incluye `cfg.py` con varias claves por llamada (cambia
-    `scripts_campo_comun/`, compatible con una sola clave): el reconciliador
-    pasó de ~7s a ~1.6s de CPU por corrida (probado en rp-f0fd8c el 30/9).
+- Opción 2 del relé (lectura de los DIO en el bitstream propio, relé leído
+  sin cortar la medición) + modo Master fijo: **lista para campo, ver la
+  sección 0**. Circuito del feedback: pad del módulo → 1k → base NPN,
+  colector a DIO2_P con 10k a 3.3V de la Pitaya.
 - Piloto con sensor y arena real: **no se hace** (decidido 2026-09-28). La
   validación de la detección queda para los primeros días en campo: cruzar
   los eventos (`kurt_max_1min`, `me_eventos_hoy`, `evento_*.json`) con los
