@@ -34,3 +34,6 @@ Planilla de Ensayo PAD-42E.xlsx - BPE-2421.csv
 /paquetes_actualizacion/
 # API token de Losant (Files) para las pruebas de subida de CSV, nunca a git
 losant_api_token*.txt
+
+# Ejecutable del visor para Windows (analisis/visores/empaquetar/armar_exe_windows.sh)
+/visor_windows/

@@ -32,6 +32,7 @@ Uso:
 """
 import argparse
 import csv
+import gzip
 import json
 import statistics
 import sys
@@ -44,17 +45,29 @@ SALTO_RELOJ_S = 1.0
 
 
 def leer_filas(rutas):
+    """Filas de uno o mas CSV (.csv o .csv.gz, como los sube subir_csv_gcs.py).
+    Una fila incompleta se saltea: pasa con la ultima linea de la hora en
+    curso si el CSV se copio mientras la placa lo escribia."""
     filas = []
     for ruta in rutas:
-        with open(ruta, newline="") as f:
+        abrir = gzip.open if str(ruta).endswith(".gz") else open
+        with abrir(ruta, "rt", newline="") as f:
             for r in csv.DictReader(f):
-                filas.append({
-                    "wc": int(r["window_count"]),
-                    "t_ms": int(r["t_utc_ms"]),
-                    "ok": r["estado"] == "ok",
-                    "area": float(r["area"]) if r["area"] else None,
-                    "kurt": float(r["kurtosis"]) if r["kurtosis"] else None,
-                })
+                if not r.get("estado") or r.get("perdidas_fpga") is None:
+                    continue  # fila cortada: le faltan las ultimas columnas
+                try:
+                    fila = {
+                        "wc": int(r["window_count"]),
+                        "t_ms": int(r["t_utc_ms"]),
+                        "ok": r["estado"] == "ok",
+                        "area": float(r["area"]) if r["area"] else None,
+                        "kurt": float(r["kurtosis"]) if r["kurtosis"] else None,
+                    }
+                except (TypeError, ValueError):
+                    continue
+                if fila["ok"] and (fila["area"] is None or fila["kurt"] is None):
+                    continue
+                filas.append(fila)
     filas.sort(key=lambda r: r["t_ms"])
     return filas
 
@@ -128,7 +141,7 @@ def main():
 
     csvs = []
     for e in args.entradas:
-        csvs += sorted(e.glob("ventanas_*.csv")) if e.is_dir() else [e]
+        csvs += sorted(list(e.glob("ventanas_*.csv")) + list(e.glob("ventanas_*.csv.gz"))) if e.is_dir() else [e]
     if not csvs:
         sys.exit("no hay ventanas_*.csv en las entradas")
     if args.salida and not args.unir:
