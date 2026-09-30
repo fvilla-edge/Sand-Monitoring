@@ -81,6 +81,21 @@ Mismo ecosistema en las dos placas (v3.00 `e00665135`, build 57, Ubuntu
       RAM, temperatura, SD, `usb_montado`, `ntp_sincronizado`; en modo
       clásico `me_seg_sin_datos` crece, no alertar si `me_activo=false`).
 
+## 4b. CSV horarios a Google Cloud Storage (rama `csv-a-gcs`, en prueba)
+
+- [ ] `scripts_campo/subir_csv_gcs.py` + `scripts_campo/systemd/subir-csv-gcs.{service,timer}`
+      (`cp` a `/etc/systemd/system/`, `daemon-reload`, `enable --now subir-csv-gcs.timer`).
+      Sube cada hora cerrada, gzip 6 (~3 MB → ~0.7 MB, ~2.7 s de CPU),
+      a `csv_ventanas/<hostname>/AAAA/MM/DD/` del bucket
+      `vista-sandvision-scout-files`; sin internet reintenta cada 10 min.
+- [ ] `config_campo.json`: bloque `gcs` (en campo `prefijo: csv_ventanas`,
+      `dias_atras`: decidir cuántos días viejos subir la primera vez).
+- [ ] Clave de la cuenta de servicio `sandscout` en `/root/credenciales_gcs.json`
+      (`chmod 600`, nunca en git ni en el paquete de actualización: copiarla
+      aparte). La cuenta tiene **solo** `storage.objects.create` desde el
+      2026-09-29: puede subir, no leer, listar ni borrar. Bajar los CSV: consola
+      web de Google Cloud (o otra cuenta de lectura, solo en la PC).
+
 ## 5. Sistema
 
 - [ ] Journal persistente: ya lo tiene desde el 2026-08-03 con
