@@ -32,3 +32,5 @@ Planilla de Ensayo PAD-42E.xlsx - BPE-2421.csv
 
 # Paquetes de actualizacion armados en la PC (scripts_campo/actualizacion/)
 /paquetes_actualizacion/
+# API token de Losant (Files) para las pruebas de subida de CSV, nunca a git
+losant_api_token*.txt
