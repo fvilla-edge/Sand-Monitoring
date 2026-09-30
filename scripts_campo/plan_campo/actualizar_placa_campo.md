@@ -4,16 +4,42 @@ Lista viva de todo lo que la placa de campo tiene que recibir cuando se la
 iguale a la placa de pruebas (`rp-f0fd8c`). Cada cambio que afecte a campo se
 agrega acá en el momento, no al final.
 
-**Estado:** placa de campo **actualizada el 2026-09-29** (paquete
-`20260928_183636_a920731`, tag `campo-2026-09-29`): modo evento 24h, cartero
-nuevo, bitstream propio `dfabb64`. Las secciones 1-6 son las de esa primera
-actualización; la próxima está en la sección 0. Todo se prueba antes **solo en
-la placa de pruebas**, que no tiene relé real, sensor ni ESP32.
+**Estado (2026-09-30):** placa de campo con la **segunda actualización**
+(sección 0) desde el 30/9 18:05 UTC: paquete `20260930_171700_4740b4e`, tag
+`campo-2026-09-30`, bitstream `7f23f7d` (relé leído sin cortar la medición +
+modo Master fijo + protecciones). La primera fue el 29/9 (paquete
+`20260928_183636_a920731`, tag `campo-2026-09-29`, secciones 1-6). Todo se
+prueba antes **solo en la placa de pruebas**, que no tiene relé real, sensor
+ni ESP32.
+
+**Abierto al 30/9 noche:** el **disco USB de 1 TB dejó de enumerar** después
+de dos congelamientos (reset por watchdog del sistema, `0xF8000258` bit
+SWDT) que ocurrieron segundos después de subidas a GCS; GCS quedó **apagado**
+(ver 4b). Hasta el corte de energía de la caja (el disco cuelga de un hub con
+fuente externa, no se puede desenchufar a distancia) la medición sigue con dos
+cosas **temporales, en `/run`, que se borran solas al reiniciar**: un drop-in
+`/run/systemd/system/modo-evento.service.d/sd_temporal.conf` (CSV a
+`/root/eventos_sd`, sin señal cruda) y un `tmpfs` de 64 MB montado en
+`/mnt/usb` para que el anotador y el cartero publiquen a Losant (esa noche
+`usb_montado`/`usb_libre_mb` en Losant no son el disco real). Después del
+corte: que el disco monte, que el modo evento vuelva solo a
+`/mnt/usb/eventos`, y traer y borrar `/root/eventos_sd/*.csv`.
 
 Mismo ecosistema en las dos placas (v3.00 `e00665135`, build 57, Ubuntu
 24.04.4): no hace falta reflashear.
 
-## 0. Próxima actualización: relé sin cortar la medición + modo Master fijo
+## 0. Segunda actualización: relé sin cortar la medición + modo Master fijo
+
+**Aplicada el 2026-09-30 18:03-18:05 UTC**, `RESULTADO: ok`, en hora_on (en
+vez de esperar al día siguiente: justo antes, la verificación de 2h de las
+17:59 UTC había caído en un crash-loop en Slave con la versión vieja). Ensayada
+antes en la placa de pruebas **desde estado campo** (paquete del 29/9
+reinstalado): normal `ok` y con `FALLA_EN=lectura_rele` `revertida` al estado
+del 29/9 exacto, con los timers reanudados recién después de revertir. En
+campo: `lectura directa del rele: 0x40200078=0x00000000 (bit2=0 es 'on'),
+antena 192.168.100.1: responde`, arranques siempre en Master, reconciliador por
+lectura directa sin paradas de la medición. Falta ver la primera conmutación
+real (hora_off 20:15 UTC del 30/9) y la vuelta en hora_on.
 
 **Por qué:** con la versión del 29/9, cada verificación del relé (cada 2h,
 hora_off, hora_on) para y relanza el modo evento, y el relanzamiento es una
@@ -166,6 +192,20 @@ bitstream del 29/9 (`dfabb64`).
 
 ## 4b. CSV horarios a Google Cloud Storage (en `main` desde el 2026-09-30)
 
+**APAGADO EN CAMPO desde el 2026-09-30 18:20 UTC — no prenderlo hasta
+entender los congelamientos.** Se prendió ese día siguiendo los pasos de abajo
+(clave copiada, corrida manual 6/6 con md5 ok, timer habilitado) y la placa se
+congeló dos veces, las dos segundos después de terminar una subida (18:11:07 y
+18:17 UTC; reset por watchdog del sistema); tras la segunda el disco USB no
+volvió a enumerar. `systemctl disable --now subir-csv-gcs.timer` (la clave
+quedó en la placa). En la placa de pruebas la misma ráfaga (30 archivos
+seguidos, caché vacía) **no** congela: allá es un pendrive directo a la
+placa; en campo, el disco de 1 TB detrás de un hub con fuente externa, y la
+subida por Starlink tardaba ~13-18 s por archivo (~4 s en el laboratorio).
+Sospecha sin probar: escribir `gcs_subidos.txt` en el disco justo al terminar
+cada subida. Próxima prueba, si se decide: una sola subida a mano, mirando, con
+el registro de subidos en la SD.
+
 Se prende **aparte**, después de la actualización de la sección 0: el paquete
 ya instala los archivos y las units, pero no habilita el timer.
 
@@ -178,13 +218,13 @@ ya instala los archivos y las units, pero no habilita el timer.
 - [ ] `config_campo.json`: bloque `gcs` (lo agrega la fusión de config del
       paquete con `prefijo: campo/csv_ventanas` y `dias_atras: 7`: la primera
       vez sube hasta 7 días viejos, de a 6 horas por corrida).
-- [ ] Prender, en hora_on: copiar la clave (`scp credenciales.json
+- [x] Prender, en hora_on (hecho el 30/9 y vuelto a apagar, ver arriba): copiar la clave (`scp credenciales.json
       root@<IP_CAMPO>:/root/credenciales_gcs.json`, `chmod 600`), correr una vez
       a mano (`systemctl start subir-csv-gcs.service`,
       `journalctl -u subir-csv-gcs -n 10`), ver los primeros `.csv.gz` en la
       consola de Google Cloud bajo `campo/csv_ventanas/rp-f0fbda/`, y recién
       ahí `systemctl enable --now subir-csv-gcs.timer`.
-- [ ] Clave de la cuenta de servicio `sandscout` en `/root/credenciales_gcs.json`
+- [x] Clave de la cuenta de servicio `sandscout` en `/root/credenciales_gcs.json` (copiada el 30/9)
       (`chmod 600`, nunca en git ni en el paquete de actualización: copiarla
       aparte). La cuenta tiene **solo** `storage.objects.create` desde el
       2026-09-29: puede subir, no leer, listar ni borrar. Bajar los CSV: consola
