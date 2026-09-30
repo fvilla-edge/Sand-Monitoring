@@ -13,7 +13,7 @@
 #
 # Uso:   bash /root/actualizacion/<id>/aplicar_actualizacion.sh
 # Ver:   journalctl -u actualizacion -f
-# Ensayo de falla (solo pruebas): FALLA_EN=instalar|verificar bash ... aplicar_actualizacion.sh
+# Ensayo de falla (solo pruebas): FALLA_EN=instalar|lectura_rele|verificar bash ... aplicar_actualizacion.sh
 # Solo chequeos previos, sin cambiar nada (sirve con un paquete ya enviado,
 # aunque su propio aplicar sea mas viejo):
 #   SOLO_CHEQUEAR=1 bash aplicar_actualizacion.sh /root/actualizacion/<id>
