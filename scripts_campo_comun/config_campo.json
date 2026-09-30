@@ -44,7 +44,7 @@
   "gcs": {
     "habilitado": true,
     "bucket": "vista-sandvision-scout-files",
-    "prefijo": "csv_ventanas",
+    "prefijo": "campo/csv_ventanas",
     "credenciales_file": "/root/credenciales_gcs.json",
     "subidos_file": "/mnt/usb/gcs_subidos.txt",
     "dias_atras": 7

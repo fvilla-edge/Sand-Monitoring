@@ -4,14 +4,79 @@ Lista viva de todo lo que la placa de campo tiene que recibir cuando se la
 iguale a la placa de pruebas (`rp-f0fd8c`). Cada cambio que afecte a campo se
 agrega acá en el momento, no al final.
 
-**Estado:** placa de campo con **freeze** desde el 2026-09-11 (solo se le
-aplicó `dummy0` el 22/9 como excepción). Corre el modo clásico
-(`capturar_stream.py` a pedido + control de Starlink + panel solar). Todo lo
-de abajo está probado **solo en la placa de pruebas**, que no tiene relé,
-sensor ni ESP32. No se actualiza hasta que el usuario lo decida.
+**Estado:** placa de campo **actualizada el 2026-09-29** (paquete
+`20260928_183636_a920731`, tag `campo-2026-09-29`): modo evento 24h, cartero
+nuevo, bitstream propio `dfabb64`. Las secciones 1-6 son las de esa primera
+actualización; la próxima está en la sección 0. Todo se prueba antes **solo en
+la placa de pruebas**, que no tiene relé real, sensor ni ESP32.
 
 Mismo ecosistema en las dos placas (v3.00 `e00665135`, build 57, Ubuntu
 24.04.4): no hace falta reflashear.
+
+## 0. Próxima actualización: relé sin cortar la medición + modo Master fijo
+
+**Por qué:** con la versión del 29/9, cada verificación del relé (cada 2h,
+hora_off, hora_on) para y relanza el modo evento, y el relanzamiento es una
+tirada de dados: el `streaming-server` arranca en **Slave** si el conector
+daisy chain (sin nada conectado) levanta ruido, y en Slave no llegan muestras.
+El 29/9: 46/46 arranques en Slave fallaron, crash-loops de ~17 min (18:02 UTC)
+y ~45 min (20:03 UTC) sin medir.
+
+**Qué va en el paquete** (uno solo, armado desde `main`):
+
+- Bitstream `7f23f7d` de `lectura-dio` (`fpga_pitaya`): lectura de los DIO en
+  `0x40200078` con DIO2_P siempre entrada, ID `0x534D0001` en `0x4020007C` y
+  `daisy_slave` fijo en 0 (siempre Master; la detección queda solo en el LED
+  `led_o[2]`). sha256 del `.bin`: `498e54b40fd6a834e8435ac76d95ce253c41c908173a8435d2e7f9dc48b5e817`.
+- `main` con `rele-sin-cortar` mergeado: el relé se lee sin frenar el modo
+  evento y `cfg.py` lee la config en una llamada (reconciliador ~1.6s de CPU
+  en vez de ~7s). Sin el ID del bitstream, vuelve solo al camino viejo (v0.94).
+- Van también los archivos de GCS (sección 4b) pero **quedan inactivos**:
+  `aplicar_actualizacion.sh` solo habilita `modo-evento` y
+  `resumen-modo-evento`. GCS se prende después, aparte (sección 4b).
+
+**Antes:** placa de pruebas OK con este bitstream y estos scripts (desde el
+30/9: solo `Detected Master`, 0 paradas por relé, CSV completos); merge de
+`rele-sin-cortar` a `main`; inventario de campo (sección 6, paso 2); armar el
+paquete (paso 3); después de enviarlo, `grep -c SOLO_CHEQUEAR` sobre el
+`aplicar_actualizacion.sh` **de la copia que quedó en la placa** antes de usar
+el chequeo previo (el 29/9 una copia vieja sin el flag aplicó de verdad).
+
+**Aplicar** en hora_on, igual que la sección 6 (pasos 4-6).
+
+**Primeros 5 minutos después de aplicar (crítico):** la lectura nueva del
+relé nunca se probó con el relé y el transistor reales (en la placa de
+pruebas coincidió con v0.94 sobre el mismo pin con 10k a 3.3V). En el log de
+la actualización, o en `journalctl -u starlink-reconciliador -n 5`, tiene que
+estar:
+
+```
+lectura directa del rele (bitstream propio con 0x40200078), sin frenar la captura
+OK: el rele ya esta en 'on' (verificado por HW), no hago nada
+```
+
+Si en cambio dice `desacuerdo detectado (se pidio 'on', HW en 'off')` con
+Starlink andando, la lectura está al revés: el **próximo** ciclo (5 min)
+pulsaría el relé y apagaría Starlink. En ese caso, antes de 5 min:
+`systemctl stop starlink-reconciliador.timer` y volver atrás (sección 6).
+
+**Verificar después:**
+
+- `/opt/redpitaya/bin/monitor 0x4020007C` = `0x534d0001` (bitstream nuevo cargado).
+- `journalctl -u modo-evento | grep Detected`: solo `Detected Master mode`
+  desde la actualización.
+- `/root/logs_campo/modo_evento_reinicios.log`: sin
+  `parada_por_verificacion_rele` nuevas (antes: cada 2h y en cada hora_on/off).
+- `starlink-reconciliador`: `lectura directa` en cada corrida, ~1.6s de CPU
+  (`Consumed ...` en el journal).
+- **hora_off real (20:15 UTC):** `OK: rele ahora en 'off' (confirmado por HW)`
+  sin frenar la medición (el CSV de la hora 20 con ~72000 ventanas). Es la
+  primera conmutación real con la lectura nueva.
+- **hora_on siguiente (11:55 UTC):** lo mismo en `on`, y el cartero al día.
+- CSV por hora ~72000 ventanas, 0 saltadas.
+
+**Volver atrás:** `revertir_actualizacion.sh` (sección 6) deja scripts y
+bitstream del 29/9 (`dfabb64`).
 
 ## 1. FPGA
 
@@ -81,15 +146,26 @@ Mismo ecosistema en las dos placas (v3.00 `e00665135`, build 57, Ubuntu
       RAM, temperatura, SD, `usb_montado`, `ntp_sincronizado`; en modo
       clásico `me_seg_sin_datos` crece, no alertar si `me_activo=false`).
 
-## 4b. CSV horarios a Google Cloud Storage (rama `csv-a-gcs`, en prueba)
+## 4b. CSV horarios a Google Cloud Storage (en `main` desde el 2026-09-30)
+
+Se prende **aparte**, después de la actualización de la sección 0: el paquete
+ya instala los archivos y las units, pero no habilita el timer.
 
 - [ ] `scripts_campo/subir_csv_gcs.py` + `scripts_campo/systemd/subir-csv-gcs.{service,timer}`
-      (`cp` a `/etc/systemd/system/`, `daemon-reload`, `enable --now subir-csv-gcs.timer`).
-      Sube cada hora cerrada, gzip 6 (~3 MB → ~0.7 MB, ~2.7 s de CPU),
-      a `csv_ventanas/<hostname>/AAAA/MM/DD/` del bucket
-      `vista-sandvision-scout-files`; sin internet reintenta cada 10 min.
-- [ ] `config_campo.json`: bloque `gcs` (en campo `prefijo: csv_ventanas`,
-      `dias_atras`: decidir cuántos días viejos subir la primera vez).
+      (los instala el paquete). Sube cada hora cerrada, gzip 6
+      (~3 MB → ~0.7 MB, ~2.7 s de CPU), a
+      `campo/csv_ventanas/<hostname>/AAAA/MM/DD/` del bucket
+      `vista-sandvision-scout-files` (la placa de pruebas usa
+      `pruebas/csv_ventanas/`); sin internet reintenta cada 10 min.
+- [ ] `config_campo.json`: bloque `gcs` (lo agrega la fusión de config del
+      paquete con `prefijo: campo/csv_ventanas` y `dias_atras: 7`: la primera
+      vez sube hasta 7 días viejos, de a 6 horas por corrida).
+- [ ] Prender, en hora_on: copiar la clave (`scp credenciales.json
+      root@<IP_CAMPO>:/root/credenciales_gcs.json`, `chmod 600`), correr una vez
+      a mano (`systemctl start subir-csv-gcs.service`,
+      `journalctl -u subir-csv-gcs -n 10`), ver los primeros `.csv.gz` en la
+      consola de Google Cloud bajo `campo/csv_ventanas/rp-f0fbda/`, y recién
+      ahí `systemctl enable --now subir-csv-gcs.timer`.
 - [ ] Clave de la cuenta de servicio `sandscout` en `/root/credenciales_gcs.json`
       (`chmod 600`, nunca en git ni en el paquete de actualización: copiarla
       aparte). La cuenta tiene **solo** `storage.objects.create` desde el
