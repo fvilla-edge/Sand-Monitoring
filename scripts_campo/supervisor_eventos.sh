@@ -1,8 +1,14 @@
 #!/bin/bash
 # supervisor_eventos.sh — pasos antes/despues de cada arranque de
 # modo-evento.service (systemd hace el relanzamiento en si).
-#   antes:   no deja arrancar si DESTINO esta en /mnt/usb y no hay USB montado;
-#            poda core dumps viejos (mismo limite que relanzar_captura.sh)
+#   antes:   espera de uptime al boot; poda core dumps viejos (mismo limite
+#            que relanzar_captura.sh)
+#   arrancar: (ExecStart) elige el destino y hace exec de capturar_eventos.py.
+#            Si DESTINO esta en /mnt/usb y no hay disco montado, mide igual:
+#            solo el CSV de ventanas en la SD (rutas.eventos_sd), con la señal
+#            cruda siempre pausada, y lo anota en /run/modo-evento/destino
+#            para el anotador. automount_usb.sh relanza el servicio al volver
+#            el disco.
 #   despues: anota en modo_evento_reinicios.log como termino cada corrida
 #            (systemd pasa SERVICE_RESULT/EXIT_CODE/EXIT_STATUS a ExecStopPost)
 set -u
@@ -12,6 +18,13 @@ MAX_CORE_DUMPS=$(python3 "$CFG" limpieza.max_core_dumps)
 mkdir -p "$LOG_DIR"
 # la crea control_starlink.sh justo antes de detener el servicio
 MARCA_PARADA_RELE=/run/modo_evento_parada_rele
+# destino real de la corrida en curso: "<carpeta>" o "<carpeta> sin_disco"
+DESTINO_ACTUAL=/run/modo-evento/destino
+
+# true si /mnt/usb es un disco de verdad (no la carpeta comun de la SD ni un tmpfs)
+disco_montado() {
+    mountpoint -q /mnt/usb && [ "$(findmnt -n -o FSTYPE /mnt/usb)" != tmpfs ]
+}
 
 case "${1:-}" in
 antes)
@@ -29,19 +42,6 @@ antes)
         echo "[supervisor] placa recien encendida (${uptime_s}s), espero hasta ${UPTIME_MIN_S}s de uptime"
         sleep $((UPTIME_MIN_S - uptime_s))
     fi
-    # destino en el storage externo: exigir que /mnt/usb sea un montaje real
-    # (sin USB es una carpeta comun de la SD). Salir con error = systemd
-    # reintenta en RestartSec, hasta que el USB aparezca.
-    case "${DESTINO:-}" in
-    /mnt/usb|/mnt/usb/*)
-        if ! mountpoint -q /mnt/usb; then
-            echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) sin_usb: /mnt/usb no esta montado, no se arranca (destino $DESTINO)" \
-                >> "$LOG_DIR/modo_evento_reinicios.log"
-            echo "[supervisor] /mnt/usb no esta montado — no se arranca para no escribir en la SD" >&2
-            exit 1
-        fi
-        ;;
-    esac
     n=$(find "$LOG_DIR" -maxdepth 1 -name 'core*' -type f 2>/dev/null | wc -l)
     if [ "$n" -gt "$MAX_CORE_DUMPS" ]; then
         find "$LOG_DIR" -maxdepth 1 -name 'core*' -type f -printf '%T@ %p\n' \
@@ -49,7 +49,33 @@ antes)
         echo "[supervisor] podados $((n - MAX_CORE_DUMPS)) core dump(s) viejos (limite: $MAX_CORE_DUMPS)"
     fi
     ;;
+arrancar)
+    # Sin disco (se cayo el 30/9 y no volvio hasta cortar la energia) antes no
+    # se arrancaba y la placa quedaba sin medir hasta que alguien entraba por
+    # SSH. Ahora se mide igual, solo el CSV (~3 MB/h, la SD tiene ~19 GB):
+    # --minimo-libre-mb enorme = la cruda queda pausada desde el arranque.
+    destino="$DESTINO"
+    extra=()
+    marca=""
+    case "${DESTINO:-}" in
+    /mnt/usb|/mnt/usb/*)
+        if ! disco_montado; then
+            destino=$(python3 "$CFG" rutas.eventos_sd)
+            extra=(--minimo-libre-mb 100000000)
+            marca=" sin_disco"
+            echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) sin_disco: /mnt/usb sin disco, CSV a $destino sin cruda" \
+                >> "$LOG_DIR/modo_evento_reinicios.log"
+            echo "[supervisor] /mnt/usb sin disco — se mide igual, solo el CSV en $destino (cruda pausada)"
+        fi
+        ;;
+    esac
+    mkdir -p "$(dirname "$DESTINO_ACTUAL")" "$destino"
+    echo "$destino$marca" > "$DESTINO_ACTUAL"
+    exec /usr/bin/python3 -u /root/scripts_campo/capturar_eventos.py \
+        --umbral "$UMBRAL" --destino "$destino" "${extra[@]}"
+    ;;
 despues)
+    rm -f "$DESTINO_ACTUAL"
     # control_starlink.sh detiene el servicio para leer el rele (a veces todavia
     # en la espera de uptime del boot, que termina en resultado=signal): no es
     # una caida, se anota sin "resultado=" para que no la cuente el anotador
@@ -64,7 +90,7 @@ despues)
         >> "$LOG_DIR/modo_evento_reinicios.log"
     ;;
 *)
-    echo "uso: $0 antes|despues" >&2
+    echo "uso: $0 antes|arrancar|despues" >&2
     exit 2
     ;;
 esac

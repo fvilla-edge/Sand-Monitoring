@@ -74,9 +74,16 @@ scripts_campo/capturar_eventos.py (lanzador)
   (`resultado=core-dump estado=SEGV` = caída, `success` = parada limpia).
   Core dumps en `/root/logs_campo`, podados al límite de `config_campo.json`.
 - **Destino: `/mnt/usb/eventos`** (storage externo, automontaje de
-  `scripts_campo_comun/udev-automount/`), **nunca la SD**:
-  - al arrancar, si `/mnt/usb` no es un montaje real no arranca (queda
-    `sin_usb` en el log de reinicios) y reintenta cada 60s hasta que aparezca;
+  `scripts_campo_comun/udev-automount/`). La señal cruda **nunca va a la SD**:
+  - al arrancar (`supervisor_eventos.sh arrancar`, el `ExecStart`), si
+    `/mnt/usb` no es un disco (carpeta de la SD o `tmpfs`) **mide igual, solo
+    el CSV de ventanas**, en `rutas.eventos_sd` (`/root/eventos_sd`) con la
+    cruda siempre pausada (~3MB/h; queda `sin_disco` en el log de reinicios).
+    El destino real queda en `/run/modo-evento/destino` (`<carpeta>` o
+    `<carpeta> sin_disco`) para el anotador. Cuando el disco vuelve,
+    `automount_usb.sh` relanza `modo-evento` y vuelve solo a `/mnt/usb/eventos`
+    (desde el 2026-10-01; antes no arrancaba y la placa quedaba sin medir
+    hasta entrar por SSH, como el 30/9 y el 1/10 con el disco de campo caído);
   - durante la corrida, `capturar_eventos` verifica antes de cada escritura
     que el destino siga en el mismo dispositivo; si el USB se desconecta
     (el automontaje hace `umount -l` y `/mnt/usb` pasa a ser carpeta de la

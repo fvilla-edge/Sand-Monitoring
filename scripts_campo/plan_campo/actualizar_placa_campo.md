@@ -189,6 +189,31 @@ bitstream del 29/9 (`dfabb64`).
       RAM, temperatura, SD, `usb_montado`, `ntp_sincronizado`; en modo
       clásico `me_seg_sin_datos` crece, no alertar si `me_activo=false`).
 
+## 4a. Medir sin disco y avisar a Losant (rama `medir-sin-disco`, 2026-10-01)
+
+Probado en la placa de pruebas el 1/10 (sacando y volviendo a montar el
+pendrive con `mnt-usb-automount@sda1`, y parando la captura).
+
+- [ ] `supervisor_eventos.sh` + `modo-evento.service` (`ExecStart` nuevo:
+      `supervisor_eventos.sh arrancar`): sin disco mide igual, solo el CSV en
+      `/root/eventos_sd` sin cruda; reemplaza a mano el drop-in temporal del
+      30/9 (`rearmar_temporal.sh` deja de hacer falta).
+- [ ] `automount_usb.sh`: al montar el disco relanza `modo-evento` si estaba
+      sin disco.
+- [ ] `resumen_modo_evento.py` (anotador): sin disco deja los resúmenes en
+      `/run/losant_pendientes` (RAM) en vez de guardarlos solo en memoria;
+      `usb_montado` ya no da `true` con un `tmpfs`; atributo nuevo
+      **`me_estado`** = `midiendo` / `midiendo_sin_disco` / `no_midiendo`
+      (no midiendo = servicio parado o más de 30 s sin una ventana nueva).
+- [ ] `panel_solar_ble/publicar_losant.py` (cartero): manda los resúmenes de
+      `/mnt/usb/losant_pendientes` y de `/run/losant_pendientes`.
+- [ ] `config_campo.json`: `rutas.eventos_sd` (lo agrega la fusión).
+- [ ] Losant: atributo `me_estado` (String) en el Device de campo (y en
+      `test_SC`), y un bloque en el dashboard que lo muestre. Sin mail.
+- Instalar con la captura parada antes del `daemon-reload` (el paquete ya lo
+  hace así). Si se instala con el drop-in temporal todavía puesto (antes del
+  corte de energía), el drop-in pisa el `ExecStart` nuevo hasta el reinicio.
+
 ## 4b. Google Cloud Storage: DESCARTADO (2026-10-01)
 
 Decisión del 1/10: no se suben los CSV a la nube desde la placa. Se bajan a

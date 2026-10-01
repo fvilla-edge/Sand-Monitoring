@@ -43,6 +43,13 @@ mount)
     mkdir -p "$MONTAJE"
     if mount "$DEV" "$MONTAJE" 2>>"$LOG"; then
         log "$DEV ($TIPO) montado en $MONTAJE."
+        # el modo evento estaba midiendo sin disco (solo CSV en la SD,
+        # supervisor_eventos.sh arrancar): relanzarlo para que vuelva al disco.
+        # --no-block: no esperar al stop/start dentro de esta unidad de udev.
+        if grep -q " sin_disco$" /run/modo-evento/destino 2>/dev/null; then
+            systemctl restart --no-block modo-evento
+            log "modo-evento estaba sin disco: relanzado para volver a $MONTAJE."
+        fi
     else
         log "$DEV ($TIPO) fallo al montar en $MONTAJE — ver linea anterior para el error de mount. Si el filesystem quedo sucio por una desconexion abrupta, correr fsck a mano (ver scripts_campo/plan_campo/troubleshooting.md)."
         exit 1
