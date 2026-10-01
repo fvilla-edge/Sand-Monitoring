@@ -1,0 +1,12 @@
+# subir-csv-gcs.timer — cada 5 min corre subir-csv-gcs.service. Las horas
+# cerradas se suben en la primera corrida con internet (de noche se acumulan
+# en el USB y salen al volver Starlink).
+[Unit]
+Description=Subida periodica de los CSV del modo evento a GCS
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=5min
+
+[Install]
+WantedBy=timers.target

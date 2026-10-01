@@ -1,0 +1,24 @@
+# subir-csv-gcs.service — sube a Google Cloud Storage los CSV horarios de
+# ventanas ya cerrados (scripts_campo/subir_csv_gcs.py). Oneshot, lo dispara
+# subir-csv-gcs.timer; sin internet falla rapido y reintenta en la proxima.
+#
+# Nice=19 / IOSchedulingClass=idle / CPUQuota=25%: que nunca le compita a
+# capturar_eventos (el gzip era el pico de CPU de cada subida).
+#
+# Necesita la clave de la cuenta de servicio (solo storage.objects.create) en
+# gcs.credenciales_file (/root/credenciales_gcs.json, chmod 600, fuera de git).
+#
+# Instalar:
+#   cp /root/scripts_campo/systemd/subir-csv-gcs.{service,timer} /etc/systemd/system/
+#   systemctl daemon-reload && systemctl enable --now subir-csv-gcs.timer
+[Unit]
+Description=Subida de los CSV horarios del modo evento a Google Cloud Storage
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -u /root/scripts_campo/subir_csv_gcs.py
+Nice=19
+IOSchedulingClass=idle
+CPUQuota=25%
+TimeoutStartSec=30min
