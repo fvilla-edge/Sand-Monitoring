@@ -7,7 +7,15 @@ hora se cerro, comprimidos con gzip (~3 MB -> ~0.7 MB).
 Lo corre subir-csv-gcs.timer cada pocos minutos (oneshot): si no hay
 internet (de noche, sin Starlink) falla rapido y los CSV quedan para la
 proxima corrida, sin cola aparte: el CSV del USB ES la cola, y
-gcs.subidos_file registra los que ya subieron.
+gcs.registro_sd registra los que ya subieron.
+
+- El registro de subidos va a la SD, nunca al USB: en campo los dos
+  congelamientos con reset por watchdog del 30/9 fueron segundos despues de
+  una subida (justo al escribir+fsync del registro en el disco USB, que
+  despues no volvio a enumerar). gcs.subidos_file (el registro viejo en
+  /mnt/usb) solo se LEE, si existe, para no volver a subir lo ya subido.
+- Carga acotada: pocos archivos por corrida, pausa entre archivos y gzip 1
+  (~4x menos CPU que el 6, ~20% mas grande; el tramo caro era el gzip).
 
 - Hora cerrada = mas vieja que la hora UTC actual y sin escrituras en los
   ultimos MARGEN_CIERRE_S (capturar_eventos rota el archivo a la hora justa).
@@ -47,10 +55,13 @@ import cfg  # noqa: E402 (import tardio, necesita el sys.path de arriba)
 DIR_EVENTOS = "/mnt/usb/eventos"
 MARGEN_CIERRE_S = 120
 TIMEOUT_S = 60
-# gzip 6: en el ARM de la placa ~2.7s por CSV contra ~14.7s del 9, por 0.6%
-# mas de tamaño (medido 2026-09-29); el 9 coincidia con perdidas de muestras.
-NIVEL_GZIP = 6
-MAX_POR_CORRIDA = 6
+# gzip 1: en PC 0.024s contra 0.109s del 6 por CSV, 1.0 MB contra 0.82 MB
+# (medido 2026-10-01). En la placa el 6 tardaba ~2.7-5.7s, el 9 ~14.7s y
+# coincidia con perdidas de muestras: menos CPU vale mas que 180 KB.
+NIVEL_GZIP = 1
+# 2 por corrida cada 10 min = 12/h: la noche (~16 h) sale en ~1.5 h.
+MAX_POR_CORRIDA = 2
+PAUSA_ENTRE_S = 30
 SCOPE = "https://www.googleapis.com/auth/devstorage.read_write"
 
 
@@ -141,12 +152,14 @@ def main():
         log("/mnt/usb no esta montado, nada que subir")
         return 0
 
-    subidos_file = cfg.obtener("gcs.subidos_file")
-    try:
-        with open(subidos_file) as f:
-            subidos = set(l.strip() for l in f if l.strip())
-    except FileNotFoundError:
-        subidos = set()
+    registro = cfg.obtener("gcs.registro_sd")
+    subidos = set()
+    for ruta in (registro, cfg.obtener("gcs.subidos_file")):
+        try:
+            with open(ruta) as f:
+                subidos.update(l.strip() for l in f if l.strip())
+        except FileNotFoundError:
+            pass
 
     pendientes = horas_cerradas(cfg.obtener("gcs.dias_atras"), subidos)
     if not pendientes:
@@ -167,7 +180,9 @@ def main():
         return 0
 
     n_ok = 0
-    for t, ruta in pendientes[:args.max]:
+    for i, (t, ruta) in enumerate(pendientes[:args.max]):
+        if i:
+            time.sleep(PAUSA_ENTRE_S)
         objeto = f"{base}/{t:%Y/%m/%d}/{os.path.basename(ruta)}.gz"
         with open(ruta, "rb") as f:
             crudo = f.read()
@@ -178,7 +193,7 @@ def main():
         except (OSError, urllib.error.URLError, RuntimeError) as e:
             log(f"{objeto}: fallo ({e}) — se corta la corrida, se reintenta en la proxima")
             break
-        with open(subidos_file, "a") as f:
+        with open(registro, "a") as f:
             f.write(os.path.basename(ruta) + "\n")
             f.flush()
             os.fsync(f.fileno())

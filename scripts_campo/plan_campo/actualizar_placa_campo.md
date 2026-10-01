@@ -206,6 +206,19 @@ Sospecha sin probar: escribir `gcs_subidos.txt` en el disco justo al terminar
 cada subida. Próxima prueba, si se decide: una sola subida a mano, mirando, con
 el registro de subidos en la SD.
 
+**Rediseño (rama `gcs-registro-sd`, 2026-10-01, sin probar en placa todavía):**
+- [ ] Registro de subidos en la SD (`gcs.registro_sd` = `/root/gcs_subidos.txt`,
+      clave nueva: la fusión de config la agrega sola). El registro viejo
+      `gcs.subidos_file` en `/mnt/usb` solo se lee, nunca se escribe.
+- [ ] Carga acotada: gzip 1 (antes 6), 2 archivos por corrida (antes 6),
+      30 s de pausa entre archivos, unit con `Nice=19` y `CPUQuota=25%`.
+- [ ] Probado primero en `rp-f0fd8c`; en campo, primera vez a mano mirando
+      (`/root/prueba_gcs/evidencia.sh on`) antes de volver a habilitar el timer.
+- Ya no se suben desde la placa: los CSV del disco caído (30/9 18:37 →
+  1/10 11:59, guardados en la SD) se subieron **desde la PC** el 1/10 al
+  mismo lugar; la hora 18 del 30/9 parcial como `ventanas_20260930_18_sd.csv.gz`
+  (el tramo 18:00-18:17 del disco sube con el nombre normal si el disco vuelve).
+
 Se prende **aparte**, después de la actualización de la sección 0: el paquete
 ya instala los archivos y las units, pero no habilita el timer.
 

@@ -2,7 +2,8 @@
 # ventanas ya cerrados (scripts_campo/subir_csv_gcs.py). Oneshot, lo dispara
 # subir-csv-gcs.timer; sin internet falla rapido y reintenta en la proxima.
 #
-# Nice=10 / IOSchedulingClass=idle: que nunca le compita a capturar_eventos.
+# Nice=19 / IOSchedulingClass=idle / CPUQuota=25%: que nunca le compita a
+# capturar_eventos (el gzip era el pico de CPU de cada subida).
 #
 # Necesita la clave de la cuenta de servicio (solo storage.objects.create) en
 # gcs.credenciales_file (/root/credenciales_gcs.json, chmod 600, fuera de git).
@@ -17,6 +18,7 @@ After=network-online.target
 [Service]
 Type=oneshot
 ExecStart=/usr/bin/python3 -u /root/scripts_campo/subir_csv_gcs.py
-Nice=10
+Nice=19
 IOSchedulingClass=idle
+CPUQuota=25%
 TimeoutStartSec=30min

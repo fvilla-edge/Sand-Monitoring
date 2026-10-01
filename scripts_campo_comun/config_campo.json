@@ -47,6 +47,7 @@
     "prefijo": "campo/csv_ventanas",
     "credenciales_file": "/root/credenciales_gcs.json",
     "subidos_file": "/mnt/usb/gcs_subidos.txt",
+    "registro_sd": "/root/gcs_subidos.txt",
     "dias_atras": 7
   },
   "captura_defaults": {
