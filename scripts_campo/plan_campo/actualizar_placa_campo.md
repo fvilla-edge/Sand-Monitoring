@@ -15,7 +15,7 @@ ni ESP32.
 **Abierto al 30/9 noche:** el **disco USB de 1 TB dejó de enumerar** después
 de dos congelamientos (reset por watchdog del sistema, `0xF8000258` bit
 SWDT) que ocurrieron segundos después de subidas a GCS; GCS quedó **apagado**
-(y el 1/10 se descartó, ver 4b). Hasta el corte de energía de la caja (el disco cuelga de un hub con
+(el 1/10 se rediseñó, ver 4b). Hasta el corte de energía de la caja (el disco cuelga de un hub con
 fuente externa, no se puede desenchufar a distancia) la medición sigue con dos
 cosas **temporales, en `/run`, que se borran solas al reiniciar**: un drop-in
 `/run/systemd/system/modo-evento.service.d/sd_temporal.conf` (CSV a
@@ -58,8 +58,6 @@ y ~45 min (20:03 UTC) sin medir.
   evento y `cfg.py` lee la config en una llamada (reconciliador ~1.6s de CPU
   en vez de ~7s), con las protecciones contra una lectura del relé al revés
   (ver abajo). Sin el ID del bitstream, vuelve solo al camino viejo (v0.94).
-- (Hasta el 1/10 iban también los archivos de GCS, inactivos; descartado,
-  ver sección 4b.)
 
 **Antes:** placa de pruebas OK con este bitstream y estos scripts (desde el
 30/9: solo `Detected Master`, 0 paradas por relé, CSV completos); merge de
@@ -221,26 +219,38 @@ Falta probar en campo la vuelta del disco (después del corte de energía).
   hace así). Con el drop-in temporal puesto, el drop-in pisa el `ExecStart`
   nuevo hasta el reinicio: en campo se sacó a mano.
 
-## 4b. Google Cloud Storage: DESCARTADO (2026-10-01)
+## 4b. CSV horarios a Google Cloud Storage (rama `gcs-v2`, 2026-10-01)
 
-Decisión del 1/10: no se suben los CSV a la nube desde la placa. Se bajan a
-mano cuando hacen falta y se suben a Google Drive desde la PC. El código
-(`subir_csv_gcs.py`, `subir-csv-gcs.{service,timer}`, bloque `gcs` del
-config) salió del repo. Historia: se prendió en campo el 30/9 y la placa se
-congeló dos veces segundos después de una subida (reset por watchdog); tras
-la segunda el disco USB no volvió a enumerar. Rediseño sin probar en campo en
-la rama `gcs-registro-sd` (se conserva).
+Historia: se prendió en campo el 30/9 y la placa se congeló dos veces
+segundos después de una subida (reset por watchdog); tras la segunda el disco
+USB no volvió a enumerar. El 1/10 se lo sacó del sistema y ese mismo día se
+decidió volver a ponerlo, armado bien primero en la placa de pruebas y en
+campo **paso a paso**. El primer congelamiento encaja con `systemctl enable
+--now` y el watchdog de 5 s (sección 5, ya en 30 s); **el segundo (18:17, justo
+tras una subida) sigue sin explicar**.
 
-El paquete **no borra** lo que ya está instalado. Limpieza a mano en cada placa:
+Qué cambió respecto del 30/9 (`subir_csv_gcs.py`, `subir-csv-gcs.{service,timer}`):
+- Registro de subidos en la SD (`gcs.registro_sd` = `/root/gcs_subidos.txt`);
+  el viejo de `/mnt/usb` solo se lee.
+- Carga acotada: gzip 1, 2 archivos por corrida, 30 s entre archivos,
+  `Nice=19`, `CPUQuota=25%`.
+- Dos orígenes: `/mnt/usb/eventos` si hay disco y `/root/eventos_sd` (placa
+  midiendo sin disco, sección 4a), estos con sufijo `_sd`
+  (`ventanas_AAAAMMDD_HH_sd.csv.gz`) para no chocar con la misma hora del disco.
+- Placa de pruebas: instalado el 1/10 18:21 UTC; los CSV viejos se marcaron
+  como subidos (el usuario no quiere re-subidas de prueba).
 
-- [ ] Campo (`rp-f0fbda`, timer ya deshabilitado desde el 30/9):
-      `systemctl disable --now subir-csv-gcs.timer`, borrar
-      `/etc/systemd/system/subir-csv-gcs.{service,timer}`,
-      `/root/scripts_campo/subir_csv_gcs.py`, la clave
-      `/root/credenciales_gcs.json`, `/mnt/usb/gcs_subidos.txt` y
-      `/root/prueba_gcs/`; sacar el bloque `gcs` de `config_campo.json`
-      (`fusionar_config.py` no borra claves); `systemctl daemon-reload`.
-- [x] Placa de pruebas (`rp-f0fd8c`): limpiada el 2026-10-01.
+Pasos en campo (uno por vez, mirando; `evidencia.sh on` en las subidas):
+- [ ] 1. Instalar script, units, clave (`/root/credenciales_gcs.json`, 600) y
+      bloque `gcs` del config **con la captura parada**; `daemon-reload` sin
+      habilitar el timer.
+- [ ] 2. Una subida a mano: `python3 /root/scripts_campo/subir_csv_gcs.py --max 1`.
+      Los CSV de la SD de campo del 1/10 12-18 UTC **sí se suben** (decisión
+      del usuario).
+- [ ] 3. Varias corridas a mano seguidas (de a 2).
+- [ ] 4. Habilitar el timer **con la captura parada**.
+- [ ] 5. Con el disco de vuelta (después del corte de energía): una subida a
+      mano desde `/mnt/usb/eventos` mirando, antes de dejarlo solo.
 
 ## 5. Sistema
 
