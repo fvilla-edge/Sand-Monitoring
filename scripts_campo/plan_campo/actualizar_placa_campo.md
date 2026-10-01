@@ -212,6 +212,21 @@ El paquete **no borra** lo que ya está instalado. Limpieza a mano en cada placa
 
 ## 5. Sistema
 
+- [ ] **Watchdog de systemd 5 s → 30 s** (`RuntimeWatchdogSec=30s` en
+      `/etc/systemd/system.conf`, se aplica con `systemctl daemon-reexec`
+      **con `modo-evento` parado**). Causa probada en la placa de pruebas el
+      2026-10-01: algunas operaciones de systemd tardan casi 5 s en estas
+      placas (`list-unit-files` 4.5-4.75 s con la captura parada, ~5 s con la
+      captura corriendo; `daemon-reload` ~3 s). Con 5 s, `list-unit-files`
+      con la captura corriendo reinició la placa por watchdog al primer
+      intento; con 30 s, 3 de 3 sin reinicio. Explica los reinicios del
+      1/10 (limpieza de GCS) y [probable] el del 30/9 18:11 (`systemctl
+      enable --now`). Lab: aplicado el 1/10. Campo: pendiente.
+      Mientras no esté en campo: **no correr `systemctl enable/disable/
+      daemon-reload/list-unit-files` en campo con la captura corriendo**
+      (`aplicar_actualizacion.sh` ya para la captura antes del
+      `daemon-reload`).
+
 - [ ] Journal persistente: ya lo tiene desde el 2026-08-03 con
       `SystemMaxUse=50M`; la de pruebas usa 200M (decidir, `setup_placa.md`
       sec.3c).
