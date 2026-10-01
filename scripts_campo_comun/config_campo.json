@@ -41,14 +41,6 @@
   "modo_evento": {
     "minimo_libre_mb": 2048
   },
-  "gcs": {
-    "habilitado": true,
-    "bucket": "vista-sandvision-scout-files",
-    "prefijo": "campo/csv_ventanas",
-    "credenciales_file": "/root/credenciales_gcs.json",
-    "subidos_file": "/mnt/usb/gcs_subidos.txt",
-    "dias_atras": 7
-  },
   "captura_defaults": {
     "decimacion": 32,
     "duracion_chunk_min": 1.0,
