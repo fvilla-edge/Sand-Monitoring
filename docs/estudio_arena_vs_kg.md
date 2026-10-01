@@ -7,7 +7,8 @@ Iniciado el 2026-10-01. Script: `analisis/estudio_arena/metricas_purgas.py`.
 
 ## 1. Qué es la verdad de campo
 
-- Planilla del pozo (`Planilla de Ensayo PAD-7.xlsx - BPO-2072.csv`).
+- Planilla del pozo (`datos_campo/planillas/Planilla de Ensayo PAD-7.xlsx - BPO-2072.csv`,
+  fuera de git como el resto de `datos_campo/`).
 - **La medición real son las purgas del BBS**: "Purga de BBS del pozo BPO-2072,
   Aporte: N kg de arena", con su hora. Entre una purga y la siguiente salieron
   N kg, sin saber cuándo dentro de ese intervalo.
