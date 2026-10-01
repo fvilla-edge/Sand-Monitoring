@@ -15,7 +15,7 @@ ni ESP32.
 **Abierto al 30/9 noche:** el **disco USB de 1 TB dejó de enumerar** después
 de dos congelamientos (reset por watchdog del sistema, `0xF8000258` bit
 SWDT) que ocurrieron segundos después de subidas a GCS; GCS quedó **apagado**
-(ver 4b). Hasta el corte de energía de la caja (el disco cuelga de un hub con
+(y el 1/10 se descartó, ver 4b). Hasta el corte de energía de la caja (el disco cuelga de un hub con
 fuente externa, no se puede desenchufar a distancia) la medición sigue con dos
 cosas **temporales, en `/run`, que se borran solas al reiniciar**: un drop-in
 `/run/systemd/system/modo-evento.service.d/sd_temporal.conf` (CSV a
@@ -58,9 +58,8 @@ y ~45 min (20:03 UTC) sin medir.
   evento y `cfg.py` lee la config en una llamada (reconciliador ~1.6s de CPU
   en vez de ~7s), con las protecciones contra una lectura del relé al revés
   (ver abajo). Sin el ID del bitstream, vuelve solo al camino viejo (v0.94).
-- Van también los archivos de GCS (sección 4b) pero **quedan inactivos**:
-  `aplicar_actualizacion.sh` solo habilita `modo-evento` y
-  `resumen-modo-evento`. GCS se prende después, aparte (sección 4b).
+- (Hasta el 1/10 iban también los archivos de GCS, inactivos; descartado,
+  ver sección 4b.)
 
 **Antes:** placa de pruebas OK con este bitstream y estos scripts (desde el
 30/9: solo `Detected Master`, 0 paradas por relé, CSV completos); merge de
@@ -190,45 +189,26 @@ bitstream del 29/9 (`dfabb64`).
       RAM, temperatura, SD, `usb_montado`, `ntp_sincronizado`; en modo
       clásico `me_seg_sin_datos` crece, no alertar si `me_activo=false`).
 
-## 4b. CSV horarios a Google Cloud Storage (en `main` desde el 2026-09-30)
+## 4b. Google Cloud Storage: DESCARTADO (2026-10-01)
 
-**APAGADO EN CAMPO desde el 2026-09-30 18:20 UTC — no prenderlo hasta
-entender los congelamientos.** Se prendió ese día siguiendo los pasos de abajo
-(clave copiada, corrida manual 6/6 con md5 ok, timer habilitado) y la placa se
-congeló dos veces, las dos segundos después de terminar una subida (18:11:07 y
-18:17 UTC; reset por watchdog del sistema); tras la segunda el disco USB no
-volvió a enumerar. `systemctl disable --now subir-csv-gcs.timer` (la clave
-quedó en la placa). En la placa de pruebas la misma ráfaga (30 archivos
-seguidos, caché vacía) **no** congela: allá es un pendrive directo a la
-placa; en campo, el disco de 1 TB detrás de un hub con fuente externa, y la
-subida por Starlink tardaba ~13-18 s por archivo (~4 s en el laboratorio).
-Sospecha sin probar: escribir `gcs_subidos.txt` en el disco justo al terminar
-cada subida. Próxima prueba, si se decide: una sola subida a mano, mirando, con
-el registro de subidos en la SD.
+Decisión del 1/10: no se suben los CSV a la nube desde la placa. Se bajan a
+mano cuando hacen falta y se suben a Google Drive desde la PC. El código
+(`subir_csv_gcs.py`, `subir-csv-gcs.{service,timer}`, bloque `gcs` del
+config) salió del repo. Historia: se prendió en campo el 30/9 y la placa se
+congeló dos veces segundos después de una subida (reset por watchdog); tras
+la segunda el disco USB no volvió a enumerar. Rediseño sin probar en campo en
+la rama `gcs-registro-sd` (se conserva).
 
-Se prende **aparte**, después de la actualización de la sección 0: el paquete
-ya instala los archivos y las units, pero no habilita el timer.
+El paquete **no borra** lo que ya está instalado. Limpieza a mano en cada placa:
 
-- [ ] `scripts_campo/subir_csv_gcs.py` + `scripts_campo/systemd/subir-csv-gcs.{service,timer}`
-      (los instala el paquete). Sube cada hora cerrada, gzip 6
-      (~3 MB → ~0.7 MB, ~2.7 s de CPU), a
-      `campo/csv_ventanas/<hostname>/AAAA/MM/DD/` del bucket
-      `vista-sandvision-scout-files` (la placa de pruebas usa
-      `pruebas/csv_ventanas/`); sin internet reintenta cada 10 min.
-- [ ] `config_campo.json`: bloque `gcs` (lo agrega la fusión de config del
-      paquete con `prefijo: campo/csv_ventanas` y `dias_atras: 7`: la primera
-      vez sube hasta 7 días viejos, de a 6 horas por corrida).
-- [x] Prender, en hora_on (hecho el 30/9 y vuelto a apagar, ver arriba): copiar la clave (`scp credenciales.json
-      root@<IP_CAMPO>:/root/credenciales_gcs.json`, `chmod 600`), correr una vez
-      a mano (`systemctl start subir-csv-gcs.service`,
-      `journalctl -u subir-csv-gcs -n 10`), ver los primeros `.csv.gz` en la
-      consola de Google Cloud bajo `campo/csv_ventanas/rp-f0fbda/`, y recién
-      ahí `systemctl enable --now subir-csv-gcs.timer`.
-- [x] Clave de la cuenta de servicio `sandscout` en `/root/credenciales_gcs.json` (copiada el 30/9)
-      (`chmod 600`, nunca en git ni en el paquete de actualización: copiarla
-      aparte). La cuenta tiene **solo** `storage.objects.create` desde el
-      2026-09-29: puede subir, no leer, listar ni borrar. Bajar los CSV: consola
-      web de Google Cloud (o otra cuenta de lectura, solo en la PC).
+- [ ] Campo (`rp-f0fbda`, timer ya deshabilitado desde el 30/9):
+      `systemctl disable --now subir-csv-gcs.timer`, borrar
+      `/etc/systemd/system/subir-csv-gcs.{service,timer}`,
+      `/root/scripts_campo/subir_csv_gcs.py`, la clave
+      `/root/credenciales_gcs.json`, `/mnt/usb/gcs_subidos.txt` y
+      `/root/prueba_gcs/`; sacar el bloque `gcs` de `config_campo.json`
+      (`fusionar_config.py` no borra claves); `systemctl daemon-reload`.
+- [x] Placa de pruebas (`rp-f0fd8c`): limpiada el 2026-10-01.
 
 ## 5. Sistema
 

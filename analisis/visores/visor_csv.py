@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 visor_csv.py — Visor de los CSV horarios del modo evento
-(`ventanas_AAAAMMDD_HH.csv`, o `.csv.gz` como quedan en Google Cloud Storage):
+(`ventanas_AAAAMMDD_HH.csv`, o `.csv.gz` comprimidos):
 kurtosis, área y área acumulada (suma del área de las ventanas con kurtosis
 mayor a un umbral editable, 3.8 por defecto) de cada ventana de 50ms, una o
 varias horas unidas, con la hora en Argentina o UTC. Es el que se arma como ejecutable portable

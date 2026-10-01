@@ -45,7 +45,7 @@ SALTO_RELOJ_S = 1.0
 
 
 def leer_filas(rutas):
-    """Filas de uno o mas CSV (.csv o .csv.gz, como los sube subir_csv_gcs.py).
+    """Filas de uno o mas CSV (.csv o .csv.gz).
     Una fila incompleta se saltea: pasa con la ultima linea de la hora en
     curso si el CSV se copio mientras la placa lo escribia."""
     filas = []
