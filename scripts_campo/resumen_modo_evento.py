@@ -4,7 +4,8 @@ resumen_modo_evento.py — "anotador" del reporte a Losant del modo evento.
 
 Cada minuto resume las filas nuevas del CSV de ventanas que escribe
 capturar_eventos (docs/modo_evento.md) y deja el resumen como un archivo
-chico en /mnt/usb/losant_pendientes/<t_ms>.json, haya o no internet. El
+chico en /mnt/usb/losant_pendientes/<t_ms>.json (sin disco: en
+/run/losant_pendientes, RAM), haya o no internet. El
 "cartero" (panel_solar_ble/publicar_losant.py, la unica conexion MQTT al
 Device) los manda a Losant con su hora original cuando hay conexion y los
 borra. Asi el buffer nocturno (sin Starlink) no es un caso aparte: de
@@ -39,9 +40,18 @@ import cfg  # noqa: E402 (import tardio, necesita el sys.path de arriba)
 
 SERVICIO = "modo-evento"
 INTERVALO_S = 60
-# Resumenes que se guardan en RAM si /mnt/usb no esta montado (nunca a la SD):
-# 1440 = un dia de minutos. Pasado eso se descartan los mas viejos.
+# Sin disco los resumenes van a esta carpeta en RAM (tmpfs, nunca a la SD):
+# el cartero la lee igual que la del disco, asi Losant se entera de que la
+# placa mide sin disco o no mide. Se pierde con un reinicio.
+PENDIENTES_SIN_DISCO = "/run/losant_pendientes"
+# Si ni eso se puede escribir, quedan en memoria del proceso: 1440 = un dia
+# de minutos. Pasado eso se descartan los mas viejos.
 MAX_EN_RAM = 1440
+# Destino real de la corrida en curso (supervisor_eventos.sh arrancar):
+# "<carpeta>" o "<carpeta> sin_disco"
+DESTINO_ACTUAL = "/run/modo-evento/destino"
+# Sin una ventana nueva en este tiempo, se reporta que no esta midiendo
+SIN_DATOS_MAX_S = 30
 LOG_REINICIOS = os.path.join(cfg.obtener("rutas.log_dir"), "modo_evento_reinicios.log")
 # La crea/borra capturar_eventos al pausar/reanudar la señal cruda por espacio
 BANDERA_CRUDA_PAUSADA = "/run/modo-evento/cruda_pausada"
@@ -77,7 +87,31 @@ def estado_servicio():
         umbral = float(env["UMBRAL"])
     except (KeyError, ValueError):
         umbral = None
-    return activo, env.get("DESTINO"), umbral
+    destino, sin_disco = env.get("DESTINO"), False
+    try:
+        with open(DESTINO_ACTUAL) as f:
+            partes = f.read().split()
+        if activo and partes:
+            destino, sin_disco = partes[0], "sin_disco" in partes[1:]
+    except OSError:
+        pass
+    return activo, destino, umbral, sin_disco
+
+
+def disco_montado():
+    """True si /mnt/usb es un disco de verdad (no la carpeta de la SD ni un tmpfs)."""
+    if not os.path.ismount("/mnt/usb"):
+        return False
+    tipo = None
+    try:
+        with open("/proc/mounts") as f:
+            for linea in f:   # el ultimo montaje sobre /mnt/usb es el que se ve
+                partes = linea.split()
+                if len(partes) > 2 and partes[1] == "/mnt/usb":
+                    tipo = partes[2]
+    except OSError:
+        pass
+    return tipo != "tmpfs"
 
 
 def ruta_csv(destino, hora):
@@ -264,7 +298,7 @@ def ntp_sincronizado():
 def salud_placa():
     """Atributos de salud de la placa (no de la medicion). Todas lecturas de
     /proc, /sys o statvfs: no agregan carga que perturbe el streaming."""
-    usb_montado = os.path.ismount("/mnt/usb")
+    usb_montado = disco_montado()
     data = {
         # memoria RAM disponible en MB (~300 en regimen; bajando = algo pierde memoria)
         "ram_disp_mb": ram_disponible_mb(),
@@ -291,7 +325,18 @@ def salud_placa():
     return {k: v for k, v in data.items() if v is not None}
 
 
-def resumir(filas, lector, contadores, activo, umbral, ahora):
+def estado_medicion(activo, sin_disco, n_filas, seg_sin_datos):
+    """Una sola palabra para Losant: "midiendo", "midiendo_sin_disco" (solo
+    el CSV en la SD, sin señal cruda) o "no_midiendo"."""
+    # Se juzga por la ultima ventana vista y no por las filas del minuto: al
+    # cambiar de destino o arrancar el anotador el primer minuto viene vacio.
+    sin_datos = n_filas == 0 if seg_sin_datos is None else seg_sin_datos > SIN_DATOS_MAX_S
+    if not activo or sin_datos:
+        return "no_midiendo"
+    return "midiendo_sin_disco" if sin_disco else "midiendo"
+
+
+def resumir(filas, lector, contadores, activo, umbral, ahora, sin_disco=False):
     ok = [f for f in filas if f[4] == "ok" and f[3] is not None]
     kurts = [f[3] for f in ok]
     areas = [f[2] for f in ok if f[2] is not None]
@@ -320,6 +365,8 @@ def resumir(filas, lector, contadores, activo, umbral, ahora):
     if lector.ultima_fila is not None:
         # segundos desde la ultima ventana medida: señal de vida (lo normal es <2)
         data["me_seg_sin_datos"] = max(0.0, round((t_ms - lector.ultima_fila[0]) / 1000, 1))
+    # "midiendo" / "midiendo_sin_disco" (solo CSV en la SD, sin cruda) / "no_midiendo"
+    data["me_estado"] = estado_medicion(activo, sin_disco, len(filas), data.get("me_seg_sin_datos"))
     if ok:
         ultima = ok[-1]
         data.update({
@@ -350,12 +397,12 @@ def resumir(filas, lector, contadores, activo, umbral, ahora):
 
 
 def guardar(pendientes_dir, en_ram, resumen):
-    """Deja el resumen en el USB (archivo atomico por minuto). Sin USB montado
-    lo guarda en RAM y lo baja apenas vuelva: nunca escribe en la SD."""
+    """Deja el resumen en el USB (archivo atomico por minuto). Sin disco lo
+    deja en PENDIENTES_SIN_DISCO (RAM): nunca escribe en la SD."""
     en_ram.append(resumen)
     del en_ram[:-MAX_EN_RAM]
-    if not os.path.ismount("/mnt/usb"):
-        return
+    if not disco_montado():
+        pendientes_dir = PENDIENTES_SIN_DISCO
     try:
         os.makedirs(pendientes_dir, exist_ok=True)
         while en_ram:
@@ -383,9 +430,9 @@ def main():
     proximo = time.monotonic()
     while True:
         ahora = datetime.now(timezone.utc)
-        activo, destino, umbral = estado_servicio()
+        activo, destino, umbral, sin_disco = estado_servicio()
         filas = lector.filas_nuevas(destino, ahora) if destino else []
-        resumen = resumir(filas, lector, contadores, activo, umbral, ahora)
+        resumen = resumir(filas, lector, contadores, activo, umbral, ahora, sin_disco)
         guardar(args.pendientes, en_ram, resumen)
         log(f"resumen: {resumen['data']}")
         # monotonic: un salto de reloj por NTP (sin RTC) no adelanta ni frena el ciclo

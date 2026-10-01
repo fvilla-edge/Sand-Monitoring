@@ -129,6 +129,8 @@ DIRECTORIO_CAPTURA = cfg.obtener("captura_defaults.directorio")
 # el "cartero" que los manda con su hora original y los borra. De noche (sin
 # Starlink) se acumulan y salen al reconectar.
 PENDIENTES_DIR = "/mnt/usb/losant_pendientes"
+# sin disco el anotador deja los resumenes aca (RAM); se mandan igual
+PENDIENTES_DIRS = (PENDIENTES_DIR, "/run/losant_pendientes")
 # Losant limita a 30 mensajes cada 15s por Device: 1 por segundo deja margen
 # para el resto de los informes. Una noche (~900 resumenes) se pone al dia en
 # ~15 min.
@@ -159,8 +161,8 @@ _proceso_captura = None   # Popen de la captura "capturar" en curso, o None
 _estado_equipo = "standby"  # ultimo valor de "device_state" confirmado publicado a Losant
 _ultimo_envio_estado = 0.0  # time.monotonic() del ultimo publish exitoso (cambio o refresco periodico)
 _ultimo_envio_disco = 0.0   # time.monotonic() del ultimo publish exitoso de espacio libre en el USB
-_cola_pendientes = []       # nombres de archivo en PENDIENTES_DIR por mandar, del mas viejo al mas nuevo
-_ultimo_listado = 0.0       # time.monotonic() del ultimo listado de PENDIENTES_DIR
+_cola_pendientes = []       # (carpeta, nombre) en PENDIENTES_DIRS por mandar, del mas viejo al mas nuevo
+_ultimo_listado = 0.0       # time.monotonic() del ultimo listado de PENDIENTES_DIRS
 _ultimo_pendiente = 0.0     # time.monotonic() del ultimo resumen mandado
 _modo_evento_cache = (0.0, False)  # (time.monotonic() del chequeo, activo)
 _esp32_avisado = False      # ya se aviso que no hay ESP32 (se vuelve a avisar si aparece y se pierde)
@@ -393,15 +395,17 @@ def _enviar_pendientes(dispositivo):
         if ahora - _ultimo_listado < PENDIENTES_RELISTAR_S:
             return
         _ultimo_listado = ahora
-        try:
-            nombres = [n for n in os.listdir(PENDIENTES_DIR) if n.endswith(".json") and n[0].isdigit()]
-        except OSError:
-            return   # sin USB o sin carpeta todavia
-        _cola_pendientes = sorted(nombres, key=lambda n: int(n.split(".")[0]))
+        cola = []
+        for carpeta in PENDIENTES_DIRS:
+            try:
+                cola += [(carpeta, n) for n in os.listdir(carpeta) if n.endswith(".json") and n[0].isdigit()]
+            except OSError:
+                pass   # sin USB o sin carpeta todavia
+        _cola_pendientes = sorted(cola, key=lambda c: int(c[1].split(".")[0]))
         if not _cola_pendientes:
             return
-    nombre = _cola_pendientes[0]
-    ruta = os.path.join(PENDIENTES_DIR, nombre)
+    carpeta, nombre = _cola_pendientes[0]
+    ruta = os.path.join(carpeta, nombre)
     try:
         with open(ruta) as f:
             resumen = json.load(f)
@@ -412,8 +416,8 @@ def _enviar_pendientes(dispositivo):
     except (OSError, ValueError, KeyError, TypeError) as exc:
         print(f"Pendiente ilegible {nombre} ({exc}), se aparta a .malos/", file=sys.stderr)
         try:
-            os.makedirs(os.path.join(PENDIENTES_DIR, ".malos"), exist_ok=True)
-            os.replace(ruta, os.path.join(PENDIENTES_DIR, ".malos", nombre))
+            os.makedirs(os.path.join(carpeta, ".malos"), exist_ok=True)
+            os.replace(ruta, os.path.join(carpeta, ".malos", nombre))
         except OSError:
             pass
         _cola_pendientes.pop(0)
