@@ -66,7 +66,7 @@ TIMEOUT_S = 60
 # (medido 2026-10-01). En la placa el 6 tardaba ~2.7-5.7s, el 9 ~14.7s y
 # coincidia con perdidas de muestras: menos CPU vale mas que 180 KB.
 NIVEL_GZIP = 1
-# 2 por corrida cada 10 min = 12/h: la noche (~16 h) sale en ~1.5 h.
+# 2 por corrida cada 5 min (timer) = 24/h: la noche (~16 h) sale en ~40 min.
 MAX_POR_CORRIDA = 2
 PAUSA_ENTRE_S = 30
 SCOPE = "https://www.googleapis.com/auth/devstorage.read_write"

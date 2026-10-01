@@ -248,7 +248,8 @@ Pasos en campo (uno por vez, mirando; `evidencia.sh on` en las subidas):
       Los CSV de la SD de campo del 1/10 12-18 UTC **sí se suben** (decisión
       del usuario).
 - [ ] 3. Varias corridas a mano seguidas (de a 2).
-- [ ] 4. Habilitar el timer **con la captura parada**.
+- [ ] 4. Habilitar el timer (cada 5 min, decisión del usuario) **con la captura parada**:
+      mañana 2/10 en hora_on (11:55 UTC), mirando la primera tanda de la noche.
 - [ ] 5. Con el disco de vuelta (después del corte de energía): una subida a
       mano desde `/mnt/usb/eventos` mirando, antes de dejarlo solo.
 
