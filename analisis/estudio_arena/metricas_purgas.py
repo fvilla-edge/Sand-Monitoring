@@ -20,12 +20,13 @@ docs/estudio_arena_vs_kg.md): no cambiarlas sin anotarlo ahi.
 
 Uso:
     .venv/bin/python analisis/estudio_arena/metricas_purgas.py PLANILLA.csv CARPETA_CSV [CARPETA_CSV ...] [--salida tabla.csv]
+        [--kurt 3.5]   umbral de kurtosis de M1/M2 (default KURT_UMBRAL, el fijado)
 """
 import argparse, csv, glob, os, re
 from datetime import datetime, timedelta, timezone
 import numpy as np
 
-KURT_UMBRAL = 3.8
+KURT_UMBRAL = 3.5            # 3.8 hasta el 2/10 (ver docs/estudio_arena_vs_kg.md sec.8)
 EXC_LENTO = 0.008
 BASE_PCT = 20
 BASE_MIN = 90
@@ -94,6 +95,7 @@ def base_area(T, A):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("planilla"); ap.add_argument("carpetas", nargs="+"); ap.add_argument("--salida")
+    ap.add_argument("--kurt", type=float, default=KURT_UMBRAL)
     a = ap.parse_args()
     datos, purgas = leer_planilla(a.planilla)
     T, A, K = leer_ventanas(a.carpetas)
@@ -113,7 +115,7 @@ def main():
         fila = dict(inicio_local=t0.astimezone(timezone(timedelta(hours=HUSO_PLANILLA_H))).strftime("%d/%m %H:%M"),
                     fin_local=t1.astimezone(timezone(timedelta(hours=HUSO_PLANILLA_H))).strftime("%d/%m %H:%M"),
                     kg="" if kg is None else kg, horas=round(horas, 1), horas_con_dato=round(cob, 1),
-                    M1=int(np.sum(k > KURT_UMBRAL)), M2=round(float(e[k > KURT_UMBRAL].sum()), 2),
+                    M1=int(np.sum(k > a.kurt)), M2=round(float(e[k > a.kurt].sum()), 2),
                     M3=round(float(e[e > EXC_LENTO].sum()), 0), kurt_max=round(float(k.max()), 1),
                     orificio_mm=round(prom("orif"), 3), p_boca_psi=round(prom("pboca"), 0),
                     p_linea_psi=round(prom("plin"), 0), horas_en_control=len(en_control),
