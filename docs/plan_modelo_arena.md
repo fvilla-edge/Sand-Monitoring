@@ -131,3 +131,8 @@ Falla el intervalo de 12 kg (lo ve tranquilo) y el de 3 kg (lo ve media).
   (30/9 16 completa, 17 y la 1ra parte de 18 UTC): el intervalo 30/9 14:00 → 1/10 04:00
   pasa de 155 a 144 picos extrapolados (predicción retro 5.0 → 4.7 kg). Las filas del
   registro de v1 calculadas antes quedan como están (regla 2).
+- **2026-10-02 ~16:30 UTC** — Estudio re-corrido con `csv_por_dia` (sin purgas nuevas; solo +1.2 h
+  en el intervalo de 12 kg y +0.2 h en el de 3 kg). Se mantiene todo: N(k>3.5) error LOO 3.0 kg
+  (antes 2.9) contra 4.2 sin sensor; el de 12 kg sigue sin verse (estimado 5.6 kg, 0 horas "mucha").
+  Aparece N(k>8) como la mejor del barrido (2.5 kg, r = 0.99, azar 8 %), pero es elegida a posteriori
+  y es la que sobreestimó ×7 la purga de 500 kg del 21/9: no se cambia la métrica del modelo (regla 3).
