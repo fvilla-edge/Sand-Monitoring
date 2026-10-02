@@ -26,7 +26,7 @@ Con los CSV del modo evento (`ventanas_*.csv`, una fila por ventana de 50 ms):
 
 | Métrica | Qué mide | Definición |
 |---|---|---|
-| M1 | picos, cantidad | ventanas con kurtosis > 3.8 |
+| M1 | picos, cantidad | ventanas con kurtosis > 3.5 (hasta el 2/10: > 3.8, ver sec.8) |
 | M2 | picos, energía | suma de (área − base) en esas ventanas |
 | M3 | "lomas" lentas | suma de (área − base) en las ventanas con exceso > 0.008 |
 
@@ -49,7 +49,11 @@ gaussiana) o un fenómeno del flujo (gas, caudal) que no es arena.
 | 29/09 14:00 | 30/09 02:00 | **15** | 12 | 11.0 | 190 | 14.68 | 3690 | 0 | 421 |
 | 30/09 02:00 | 30/09 14:00 | **3** | 12 | 11.7 | 85 | 3.44 | 734 | 6 | 455 |
 | 30/09 14:00 | 01/10 04:00 | **12** | 14 | 12.4 | 79 | 2.84 | 1142 | 0 | 417 |
-| 01/10 04:00 | (abierto) | ? | — | 5.0 hasta 09:00 | 176 | 30.84 | 9582 | 3 | 492 |
+| 01/10 04:00 | 01/10 20:00 | **14** | 16 | 15.7 | 210 | 33.77 | 10034 | 6 | 447 |
+| 01/10 20:00 | (abierto) | ? | — | 13.8 hasta 2/10 09:45 | 29 | 0.89 | 212 | 3 | 438 |
+
+Columnas M1/M2 de esta tabla con kurtosis > 3.8. Con > 3.5 (sec.8), en el mismo orden:
+M1 = 189, 354, 141, 137, 384, 56; M2 = 6.22, 26.66, 4.83, 4.36, 60.76, 1.49.
 
 Lo que se ve con 3 intervalos completos (no alcanza para una curva):
 - M1 no separa 3 kg de 12 kg (85 contra 79).
@@ -69,6 +73,29 @@ hasta el 1/10 09:00 local (es un piso: se suma lo que pase hasta la purga):
 
 Lectura: si la purga da ~10-20 kg, las lomas no son arena (gana M1); si da
 ~40 kg o más, la arena densa no se ve con kurtosis (ganan M2/M3).
+
+### 4.1 Resultado (2026-10-02, planilla del 2/10)
+
+Purga que cierra D: **1/10 20:00 local, 14 kg** (intervalo de 16 h, no de 12 h;
+15.7 h con dato). Con los datos completos de D: M1 = 210, M2 = 33.8, M3 = 10034.
+
+| Métrica | Predicción con D completo | Real | Error |
+|---|---|---|---|
+| M1 | 0.085 × 210 = **~18 kg** | 14 | +28 % |
+| M2 | 1.43 × 33.8 = ~48 kg | 14 | +245 % |
+| M3 | 0.0054 × 10034 = ~54 kg | 14 | +290 % |
+
+Conclusión según la lectura fijada de antemano: **ganó M1; la loma del 1/10
+05:47-07:00 local no fue arena** (o, si lo fue, no en la proporción que
+supone M3). Esto no prueba que M1 funcione: con 4 intervalos completos su
+correlación con los kg es r = 0.70 (no significativa) y el factor kg/M1 varía
+4 veces entre intervalos (0.035 a 0.15).
+
+Dato a preguntar: el 64 % de las ventanas > 3.5 de D (254 de 384) cayeron en
+**una sola hora, 1/10 06 local**, dentro de la loma, con kurtosis hasta 30.5.
+Esa noche BPO-2072 entró en control a las 03:00 local, pero la noche
+siguiente (2/10 03:00) entró en control igual y no hubo ráfaga: el cambio de
+control solo no la explica.
 
 ## 5. Otros parámetros que pueden influir (registrarlos en cada intervalo)
 
@@ -113,7 +140,128 @@ Del sensor:
 3. Con ~10-15 intervalos: ajustar kg = a·M para cada métrica, ver la
    dispersión, y probar si caudal / control / orificio explican el resto.
 
+## 8. Umbral de M1 bajado a 3.5 (2026-10-02)
+
+Decisión del usuario (2/10), tomada **después** de ver el resultado de D, así que
+3.5 no tiene el valor de prueba que tuvo 3.8 en la sec.4. Valor por defecto
+nuevo en `metricas_purgas.py` (`KURT_UMBRAL = 3.5`; `--kurt 3.8` reproduce lo anterior).
+
+Comparación con los 4 intervalos completos (factor kg = a·M ajustado por el
+origen; LOO = cada intervalo predicho con el factor de los otros 3):
+
+| Umbral | M1: r | M1: error medio LOO | M2: error medio LOO |
+|---|---|---|---|
+| 3.8 | 0.70 | 3.7 kg | 11.0 kg |
+| 3.5 | 0.72 | 3.5 kg | 11.1 kg |
+
+Lectura: con estos datos 3.5 y 3.8 dan prácticamente lo mismo (la diferencia
+está muy por debajo de lo que 4 puntos pueden distinguir). Lo que cambia es el
+piso: de noche tranquila hay ~4 ventanas/h > 3.5 contra ~2/h > 3.8, así que
+M1(3.5) suma ~50 ventanas de fondo en un intervalo de 12 h sin arena. Si se
+ajusta kg = a·M1 + b, el término b absorbe ese piso.
+
+Chequeo de confusión (2/10): con Starlink encendido hay más ventanas > 3.5
+por hora (mediana 11/h contra 6/h apagado), pero en las 5 conmutaciones del
+relé con datos (hora antes contra hora después) no hay escalón (ej. 2/10
+11:55 UTC: 4 contra 3). La diferencia es por la hora del día (operación),
+no por el Starlink. Además el área y la kurtosis se calculan en la FPGA
+con la señal completa: las pérdidas del streaming (que sí dependen del
+Starlink, ver memoria sec.195) no las afectan.
+
+### 8.1 Predicción para el intervalo abierto E (registrada 2026-10-02 ~13 UTC)
+
+E arranca en la purga del 1/10 20:00 local. Hasta el 2/10 09:45 local
+(13.8 h): M1(3.5) = 56, M1(3.8) = 29, M2(3.5) = 1.49, M3 = 212. Es el
+intervalo más tranquilo de todo el registro.
+
+Factores de los 4 completos: M1(3.5) 0.041 kg/ventana, M1(3.8) 0.075.
+- Hasta ahora: ~2.3 kg (3.5) y ~2.2 kg (3.8).
+- Si sigue igual de tranquilo hasta una purga a las 20:00 local del 2/10 (24 h):
+  **~4 kg** con los dos umbrales.
+- Si la purga da ≥ 10 kg sin que aparezca una ráfaga de picos antes, M1 tampoco
+  sirve y hay que buscar otra cosa.
+
+## 9. Estudio completo con todos los datos (2026-10-02)
+
+Script: `analisis/estudio_arena/estudio_completo.py` (32 métricas por intervalo,
+modelos de un parámetro kg = a·x, evaluación leave-one-out, prueba de azar por
+permutación). Umbral de captura de la placa de campo: sin cambios (5.0), por
+decisión del usuario; todo esto es post-procesamiento.
+
+### 9.1 Cuántos datos hay realmente
+
+Los CSV continuos del sensor arrancan el 29/9 09:00 local. Entre purgas eso da
+**4 intervalos completos** (15, 3, 12, 14 kg) + 1 parcial (8 kg, 5 h de 12) +
+el abierto. Las purgas anteriores (90 en la planilla, desde el 18/8) no tienen
+CSV del sensor. Aparte, los paquetes livianos del 21-22/9 (cadena de software,
+no FPGA) cubren 2 intervalos más pero muestreados: 69 min de 23 h (500 kg) y
+29 min de 5.5 h (4 kg).
+
+### 9.2 Resultado con los 4 completos
+
+| Modelo | Error medio LOO |
+|---|---|
+| kg = promedio de los otros (sin nada) | 5.3 kg |
+| kg ∝ horas del intervalo (sin sensor) | 4.2 kg |
+| **kg ∝ N ventanas con kurtosis > 3.5** | **2.9 kg** |
+| kg ∝ N ventanas > 3.8 (la fijada antes) | 3.0 kg |
+| mejor de las 32 (ráfagas con k > 6) | 2.7 kg |
+| métricas de área (M2, M3, excesos) | 7-21 kg |
+
+- La familia "cantidad de picos" (N ventanas sobre 3.5-4.5) le gana a la
+  referencia sin sensor; las de área pierden contra todo: confirma la sec.4.1.
+- **No es prueba todavía.** Prueba exacta (24 permutaciones de 4 kg):
+  N > 3.5 queda 2/24 (p ≈ 0.08), N > 3.8 3/24. Elegir "la mejor de 32" no vale:
+  con kg al azar la mejor de 32 iguala 2.7 kg el 31 % de las veces. Por eso se
+  queda N > 3.5 (decidida antes del barrido) y no la ganadora del barrido.
+
+### 9.3 Validación externa: el intervalo de 500 kg (21/9)
+
+Factor de los 4 completos: **0.039 kg por ventana > 3.5** (≈ 26 ventanas por kg).
+Aplicado a los paquetes del 21-22/9 (tasa en las ventanas grabadas × horas del
+intervalo):
+
+| Intervalo | Real | N > 3.5 | N > 3.8 | N > 8 | kg ∝ horas |
+|---|---|---|---|---|---|
+| 20/9 21:00 → 21/9 20:00 | **500 kg** | **~220 kg** | ~350 kg | ~3700 kg | 19 kg |
+| 22/9 07:30 → 13:00 | **4 kg** | 0 kg | 0 kg | 0 kg | 5 kg |
+
+Es el resultado más fuerte del estudio: un factor ajustado con 3-15 kg acierta
+el orden de magnitud de una purga de 500 kg (se queda corto ~2.3×), y la
+referencia sin sensor falla 25×. Cuidados: cobertura del 5 % (si las capturas
+se hicieron más cuando había arena, la extrapolación exagera; si no, subestima),
+y la kurtosis viene del filtro de software, no de la FPGA (validadas iguales
+en sec.182 de la memoria, no en este dato). N > 8 sobreestima 7×: los picos
+extremos no escalan lineal.
+
+### 9.4 Algoritmo propuesto (versión 1)
+
+**kg desde la última purga ≈ 0.039 × (ventanas de 50 ms con kurtosis > 3.5)**,
+con incertidumbre ~±3 kg en el rango 3-15 kg y posiblemente subestimando
+~2× en eventos grandes. Se puede llevar a Losant como acumulado que se reinicia
+en cada purga (hoy `ventanas_umbral_1min` usa el umbral 5.0 de la captura).
+No aplicar todavía: primero que acierte la purga de E (sec.8.1, ~4 kg) y las
+siguientes.
+
+### 9.5 Qué mejora el estudio de verdad
+
+1. **Más intervalos**: cada purga suma un punto; con ~10-15 se puede probar
+   kg = a·N + b y un término no lineal para eventos grandes.
+2. **Purgas más seguidas** (cada 2-4 h algunos días): más puntos y menos
+   incertidumbre de cuándo salió la arena. Es la palanca más grande y depende
+   del pozo.
+3. Hora exacta de cada purga (algunas vienen redondeadas).
+4. ¿Las capturas del 21/9 se hicieron a horario fijo o cuando se veía arena?
+   (define si 220 kg es piso o techo).
+
 ## Registro
 
 - 2026-10-01: inicio; planilla hasta 1/10 06:00 local; métricas y predicción
   de la sección 4 fijadas antes del reporte del mediodía.
+- 2026-10-02: planilla hasta 2/10 06:00 local; D cerrado (14 kg, ganó M1,
+  sec.4.1); umbral de M1 bajado a 3.5 por decisión del usuario (sec.8);
+  predicción de E registrada (sec.8.1). CSV del sensor hasta 2/10 09:45
+  local en `datos_campo/placa_campo/csv_sd_1oct_2oct/` (md5 OK contra la SD).
+- 2026-10-02: estudio completo (sec.9): N ventanas k > 3.5 mejor que la referencia
+  sin sensor (2.9 vs 4.2 kg LOO, p ≈ 0.08) y predice ~220 kg para la purga de
+  500 kg del 21/9; algoritmo v1 = 0.039 kg/ventana.
