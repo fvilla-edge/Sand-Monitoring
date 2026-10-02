@@ -2,8 +2,13 @@
 # ventanas ya cerrados (scripts_campo/subir_csv_gcs.py). Oneshot, lo dispara
 # subir-csv-gcs.timer; sin internet falla rapido y reintenta en la proxima.
 #
-# Nice=19 / IOSchedulingClass=idle / CPUQuota=25%: que nunca le compita a
-# capturar_eventos (el gzip era el pico de CPU de cada subida).
+# Nice=19 / IOSchedulingClass=idle: que nunca le compita a capturar_eventos
+# (el gzip era el pico de CPU de cada subida).
+# SIN CPUQuota (2026-10-02): con CPUQuota systemd enciende el controlador cpu
+# de cgroup v2 en system.slice mientras el timer esta activo; la CPU pasa a
+# repartirse por unidad y el Nice -20 de streaming-server deja de pesar: en
+# campo la captura empezo a saltear ventanas justo al habilitar el timer
+# (1/10 19:22 UTC) y otra vez 5 min despues del corte de energia del 2/10.
 #
 # Necesita la clave de la cuenta de servicio (solo storage.objects.create) en
 # gcs.credenciales_file (/root/credenciales_gcs.json, chmod 600, fuera de git).
@@ -20,5 +25,4 @@ Type=oneshot
 ExecStart=/usr/bin/python3 -u /root/scripts_campo/subir_csv_gcs.py
 Nice=19
 IOSchedulingClass=idle
-CPUQuota=25%
 TimeoutStartSec=30min

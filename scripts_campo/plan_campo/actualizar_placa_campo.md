@@ -252,6 +252,25 @@ Pasos en campo (uno por vez, mirando; `evidencia.sh on` en las subidas):
       mañana 2/10 en hora_on (11:55 UTC), mirando la primera tanda de la noche.
 - [ ] 5. Con el disco de vuelta (después del corte de energía): una subida a
       mano desde `/mnt/usb/eventos` mirando, antes de dejarlo solo.
+      (2/10: tras el corte el timer subió solo desde `/mnt/usb/eventos`, md5 ok.)
+- [x] 6. **Sacar `CPUQuota=25%` de `subir-csv-gcs.service`** (campo: drop-in aplicado 2/10 15:28 UTC con la captura parada; lab: 2/10 15:20 UTC) (commit de este
+      cambio; en una placa ya instalada alcanza el drop-in
+      `/etc/systemd/system/subir-csv-gcs.service.d/sin-cpuquota.conf` con
+      `[Service]` + `CPUQuota=` y `daemon-reload`, 3.6 s en la de pruebas, watchdog 30 s).
+      Por qué: con `CPUQuota` systemd enciende el controlador `cpu` de cgroup v2 en
+      `system.slice` mientras el timer está activo (se ve en
+      `/sys/fs/cgroup/system.slice/cgroup.subtree_control`), y la captura pierde
+      ventanas. Evidencia en campo [seguro]: 0 ventanas saltadas del 29/9 al 1/10
+      19:21 UTC (también con Starlink on); desde 19:22:00 (`enable --now` del timer)
+      5-27 saltadas/h de noche y ~600/h de día, y pérdidas de la cruda ×2.6-×3.7.
+      Tras el corte del 2/10: 98 % y 0 saltadas los 5 min antes de la 1ra corrida
+      de GCS (15:00:18), 88 % y ~10 saltadas/min desde 15:02, con Starlink on las dos veces.
+      En la de pruebas [seguro]: el controlador queda encendido con el timer activo, se
+      apaga con `systemctl stop` del timer y no se enciende con el drop-in
+      (aplicado ahí el 2/10 15:20 UTC). El efecto en pérdidas en la de pruebas es chico
+      (0 → 0.09 M muestras/min), así que la confirmación final es campo.
+      Comprobar después en campo: `subtree_control` sin `cpu`, ventanas saltadas ~0
+      y `muestras` ~98 % con Starlink on.
 
 ## 5. Sistema
 
