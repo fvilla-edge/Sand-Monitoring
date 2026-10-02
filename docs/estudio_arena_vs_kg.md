@@ -254,6 +254,44 @@ siguientes.
 4. ¿Las capturas del 21/9 se hicieron a horario fijo o cuando se veía arena?
    (define si 220 kg es piso o techo).
 
+## 10. Indicador cualitativo poca / media / mucha (2026-10-02, versión 1)
+
+Pedido del usuario: por ahora no un valor en kg sino un nivel. Base: solo los
+datos continuos desde el 29/9 (72 h). Script: `analisis/estudio_arena/nivel_arena.py`.
+
+**Regla (por hora):** ventanas de 50 ms con kurtosis > 3.5 en la hora:
+- **poca** < 15 (≲ 0.6 kg/h equivalente)
+- **media** 15-80
+- **mucha** ≥ 80 (≳ 3 kg/h)
+
+Los cortes son redondos, anclados al factor de la sec.9.4; coinciden con la
+distribución de las 70 horas con dato (p75 = 20/h, p95 = 60/h, p99 = 179/h).
+
+**Resultado 29/9 - 2/10:** 49 h poca, 18 media, 3 mucha (29/9 15 h y 16 h,
+1/10 06 h). Por intervalo:
+
+| Intervalo (local) | Real | Horas poca/media/mucha |
+|---|---|---|
+| 29/09 14 → 30/09 02 | 15 kg | 6 / 3 / **2** |
+| 01/10 04 → 01/10 20 | 14 kg | 12 / 3 / **1** |
+| 30/09 14 → 01/10 04 | 12 kg | 10 / 2 / 0  ← no lo ve |
+| 30/09 02 → 30/09 14 | 3 kg | 8 / 4 / 0 |
+| 29/09 02 → 29/09 14 (parcial) | 8 kg | 0 / 5 / 0 |
+
+Lectura:
+- Las horas "mucha" caen solo en los dos intervalos de más kg. El de 12 kg no se
+  distingue del de 3 kg: o la arena salió de una forma que el sensor no ve, o
+  esos kg son de antes (la planilla redondea la hora de purga).
+- **Desde el 29/9 no hubo ningún intervalo de mucha arena** (máximo 15 kg en
+  12 h). "Mucha" queda definida pero sin validar; la única referencia de
+  mucha arena es el 21/9 (500 kg, ~240 ventanas/h, sería "mucha").
+- [Suposición] Las horas "media" se juntan de día (08-16 local); puede ser
+  arena o actividad del pad (maniobras, vehículos). Preguntar al pozo.
+
+**Cómo se valida:** con cada purga nueva, que los intervalos con horas "mucha"
+sean los de más kg y los "todo poca" los de menos. Primera prueba: el intervalo
+abierto E (13 h poca + 1 media hasta 2/10 09:45) debería cerrar con pocos kg (~2-4).
+
 ## Registro
 
 - 2026-10-01: inicio; planilla hasta 1/10 06:00 local; métricas y predicción
@@ -265,3 +303,5 @@ siguientes.
 - 2026-10-02: estudio completo (sec.9): N ventanas k > 3.5 mejor que la referencia
   sin sensor (2.9 vs 4.2 kg LOO, p ≈ 0.08) y predice ~220 kg para la purga de
   500 kg del 21/9; algoritmo v1 = 0.039 kg/ventana.
+- 2026-10-02: indicador cualitativo poca/media/mucha por hora (sec.10), solo con
+  datos continuos desde el 29/9.
