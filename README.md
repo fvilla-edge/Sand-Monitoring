@@ -126,26 +126,34 @@ Desde la carpeta del proyecto, con Starlink prendido (horario `hora_on`-`hora_of
    ```bash
    ssh root@<IP_CAMPO> 'ls -la /mnt/usb/eventos/*.csv'
    ```
-2. Traerlos a la PC, una carpeta por dia (`datos_campo/` no va a git):
+2. Traerlos a una carpeta de bajada y verificar md5 (`datos_campo/` no va a git).
+   Pueden estar en el disco (`/mnt/usb/eventos/`) o, si la placa midio sin disco,
+   en la SD (`/root/eventos_sd/`):
    ```bash
-   mkdir -p datos_campo/placa_campo/csv_29_sep
-   scp 'root@<IP_CAMPO>:/mnt/usb/eventos/ventanas_20260929_*.csv' datos_campo/placa_campo/csv_29_sep/
+   mkdir -p datos_campo/placa_campo/_bajadas/AAAAMMDD
+   scp 'root@<IP_CAMPO>:/mnt/usb/eventos/ventanas_20260929_*.csv' datos_campo/placa_campo/_bajadas/AAAAMMDD/
    ```
-3. Convertirlos al formato de paquete liviano:
+3. Juntarlos en la carpeta por dia (`csv_por_dia/AAAA-MM-DD/`, dia UTC como el
+   nombre del archivo; une la misma hora si quedo repartida entre SD y disco,
+   descarta copias parciales, limpia NUL; primero sin `--aplicar` para ver que hace):
+   ```bash
+   python3 analisis/utilidades/organizar_csv_campo.py datos_campo/placa_campo/csv_por_dia datos_campo/placa_campo/csv_por_dia datos_campo/placa_campo/_bajadas/AAAAMMDD --aplicar
+   ```
+4. Convertirlos al formato de paquete liviano:
    ```bash
    # una hora -> ventanas_20260929_12.paquete.json al lado del CSV
-   .venv/bin/python3 analisis/placa/ventanas_a_paquete.py datos_campo/placa_campo/csv_29_sep/ventanas_20260929_12.csv
+   .venv/bin/python3 analisis/placa/ventanas_a_paquete.py datos_campo/placa_campo/csv_por_dia/2026-09-29/ventanas_20260929_12.csv
    # todo el dia en un solo archivo
-   .venv/bin/python3 analisis/placa/ventanas_a_paquete.py datos_campo/placa_campo/csv_29_sep --unir -o datos_campo/placa_campo/csv_29_sep/dia_29_sep.paquete.json
+   .venv/bin/python3 analisis/placa/ventanas_a_paquete.py datos_campo/placa_campo/csv_por_dia/2026-09-29 --unir -o datos_campo/placa_campo/csv_por_dia/2026-09-29/dia_29_sep.paquete.json
    ```
-4. Abrirlo en el visor: doble click en `analisis/visores/abrir_paquete.sh` (o
+5. Abrirlo en el visor: doble click en `analisis/visores/abrir_paquete.sh` (o
    `bash analisis/visores/abrir_paquete.sh`) y elegir el `.paquete.json`. La linea
    punteada y el contador "N/M ventanas ≥ 5" usan el mismo umbral que el modo
    evento de la placa (kurtosis ≥ 5 guarda la cruda).
-5. Opcional, lista de eventos sin abrir el visor (el `LC_ALL=C` es necesario: con
+6. Opcional, lista de eventos sin abrir el visor (el `LC_ALL=C` es necesario: con
    el idioma en español awk usa coma decimal y cuenta mal):
    ```bash
-   LC_ALL=C awk -F, 'NR>1 && $4>=5 {printf "%s UTC  kurt=%.2f  area=%.3f\n", strftime("%H:%M:%S",$2/1000,1), $4, $3}' datos_campo/placa_campo/csv_29_sep/ventanas_*.csv
+   LC_ALL=C awk -F, 'NR>1 && $4>=5 {printf "%s UTC  kurt=%.2f  area=%.3f\n", strftime("%H:%M:%S",$2/1000,1), $4, $3}' datos_campo/placa_campo/csv_por_dia/2026-09-29/ventanas_*.csv
    ```
 
 Como leerlo:

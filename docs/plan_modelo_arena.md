@@ -70,17 +70,21 @@ Falla el intervalo de 12 kg (lo ve tranquilo) y el de 3 kg (lo ve media).
 
 1. Guardar la planilla en `datos_campo/planillas/` con la fecha en el nombre
    (`...BPO-2072_<dia><mes>.csv`).
-2. Bajar los CSV nuevos de la SD de campo (`/root/eventos_sd/ventanas_*.csv`) a
-   `datos_campo/placa_campo/csv_sd_<desde>_<hasta>/`, verificando md5.
-   (O desde GCS: `campo/csv_ventanas/rp-f0fbda/AAAA/MM/DD/`.)
-3. Correr:
+2. Bajar los CSV nuevos de la placa de campo (disco `/mnt/usb/eventos/`, o la SD
+   `/root/eventos_sd/` si midió sin disco) a `datos_campo/placa_campo/_bajadas/<AAAAMMDD>/`,
+   verificando md5. (O desde GCS: `campo/csv_ventanas/rp-f0fbda/AAAA/MM/DD/`.)
+3. Juntarlos en la carpeta por día (README del repo, "CSV de ventanas"):
    ```
-   .venv/bin/python analisis/estudio_arena/modelo_arena.py "datos_campo/planillas/<planilla>.csv" datos_campo/placa_campo/* --registrar --horas 24
+   python3 analisis/utilidades/organizar_csv_campo.py datos_campo/placa_campo/csv_por_dia datos_campo/placa_campo/csv_por_dia datos_campo/placa_campo/_bajadas/<AAAAMMDD> --aplicar
    ```
-4. Mirar las purgas nuevas: nivel predicho contra real, error en kg.
-5. Anotar en la bitácora (sec.8) una línea por purga nueva: real, predicho,
+4. Correr:
+   ```
+   .venv/bin/python analisis/estudio_arena/modelo_arena.py "datos_campo/planillas/<planilla>.csv" datos_campo/placa_campo/csv_por_dia/* --registrar --horas 24
+   ```
+5. Mirar las purgas nuevas: nivel predicho contra real, error en kg.
+6. Anotar en la bitácora (sec.8) una línea por purga nueva: real, predicho,
    acierto, y cualquier cosa rara (horas sin dato, comentario del pozo).
-6. Commit del registro + la bitácora.
+7. Commit del registro + la bitácora.
 
 ## 6. Etapas
 
@@ -121,3 +125,9 @@ Falla el intervalo de 12 kg (lo ve tranquilo) y el de 3 kg (lo ve media).
   filas retro + el intervalo abierto E (desde 1/10 20:00 local): hasta 2/10 09:45 local
   predice 5.2 ± 4.1 kg, **poca 66 %** / media 34 %. Primera predicción anticipada:
   la purga que cierre E.
+- **2026-10-02 ~16 UTC** — CSV reorganizados en `datos_campo/placa_campo/csv_por_dia/<día UTC>/`
+  (`organizar_csv_campo.py`, índice en `csv_por_dia/indice.csv`); las carpetas viejas quedan en
+  `_carpetas_anteriores/`. Del disco USB de campo se recuperaron horas que faltaban
+  (30/9 16 completa, 17 y la 1ra parte de 18 UTC): el intervalo 30/9 14:00 → 1/10 04:00
+  pasa de 155 a 144 picos extrapolados (predicción retro 5.0 → 4.7 kg). Las filas del
+  registro de v1 calculadas antes quedan como están (regla 2).
