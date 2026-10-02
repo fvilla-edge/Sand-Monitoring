@@ -4,6 +4,7 @@ Objetivo final: poder decir "esta cantidad de área corresponde a X kg de arena"
 Se avanza de a un paso, agregando un punto por cada purga.
 
 Iniciado el 2026-10-01. Script: `analisis/estudio_arena/metricas_purgas.py`.
+**Desde el 2026-10-02 el trabajo sigue en `docs/plan_modelo_arena.md`** (plan, modelo v1 y bitácora).
 
 ## 1. Qué es la verdad de campo
 
