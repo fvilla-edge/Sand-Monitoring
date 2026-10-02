@@ -11,3 +11,4 @@ pytest==9.1.1
 # El modulo `streaming` (SWIG, usado por scripts_campo/) no es un paquete de
 # PyPI — vive en la placa en /root/rpsa_client/python_lib, generado a partir
 # del ZIP de Red Pitaya. No se instala con pip.
+scikit-learn==1.9.1
