@@ -149,6 +149,23 @@ bitstream del 29/9 (`dfabb64`).
       de 1TB **no se hace** (decidido 2026-09-28): al instalarlo en campo
       verificar montaje (`findmnt /mnt/usb`), `usb_libre_mb` en Losant y que el
       modo evento escriba el CSV sin saltadas.
+- [x] **Umbral de captura de la cruda 5 → 3.4** (pedido del usuario, 2026-10-05;
+      placa de pruebas 18:11 UTC, **campo 18:15 UTC**, sin validar con señal en
+      lab porque no hay forma de generar kurtosis 3.4-5 ahí). En campo el 1er
+      arranque murió por el SIGSEGV del vendor al conectar ("Operation aborted",
+      core dump) y el relanzamiento de systemd a los 60 s quedó bien.
+      Script usado en campo: `/root/logs_campo/aplicar_umbral_34.sh` (log al lado).
+      Drop-in, la unit del repo no cambia:
+      ```bash
+      mkdir -p /etc/systemd/system/modo-evento.service.d
+      printf '[Service]\nEnvironment=UMBRAL=3.4\n' > /etc/systemd/system/modo-evento.service.d/umbral.conf
+      systemctl daemon-reload && systemctl restart --no-block modo-evento
+      ```
+      Verificar: `journalctl -u modo-evento | grep "umbral kurtosis>=3.40"`.
+      Volver a 5: borrar `umbral.conf`, `daemon-reload`, `restart`. El anotador
+      (`ventanas_umbral_1min`, `me_eventos_hoy` en Losant) toma el umbral nuevo
+      solo. Volumen esperado con los CSV de campo 29/9-5/10: ~2.7× eventos
+      (51/h contra 19/h, ~0.6 GB/día en el disco; peor hora ~1350 eventos, ~720 MB).
 
 ## 3. Control de Starlink (`starlink_remoto/`)
 
