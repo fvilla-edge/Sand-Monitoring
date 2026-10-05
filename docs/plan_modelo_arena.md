@@ -284,6 +284,7 @@ hasta 2/10 14:16 local; al cerrar se recalculan hasta la hora de la purga):
     25 h, 374 picos, 17.6 ± 3.7 kg).
 - **2026-10-05 ~14 UTC** — Modelos sin sensor con toda la historia de la planilla (sec.10, `planilla_historia.py`): 91 intervalos desde el 18/8. Mejor referencia: **tasa de las últimas 24 h × horas** (3.2 kg de error desde el 29/9). Las horas en control de separador casi no dejan arena en el BBS (fracción ajustada 0.00). La planilla no muestra nada raro el sáb 3/10 12-17 local (presiones y orificio planos, sin comentarios).
 - **2026-10-05 ~14:30 UTC** — Paso 1 (sec.10.1, `sensor_vs_referencia.py`): el sensor **no explica el residuo** de la referencia "tasa 24 h" en los 7 intervalos con sensor. 8 medidas (k>3.5, k>3.05, k>10, minutos activos; todo el intervalo y solo fuera de control): ninguna correlaciona (p ≥ 0.28) y todas empeoran el LOO (3.2 → 4.5-6.2 kg).
+- **2026-10-05 ~15 UTC** — Paso 2 (sec.10.2, `evento_21sep.py`): antes de los 500 kg hubo dos purgas seguidas en 0 kg (38 h, único caso largo) y una baja de ~20 psi en boca de pozo con cambio de ramal el 20/9. El sensor muestra el 21/9 de 09 a 13 local una firma de kurtosis extrema (hasta 2.7 ventanas k > 300 por minuto) que **no aparece en ninguna de las 144 h continuas** desde el 29/9 (máximo 1 ventana k > 300 y 2 k > 200 por hora, incluido el sábado de golpes). Candidato a alarma de evento grande, no a cantidad. Corrección a la sec.10: alternar 0 / X kg es habitual desde el 13/9 y solo 5 de 11 ceros tuvieron control; el "efecto control" está mezclado con esa alternancia.
 
 ## 10. Modelos sin sensor, solo con la planilla (2026-10-05)
 
@@ -332,4 +333,39 @@ intervalos previos × horas). 7 intervalos completos con sensor (30/9 02:00 → 
   horas que según la planilla casi no dejan arena en el BBS, y el intervalo dio 14 kg.
 - Con 7 puntos, un efecto de ±3 kg no se podría ver: no prueba que el sensor no sirva, prueba que
   hoy no le agrega nada a la planilla.
+
+### 10.2 Paso 2: ¿hubo precursores del evento de 500 kg (21/9)? (2026-10-05)
+
+Script: `analisis/estudio_arena/evento_21sep.py`.
+
+**Planilla.** Antes de la purga de 500 kg (21/9 20:00 local) hubo **dos purgas seguidas en 0 kg**,
+19/9 07:00 → 20/9 21:00 (38 h), en una época de ~1 kg/h. Es el único caso largo: el otro par de
+ceros (13/9, 6 h) fue al empezar la arena. En el medio, el 20/9 a las 08:00 "leve variable en presión
+boca de pozo, una baja de ~20 psi" y a las 11:00 "cambio de ramal y chequeo de orificio, no se
+observa obstrucción". Presiones, caudales, agua y GOR del control del 21/9 03-09: normales. Lectura
+[suposición]: arena retenida en algún lado y liberada de golpe. Es un solo caso.
+
+**Corrección a la sec.10:** alternar 0 / X kg es lo habitual desde el 13/9 (11 ceros) y solo 5 de los
+11 tuvieron ≥ 2 h de control. El "efecto control" está mezclado con esa alternancia.
+
+**Sensor.** Paquetes del 21/9 (69 min grabados de 23 h, nombrados `campo_con_arena`: se grabó cuando
+se veía arena) contra los CSV continuos de la FPGA (144 h, 29/9 → 5/10):
+
+| | k > 100 | k > 200 | k > 300 |
+|---|---|---|---|
+| 21/9 09 local (por hora, extrapolado) | ~335 | ~235 | ~160 |
+| 21/9 13 local | ~25 | ~20 | ~16 |
+| 21/9 15-17 y 22/9 09-10 | ~0 | 0 | 0 |
+| **Peor hora de las 144 h** (sáb 3/10 12-17) | 11 | **2** | **1** |
+| Horas con ≥ 3 ventanas, de 144 | 6 | **0** | **0** |
+
+- La firma de k > 200-300 del 21/9 a la mañana **no aparece nunca** en 6 días continuos, ni con los
+  golpes del sábado: separa sin falsas alarmas el único evento grande conocido.
+- Decae de 09 a 13 y se apaga a las 15, pero las purgas horarias de esa noche dieron 25-35 kg/h
+  (21-01 local), sin sensor en esas horas. Puede marcar el **comienzo** del evento y no su duración.
+- Cuidados: un solo evento; umbrales elegidos después de mirar; los paquetes vienen de la cadena de
+  software y no de la FPGA (validadas iguales en sec.182 de la memoria, no sobre este dato).
+- **Candidato (no aplicado): alarma "evento grande" = ≥ 3 ventanas con k > 200 en una hora.** Con
+  la tasa de hoy no hubiera saltado nunca; el 21/9 hubiera saltado ~11 h antes de la purga de 500 kg.
+  Se juzga con el próximo evento grande, sin tocar el umbral.
 
