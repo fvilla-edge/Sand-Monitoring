@@ -156,7 +156,11 @@ bitstream del 29/9 (`dfabb64`).
       core dump) y el relanzamiento de systemd a los 60 s quedó bien.
       Script usado en campo: `/root/logs_campo/aplicar_umbral_34.sh` (log al lado).
       Drop-in (desde el 5/10 la unit del repo también trae 3.4; el drop-in
-      queda en las placas ya instaladas para no reinstalar la unit):
+      queda en las placas ya instaladas para no reinstalar la unit). Defaults de
+      `capturar_eventos.py` y del `.cpp` también en 3.4 (probado en pruebas 5/10:
+      corrida sin `--umbral` arranca en 3.40); en campo siguen los viejos (5.0),
+      sin efecto mientras el servicio pase `--umbral` — llevarlos con la próxima
+      actualización del modo evento (recompilar `make -C /root/scripts_campo/c`):
       ```bash
       mkdir -p /etc/systemd/system/modo-evento.service.d
       printf '[Service]\nEnvironment=UMBRAL=3.4\n' > /etc/systemd/system/modo-evento.service.d/umbral.conf

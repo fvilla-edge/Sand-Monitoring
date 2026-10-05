@@ -56,7 +56,7 @@
 //     TOLERANCIA_DERIVA (ej. stream congelado sin fpgaLost, visto al bajar
 //     eth0), se recalibra y se loguea.
 //
-// Uso: capturar_eventos [--umbral 5.0] [--destino DIR] [--dec 32]
+// Uso: capturar_eventos [--umbral 3.4] [--destino DIR] [--dec 32]
 //                       [--estado-s 10] [--duracion-s 0] [--host IP] [--margen-ms 10] [--sin-registro]
 //                       [--minimo-libre-mb 2048]
 //   --host: conectar a esa IP fija en vez del descubrimiento por broadcast
@@ -644,7 +644,7 @@ int64_t ahora_utc_ms() {
 }  // namespace
 
 int main(int argc, char** argv) {
-    double umbral = 5.0;
+    double umbral = 3.4;  // 2026-10-05, antes 5.0
     std::string destino = "/root/eventos";
     int dec = 32;
     int estado_s = 10;

@@ -13,7 +13,7 @@ contra 8.4ms entre paquetes a decimación 32, y el streaming-server descartaba
 c/capturar_eventos.cpp).
 
 Uso:
-  python3 capturar_eventos.py [--umbral 5.0] [--destino /root/eventos]
+  python3 capturar_eventos.py [--umbral 3.4] [--destino /root/eventos]
                               [--dec 32] [--estado-s 10] [--duracion-s 0]
                               [--host 127.0.0.1]
 """
@@ -30,9 +30,9 @@ BINARIO = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'c', 'captura
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('--umbral', type=float, default=5.0,
-                     help='kurtosis minima para guardar la ventana (default 5.0, '
-                          'con margen contra el umbral real de 6.0)')
+    ap.add_argument('--umbral', type=float, default=3.4,
+                     help='kurtosis minima para guardar la ventana (default 3.4 desde '
+                          '2026-10-05, antes 5.0; reposo ~2.97)')
     ap.add_argument('--destino', default='/root/eventos',
                      help='carpeta donde se guardan los eventos que cruzan el umbral')
     ap.add_argument('--dec', type=int, default=32, help='decimacion (default 32)')

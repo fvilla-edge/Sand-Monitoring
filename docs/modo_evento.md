@@ -12,7 +12,7 @@ tiempo real; el programa de la placa guarda:
 | Qué | Cuándo | Tamaño aprox. |
 |---|---|---|
 | Área + kurtosis de **cada** ventana (CSV) | siempre, 24h | ~30MB/día |
-| Señal cruda de la ventana ±10ms (`evento_*.bin` + `.json`) | solo si kurtosis ≥ umbral (default 5) | ~0.5MB por evento |
+| Señal cruda de la ventana ±10ms (`evento_*.bin` + `.json`) | solo si kurtosis ≥ umbral (default 3.4 desde el 5/10/2026, antes 5) | ~0.5MB por evento |
 
 Por qué guardar siempre el área y la kurtosis, además de los eventos:
 
@@ -194,9 +194,9 @@ En la placa (compilar una vez):
 make -C /root/scripts_campo/c
 ```
 
-Captura (umbral 5, destino por defecto `/root/eventos`):
+Captura (umbral 3.4, destino por defecto `/root/eventos`):
 ```bash
-python3 /root/scripts_campo/capturar_eventos.py --umbral 5 --destino /root/eventos
+python3 /root/scripts_campo/capturar_eventos.py --umbral 3.4 --destino /root/eventos
 ```
 
 Pruebas de banco (loopback OUT1->IN1 con cable, reproduciendo un tramo real
