@@ -282,3 +282,54 @@ hasta 2/10 14:16 local; al cerrar se recalculan hasta la hora de la purga):
   - C2 re-ajustado (0.114 kg/min) tampoco: F 4.4, G 1.8 kg.
   - Registro: 4 filas nuevas (E, F, G anticipadas + abierto 4/10 08:00 → 5/10 08:59 local,
     25 h, 374 picos, 17.6 ± 3.7 kg).
+- **2026-10-05 ~14 UTC** — Modelos sin sensor con toda la historia de la planilla (sec.10, `planilla_historia.py`): 91 intervalos desde el 18/8. Mejor referencia: **tasa de las últimas 24 h × horas** (3.2 kg de error desde el 29/9). Las horas en control de separador casi no dejan arena en el BBS (fracción ajustada 0.00). La planilla no muestra nada raro el sáb 3/10 12-17 local (presiones y orificio planos, sin comentarios).
+- **2026-10-05 ~14:30 UTC** — Paso 1 (sec.10.1, `sensor_vs_referencia.py`): el sensor **no explica el residuo** de la referencia "tasa 24 h" en los 7 intervalos con sensor. 8 medidas (k>3.5, k>3.05, k>10, minutos activos; todo el intervalo y solo fuera de control): ninguna correlaciona (p ≥ 0.28) y todas empeoran el LOO (3.2 → 4.5-6.2 kg).
+
+## 10. Modelos sin sensor, solo con la planilla (2026-10-05)
+
+Script: `analisis/estudio_arena/planilla_historia.py`. La planilla trae **91 intervalos entre purgas
+desde el 18/8** (42 con arena, 1186 kg en total), no solo los 7 que tienen sensor. Es la vara que
+el sensor tiene que superar.
+
+- **Arena y orificio:** sin arena hasta 14/64; aparece con 16/64 (13/9) y cada aumento (17, 18, 20/64)
+  la sube y después decae. Desde 20/64 (23/9): ~3-5 kg/h → 0.7 kg/h hoy (τ ≈ 5 días).
+- **Horas en control de separador (03-09 local):** con ≥ 4 h de control 1.05 kg/h (n = 12), con ≤ 1 h
+  3.43 kg/h (n = 9); el ajuste da **fracción 0.00 en horas de control** (26-27/9: 0 kg en los
+  intervalos 02→14 y 30 kg en los 14→02). Confundido con la hora del día (los intervalos con control
+  son siempre los de la mañana). Pregunta física: ¿la arena de esas horas va al separador de control
+  y no al BBS?
+- La columna "Producción sólidos kg/hora" no sirve: es la purga repartida hacia atrás.
+- **Prequential desde 20/64** (error medio; los últimos 7 son los que tienen sensor):
+
+| Modelo | Todos (13) | Desde 29/9 (7) |
+|---|---|---|
+| constante | 9.0 | 8.6 |
+| solo horas (tasa de todo lo previo) | 14.8 | 17.7 |
+| última tasa × horas | 11.4 | 5.3 |
+| **tasa de las últimas 24 h × horas** | **7.4** | **3.2** |
+| decaimiento exponencial | 9.2 | 5.2 |
+| decaimiento + control | 7.3 | 3.6 |
+| (sensor v1, solo 3 anticipadas) | — | 11.5 |
+
+  "Solo horas" anduvo bien en sec.9 únicamente porque arrancaba el 29/9, con la tasa ya estable.
+
+### 10.1 Paso 1: ¿el sensor explica lo que le erra la referencia? (2026-10-05)
+
+Script: `analisis/estudio_arena/sensor_vs_referencia.py`. Residuo = kg real − (tasa de los 2
+intervalos previos × horas). 7 intervalos completos con sensor (30/9 02:00 → 4/10 08:00 local).
+
+| Medida del sensor | ρ con el residuo | p (permutación exacta) | LOO ref + sensor |
+|---|---|---|---|
+| (referencia sola) | | | **3.2 kg** |
+| n k > 3.5 / solo fuera de control | 0.32 / 0.14 | 0.50 / 0.78 | 5.4 / 4.6 |
+| n k > 3.05 / fuera | 0.39 / −0.14 | 0.40 / 0.78 | 4.8 / 5.2 |
+| n k > 10 / fuera | 0.16 / 0.02 | 0.73 / 0.99 | 4.6 / 4.5 |
+| minutos activos / fuera | 0.09 / −0.49 | 0.86 / 0.28 | 6.2 / 4.6 |
+
+- Los dos residuos grandes no se ven en el sensor: 30/9 14:00 (3 kg, −8.5) es un intervalo común;
+  2/10 14:00 (10 kg, −5.6) es el de más minutos activos (176).
+- El episodio del 1/10 (20 324 ventanas k > 3.05) cayó 95 % **dentro** del control de separador, las
+  horas que según la planilla casi no dejan arena en el BBS, y el intervalo dio 14 kg.
+- Con 7 puntos, un efecto de ±3 kg no se podría ver: no prueba que el sensor no sirva, prueba que
+  hoy no le agrega nada a la planilla.
+
