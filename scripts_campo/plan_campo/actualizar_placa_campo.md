@@ -166,6 +166,19 @@ bitstream del 29/9 (`dfabb64`).
       DHCP de networkd entra por socket crudo (no lo frena iptables) y el
       kernel no tiene `tc`; hace falta un switch entre la placa y el router
       de Starlink, que no hay (2026-09-28).
+- [x] **Starlink también sábado y domingo** (decisión del equipo, 2026-10-05; **aplicado
+      2026-10-05 13:16 UTC** en lab `rp-f0fd8c` y después en campo, respaldo
+      `config_campo.json.bak_pre_finde_20261005`; simulado día 6/7 con `date` falso
+      en el PATH: 10/10 casos OK en lab y 8/8 en campo; reconciliador real OK; falta
+      ver el sábado 10/10 08:55 local):
+      `starlink.dias_habilitados` de `"1,2,3,4,5"` a `"1,2,3,4,5,6,7"` en
+      `/root/scripts_campo_comun/config_campo.json`, mismo horario. Solo
+      config: los timers ya disparan todos los días y `decidir_objetivo.sh`
+      lo lee en cada corrida (sin reinicios ni daemon-reload). Antes de editar,
+      comparar la copia de la placa con el repo y guardar respaldo. Verificar:
+      `bash /root/starlink_remoto/decidir_objetivo.sh` (en horario de un día
+      hábil tiene que decir `on`) y el sábado siguiente, a las 08:55 local, el
+      journal de `starlink-aplicar-objetivo` tiene que decir "rele ahora en 'on'".
 
 ## 4. Losant (cartero y Device de campo)
 
