@@ -285,6 +285,7 @@ hasta 2/10 14:16 local; al cerrar se recalculan hasta la hora de la purga):
 - **2026-10-05 ~14 UTC** — Modelos sin sensor con toda la historia de la planilla (sec.10, `planilla_historia.py`): 91 intervalos desde el 18/8. Mejor referencia: **tasa de las últimas 24 h × horas** (3.2 kg de error desde el 29/9). Las horas en control de separador casi no dejan arena en el BBS (fracción ajustada 0.00). La planilla no muestra nada raro el sáb 3/10 12-17 local (presiones y orificio planos, sin comentarios).
 - **2026-10-05 ~14:30 UTC** — Paso 1 (sec.10.1, `sensor_vs_referencia.py`): el sensor **no explica el residuo** de la referencia "tasa 24 h" en los 7 intervalos con sensor. 8 medidas (k>3.5, k>3.05, k>10, minutos activos; todo el intervalo y solo fuera de control): ninguna correlaciona (p ≥ 0.28) y todas empeoran el LOO (3.2 → 4.5-6.2 kg).
 - **2026-10-05 ~15 UTC** — Paso 2 (sec.10.2, `evento_21sep.py`): antes de los 500 kg hubo dos purgas seguidas en 0 kg (38 h, único caso largo) y una baja de ~20 psi en boca de pozo con cambio de ramal el 20/9. El sensor muestra el 21/9 de 09 a 13 local una firma de kurtosis extrema (hasta 2.7 ventanas k > 300 por minuto) que **no aparece en ninguna de las 144 h continuas** desde el 29/9 (máximo 1 ventana k > 300 y 2 k > 200 por hora, incluido el sábado de golpes). Candidato a alarma de evento grande, no a cantidad. Corrección a la sec.10: alternar 0 / X kg es habitual desde el 13/9 y solo 5 de 11 ceros tuvieron control; el "efecto control" está mezclado con esa alternancia.
+- **2026-10-05 ~15:30 UTC** — Enfoque del equipo, "área acumulada con k ≥ 3.5" (sec.10.3): el factor kg/área varía 150× entre intervalos (3 a 457 kg por 100 de área neta); LOO 8.3 kg (neta) y 5.3 kg (bruta) contra 3.6 de la constante y 3.2 de la referencia de la planilla. El 80 % del área neta sale de las tardes del 2/10 y 3/10 (14-15 kg). Queda como indicador de actividad, no de kg.
 
 ## 10. Modelos sin sensor, solo con la planilla (2026-10-05)
 
@@ -368,4 +369,36 @@ se veía arena) contra los CSV continuos de la FPGA (144 h, 29/9 → 5/10):
 - **Candidato (no aplicado): alarma "evento grande" = ≥ 3 ventanas con k > 200 en una hora.** Con
   la tasa de hoy no hubiera saltado nunca; el 21/9 hubiera saltado ~11 h antes de la purga de 500 kg.
   Se juzga con el próximo evento grande, sin tocar el umbral.
+
+### 10.3 Enfoque del equipo: área acumulada con k ≥ 3.5 (2026-10-05)
+
+Propuesta del equipo (gráfico "Área acumulada" de su herramienta): sumar el área de cada ventana
+con kurtosis ≥ 3.5 y relacionar el acumulado entre purgas con los kg. Es la métrica M2 del estudio
+(`docs/estudio_arena_vs_kg.md` sec.2). Calculada igual que en la herramienta (base = mediana; la
+neta de 1/10-4/10 da ~630 contra 642.91 en pantalla):
+
+| Purga (fin, local) | kg | Área bruta | Área neta | kg por 100 de neta |
+|---|---|---|---|---|
+| 30/9 02:00 | 15 | 208.1 | 28.4 | 53 |
+| 30/9 14:00 | 3 | 76.5 | 4.9 | 61 |
+| 1/10 04:00 | 12 | 75.3 | 4.3 | 280 |
+| 1/10 20:00 | 14 | 255.2 | 60.3 | 23 |
+| 2/10 14:00 | 10 | 36.2 | 2.2 | 457 |
+| 3/10 10:00 | 14 | 668.8 | 73.9 | 19 |
+| 4/10 08:00 | 15 | 2230.5 | 487.7 | 3 |
+
+| Modelo (LOO, 7 purgas) | Error medio |
+|---|---|
+| kg = a · área neta | 23.4 kg |
+| kg = a · área neta + b | 8.3 kg |
+| kg = a · área bruta + b | 5.3 kg |
+| kg = a · N ventanas k ≥ 3.5 + b | 4.8 kg |
+| constante | 3.6 kg |
+| tasa de las últimas 24 h × horas (sin sensor) | 3.2 kg |
+
+- El 80 % del área neta acumulada sale de las tardes del 2/10 y del 3/10 (golpes secos, sec.9),
+  en intervalos de 14 y 15 kg; el de 10 kg acumula 2.2.
+- **Decisión:** el área acumulada queda como **indicador de actividad** (cuándo pasó algo), no como
+  estimador de kg. Para volver a probarla como kg hay que separar primero los golpes secos, lo que
+  depende de saber qué pasó en el pad esas tardes (sec.8).
 
