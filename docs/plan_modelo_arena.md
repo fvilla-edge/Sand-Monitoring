@@ -218,6 +218,8 @@ hasta 2/10 14:16 local; al cerrar se recalculan hasta la hora de la purga):
 - Qué pasó el 1/10 06:00 local (ráfaga de 254 picos en una hora) y el 29/9 15-16 local (episodio sin comentario en la planilla).
 - Qué pasó hoy 2/10 de 09 a 13 local (actividad sostenida leve en el sensor).
 - El intervalo de 12 kg (30/9 14:00 → 1/10 04:00) se ve tranquilo en el sensor: ¿algo distinto ese turno?
+- Qué pasó en el pad el vie 2/10 de 15 a 17 local y el **sáb 3/10 de 12 a 17 local** (golpes secos fuertes,
+  hasta 1275 picos/h, con Starlink apagado): ¿maniobras, equipos, trabajos cerca de la línea?
 
 ## 9. Bitácora
 
@@ -257,3 +259,26 @@ hasta 2/10 14:16 local; al cerrar se recalculan hasta la hora de la purga):
 - **2026-10-02 ~18 UTC** — Frente umbral mínimo (sec.7.1): reposo = 2.974 ± 0.020; umbral de
   detección 3.05-3.10 (contraste ~80×); detectar ≠ cuantificar. Predicciones de v1, C1 y C2 para
   la purga que cierre E registradas antes de la planilla (C2 dice ~34 kg, los otros ≤ 8).
+- **2026-10-05 ~13 UTC** — Planilla 2-5/10 (`...BPO-2072-2-5oct.csv`) + 67 CSV de campo
+  (2/10 17 → 5/10 11 UTC, md5 OK contra la placa, sin NUL): `csv_por_dia` = 144 h continuas
+  (29/9 12 → 5/10 11 UTC). Tres purgas nuevas, las primeras **anticipadas** de v1:
+  - **E** 1/10 20:00 → 2/10 14:00 local (18 h; la purga fue 6 h antes de lo supuesto el 2/10):
+    real **10 kg**; v1 7.0 ± 4.7 poca (nivel errado, −3 kg); C1 sin episodio → poca (errado);
+    C2 176 min activos → ~34 kg (errado ×3.4). Solo horas: 14.7.
+  - **F** 2/10 14:00 → 3/10 10:00 (20 h): real **14 kg**; v1 **34.4 ± 8.3** (1172 picos, +20 kg).
+    Solo horas: 15.0.
+  - **G** 3/10 10:00 → 4/10 08:00 (22 h): real **15 kg**; v1 **26.0 ± 10.8** (3434 picos, +11 kg).
+    Solo horas: 16.3.
+  - **Con las 7 purgas completas v1 queda a = 0.0001 ± 0.0011 kg/pico, b = 0.70 kg/h**: los picos
+    k > 3.5 no aportan nada; el modelo se reduce a "0.7 kg por hora de intervalo". En anticipadas,
+    error medio v1 11.5 kg contra 2.3 kg de "solo horas" (prequential, misma regla). En LOO "solo
+    horas" 3.4 kg y "siempre el promedio" 3.6 kg: con 7 purgas de 10-15 kg (salvo una de 3) nada
+    le gana a la constante. r(kg, horas) = 0.46.
+  - Los picos de F y G vienen de dos tardes: vie 2/10 15-17 local (hasta 556/h) y **sáb 3/10
+    12-17 local (hasta 1275/h, Starlink apagado por ser fin de semana)**. Etapa C re-corrida
+    (2679 ráfagas, k = 6 por BIC): aparecen tipos casi inexistentes antes del 2/10, golpes secos
+    sin loma — g4 (~1.3 s, kurt máx ~21) y g5 (~3.5 s, kurt máx ~71, exceso de área 0.66):
+    0-4 por intervalo hasta E, 63+6 en F, 145+24 en G, mayormente de día. No escalan con los kg.
+  - C2 re-ajustado (0.114 kg/min) tampoco: F 4.4, G 1.8 kg.
+  - Registro: 4 filas nuevas (E, F, G anticipadas + abierto 4/10 08:00 → 5/10 08:59 local,
+    25 h, 374 picos, 17.6 ± 3.7 kg).
