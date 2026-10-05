@@ -14,7 +14,7 @@ c/capturar_eventos.cpp).
 
 Uso:
   python3 capturar_eventos.py [--umbral 3.4] [--destino /root/eventos]
-                              [--dec 32] [--estado-s 10] [--duracion-s 0]
+                              [--dec 32] [--canales 1] [--estado-s 10] [--duracion-s 0]
                               [--host 127.0.0.1]
 """
 import os
@@ -36,6 +36,9 @@ def main():
     ap.add_argument('--destino', default='/root/eventos',
                      help='carpeta donde se guardan los eventos que cruzan el umbral')
     ap.add_argument('--dec', type=int, default=32, help='decimacion (default 32)')
+    ap.add_argument('--canales', type=int, default=1, choices=[1, 2],
+                     help='1 = solo IN1 (default); 2 = IN1 + IN2 de referencia (Fase 0: el IN2 '
+                          'solo se cuenta en la linea de ESTADO, no se guarda)')
     ap.add_argument('--estado-s', type=int, default=10,
                      help='cada cuantos segundos loguear una linea de ESTADO (default 10)')
     ap.add_argument('--duracion-s', type=int, default=0,
@@ -64,6 +67,7 @@ def main():
                        '--umbral', str(args.umbral),
                        '--destino', args.destino,
                        '--dec', str(args.dec),
+                       '--canales', str(args.canales),
                        '--estado-s', str(args.estado_s),
                        '--duracion-s', str(args.duracion_s),
                        '--minimo-libre-mb', str(minimo_libre_mb)]

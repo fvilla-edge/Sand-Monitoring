@@ -56,9 +56,12 @@
 //     TOLERANCIA_DERIVA (ej. stream congelado sin fpgaLost, visto al bajar
 //     eth0), se recalibra y se loguea.
 //
-// Uso: capturar_eventos [--umbral 3.4] [--destino DIR] [--dec 32]
+// Uso: capturar_eventos [--umbral 3.4] [--destino DIR] [--dec 32] [--canales 1]
 //                       [--estado-s 10] [--duracion-s 0] [--host IP] [--margen-ms 10] [--sin-registro]
 //                       [--minimo-libre-mb 2048]
+//   --canales 2: enciende tambien el IN2 (referencia). Fase 0 de
+//           docs/plan_dos_canales.md: por ahora solo cuenta muestras/perdidas
+//           del IN2 en la linea de ESTADO, no lo guarda.
 //   --host: conectar a esa IP fija en vez del descubrimiento por broadcast
 //           del vendor (que ata la conexion a la IP de eth0).
 //
@@ -203,6 +206,10 @@ struct Stats {
     std::atomic<int64_t> ultimo_paquete_ms{0};
     std::atomic<bool> conectado{false};
     std::atomic<int> raw_max{0};  // max |x| crudo desde la ultima linea de ESTADO
+    // IN2 (--canales 2, Fase 0 de docs/plan_dos_canales.md): por ahora solo se
+    // cuenta para medir si el dual aguanta; no se guarda.
+    std::atomic<uint64_t> paquetes2{0}, muestras2{0}, fpga_lost2{0};
+    std::atomic<int> raw_max2{0};
 };
 
 int64_t ahora_ms() {
@@ -212,7 +219,7 @@ int64_t ahora_ms() {
 
 class CB : public ADCCallback {
    public:
-    CB(BufferCircular& b, Stats& s) : buf_(b), st_(s) {}
+    CB(BufferCircular& b, Stats& s, int canales) : buf_(b), st_(s), canales_(canales) {}
     void receivePack(ADCStreamClient*, ADCPack& p) override {
         auto& ch = p.channel1;
         buf_.escribir(ch.raw.data(), ch.raw.size(), ch.fpgaLost);
@@ -223,6 +230,15 @@ class CB : public ADCCallback {
         if (ch.fpgaLost) {
             st_.fpga_lost += ch.fpgaLost;
             st_.paquetes_con_lost++;
+        }
+        if (canales_ == 2) {
+            auto& c2 = p.channel2;
+            int m2 = 0;
+            for (int16_t x : c2.raw) m2 = std::max(m2, std::abs((int)x));
+            if (m2 > st_.raw_max2) st_.raw_max2 = m2;
+            st_.paquetes2++;
+            st_.muestras2 += c2.raw.size();
+            st_.fpga_lost2 += c2.fpgaLost;
         }
         st_.ultimo_paquete_ms = ahora_ms();
     }
@@ -241,6 +257,7 @@ class CB : public ADCCallback {
    private:
     BufferCircular& buf_;
     Stats& st_;
+    int canales_;
 };
 
 class Registros {
@@ -647,6 +664,7 @@ int main(int argc, char** argv) {
     double umbral = 3.4;  // 2026-10-05, antes 5.0
     std::string destino = "/root/eventos";
     int dec = 32;
+    int canales = 1;
     int estado_s = 10;
     double margen_ms = 10;
     int duracion_s = 0;  // 0 = hasta SIGINT/SIGTERM
@@ -668,6 +686,7 @@ int main(int argc, char** argv) {
         if (a == "--umbral") umbral = atof(sig());
         else if (a == "--destino") destino = sig();
         else if (a == "--dec") dec = atoi(sig());
+        else if (a == "--canales") canales = atoi(sig());
         else if (a == "--estado-s") estado_s = atoi(sig());
         else if (a == "--margen-ms") margen_ms = atof(sig());
         else if (a == "--duracion-s") duracion_s = atoi(sig());
@@ -688,6 +707,7 @@ int main(int argc, char** argv) {
         else if (a == "--dac-rate") pp.rate = atof(sig());
         else { fprintf(stderr, "argumento desconocido: %s\n", a.c_str()); return 2; }
     }
+    if (canales != 1 && canales != 2) { fprintf(stderr, "--canales debe ser 1 o 2\n"); return 2; }
     const double fs = 125e6 / dec;
     const int64_t N = (int64_t)(fs * VENTANA_S);
 
@@ -726,8 +746,13 @@ int main(int argc, char** argv) {
     conf->sendConfig("adc_decimation", std::to_string(dec));
     conf->sendConfig("channel_attenuator_1", "A_1_20");
     conf->sendConfig("channel_state_1", "ON");
-    conf->sendConfig("channel_state_2", "OFF");
-    adc->setCallback(std::make_shared<CB>(buf, st));
+    if (canales == 2) {
+        conf->sendConfig("channel_attenuator_2", "A_1_20");
+        conf->sendConfig("channel_state_2", "ON");
+    } else {
+        conf->sendConfig("channel_state_2", "OFF");
+    }
+    adc->setCallback(std::make_shared<CB>(buf, st, canales));
 
     // Modo prueba: DAC por el MISMO ConfigStreamClient (una segunda conexion
     // de configuracion tira la primera, ver generador_pulsos.h).
@@ -761,7 +786,7 @@ int main(int argc, char** argv) {
     }
 
     log("Modo evento (C++) — umbral kurtosis>=%.2f, dec=%d (fs=%.0f Hz, ventana=%lld muestras, margen=%lld), "
-        "destino=%s", umbral, dec, fs, (long long)N, (long long)M, destino.c_str());
+        "destino=%s, canales=%d", umbral, dec, fs, (long long)N, (long long)M, destino.c_str(), canales);
     if (!adc->startStreaming()) { log("ERROR startStreaming fallo"); return 1; }
     // Recien ahora: la libreria del vendor instala su propio handler con
     // signal() y pisaba el nuestro (Ctrl+C/SIGTERM no cortaban, visto en HW).
@@ -831,6 +856,7 @@ int main(int argc, char** argv) {
     bool en_corte = false;
     int64_t deriva_min = INT64_MAX, deriva_max = INT64_MIN;
     uint64_t muestras_ult = buf.total(), lost_ult = st.fpga_lost;
+    uint64_t muestras2_ult = st.muestras2, lost2_ult = st.fpga_lost2;
     int64_t t_ult_estado = ahora_ms(), t_inicio = ahora_ms();
     double kurt_max_periodo = 0;
 
@@ -963,13 +989,22 @@ int main(int argc, char** argv) {
             uint64_t m = buf.total(), l = st.fpga_lost;
             double dt = (t - t_ult_estado) / 1000.0;
             double pct = (m - muestras_ult - (l - lost_ult)) / (fs * dt) * 100;
+            char in2[160] = "";
+            if (canales == 2) {
+                uint64_t m2 = st.muestras2, l2 = st.fpga_lost2;
+                snprintf(in2, sizeof in2, "  IN2: muestras=%.1f%% perdidas_fpga=+%llu raw_max=%d",
+                         (m2 - muestras2_ult) / (fs * dt) * 100, (unsigned long long)(l2 - lost2_ult),
+                         st.raw_max2.exchange(0));
+                muestras2_ult = m2;
+                lost2_ult = l2;
+            }
             log("ESTADO muestras=%.1f%% perdidas_fpga=+%llu ventanas=%llu saltadas=%llu deriva=[%lld,%lld] "
-                "kurt_max=%.2f raw_max=%d eventos=%llu sin_senal=%llu libre_mb=%lld%s%s",
+                "kurt_max=%.2f raw_max=%d eventos=%llu sin_senal=%llu libre_mb=%lld%s%s%s",
                 pct, (unsigned long long)(l - lost_ult), (unsigned long long)ventanas_vistas,
                 (unsigned long long)ventanas_saltadas, (long long)deriva_min, (long long)deriva_max,
                 kurt_max_periodo, st.raw_max.exchange(0), (unsigned long long)eventos,
                 (unsigned long long)sin_senal_periodo, (long long)espacio.libre_mb(),
-                espacio.pausada() ? "  CRUDA PAUSADA" : "", corte ? "  SIN PAQUETES >1s" : "");
+                espacio.pausada() ? "  CRUDA PAUSADA" : "", corte ? "  SIN PAQUETES >1s" : "", in2);
             sin_senal_periodo = 0;
             muestras_ult = m;
             lost_ult = l;
@@ -1011,6 +1046,9 @@ int main(int argc, char** argv) {
         (unsigned long long)escritor.escritos(), (unsigned long long)escritor.fallidos(),
         (unsigned long long)no_guardados, (unsigned long long)eventos_perdidos,
         (unsigned long long)recalibraciones);
+    if (canales == 2)
+        log("IN2: paquetes=%llu muestras=%llu fpgaLost_total=%llu", (unsigned long long)st.paquetes2.load(),
+            (unsigned long long)st.muestras2.load(), (unsigned long long)st.fpga_lost2.load());
     if (gen) {
         log("PRUEBA: pulsos emitidos=%llu", (unsigned long long)gen->emitidos());
         fclose(pulsos_log);
