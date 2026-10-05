@@ -286,6 +286,7 @@ hasta 2/10 14:16 local; al cerrar se recalculan hasta la hora de la purga):
 - **2026-10-05 ~14:30 UTC** — Paso 1 (sec.10.1, `sensor_vs_referencia.py`): el sensor **no explica el residuo** de la referencia "tasa 24 h" en los 7 intervalos con sensor. 8 medidas (k>3.5, k>3.05, k>10, minutos activos; todo el intervalo y solo fuera de control): ninguna correlaciona (p ≥ 0.28) y todas empeoran el LOO (3.2 → 4.5-6.2 kg).
 - **2026-10-05 ~15 UTC** — Paso 2 (sec.10.2, `evento_21sep.py`): antes de los 500 kg hubo dos purgas seguidas en 0 kg (38 h, único caso largo) y una baja de ~20 psi en boca de pozo con cambio de ramal el 20/9. El sensor muestra el 21/9 de 09 a 13 local una firma de kurtosis extrema (hasta 2.7 ventanas k > 300 por minuto) que **no aparece en ninguna de las 144 h continuas** desde el 29/9 (máximo 1 ventana k > 300 y 2 k > 200 por hora, incluido el sábado de golpes). Candidato a alarma de evento grande, no a cantidad. Corrección a la sec.10: alternar 0 / X kg es habitual desde el 13/9 y solo 5 de 11 ceros tuvieron control; el "efecto control" está mezclado con esa alternancia.
 - **2026-10-05 ~15:30 UTC** — Enfoque del equipo, "área acumulada con k ≥ 3.5" (sec.10.3): el factor kg/área varía 150× entre intervalos (3 a 457 kg por 100 de área neta); LOO 8.3 kg (neta) y 5.3 kg (bruta) contra 3.6 de la constante y 3.2 de la referencia de la planilla. El 80 % del área neta sale de las tardes del 2/10 y 3/10 (14-15 kg). Queda como indicador de actividad, no de kg.
+- **2026-10-05 ~16 UTC** — Señal cruda del modo evento (sec.11, `crudas_rasgos.py`): 2646 eventos de 70 ms (29/9 → 5/10, md5 OK) en `datos_campo/crudas_campo/eventos/`; cubren el 98 % de las ventanas k ≥ 5 del CSV (0 % el 1/10 sin disco). A igual kurtosis, los golpes del vie 2/10 y sáb 3/10 son **otro tipo**: menos energía arriba de 400 kHz (~la mitad), centroide más bajo, impacto más largo (0.7-0.8 ms contra 0.3-0.6) y +2-3 dB de SNR. Llegan en trenes de pocos segundos con 7-10 golpes por segundo, sin período fijo. Sin dato de qué son.
 
 ## 10. Modelos sin sensor, solo con la planilla (2026-10-05)
 
@@ -401,4 +402,48 @@ neta de 1/10-4/10 da ~630 contra 642.91 en pantalla):
 - **Decisión:** el área acumulada queda como **indicador de actividad** (cuándo pasó algo), no como
   estimador de kg. Para volver a probarla como kg hay que separar primero los golpes secos, lo que
   depende de saber qué pasó en el pad esas tardes (sec.8).
+
+## 11. Señal cruda de los eventos (2026-10-05, primera pasada)
+
+Pedido del usuario: empezar con lo medido con la cadena actual (CSV + eventos del modo evento); el
+21/9 se midió de otra forma (paquetes de software, sin cruda) y queda solo como referencia.
+
+**Datos.** 2646 eventos `evento_*.bin` + `.json` bajados del disco de campo a
+`datos_campo/crudas_campo/eventos/` (1.4 GB, md5 OK): 70 ms de cruda int16 a 3.906 MHz por cada
+ventana con kurtosis ≥ 5 (umbral de captura). Cobertura de las ventanas k ≥ 5 del CSV: 98 %
+(29/9 100 %, 30/9 62 % por la caída del disco, **1/10 0 %** porque midió sin disco, 2-5/10 100 %).
+**45 % viene con hueco** (tramo con datos viejos del buffer, posición desconocida): todo se
+calculó con y sin ellos y da lo mismo.
+
+**Rasgos** (`analisis/estudio_arena/crudas_rasgos.py`, salida `analisis/outputs/crudas/rasgos_eventos.csv`):
+kurtosis, rms, pico y cresta de la filtrada 50-400 kHz; energía por banda de la cruda; y del
+**impacto más fuerte** (bloque de 1 ms menos el fondo del propio evento): fracción por banda,
+centroide, SNR, duración hasta −20 dB y frecuencia dominante.
+
+- La energía por banda de la ventana entera no sirve: la domina el ruido electrónico (52 % arriba
+  de 800 kHz). La frecuencia dominante tampoco: todo suena a ~172 kHz (resonancia del sensor).
+- **A igual kurtosis** (golpes vie 15-18 + sáb 12-18 contra noche + resto del día, sin hueco):
+
+| Kurtosis FPGA | 5-7 | 7-10 | 10-20 | > 20 |
+|---|---|---|---|---|
+| Centroide del impacto (kHz) | 318 / 441 | 268 / 348 | 241 / 253 | 196 / 229 |
+| Fracción > 400 kHz | 0.15 / 0.29 | 0.10 / 0.18 | 0.07 / 0.10 | 0.03 / 0.05 |
+| Duración del impacto (ms) | 0.78 / 0.76 | 0.79 / 0.63 | 0.72 / 0.29 | 0.75 / 0.51 |
+| SNR del impacto (dB) | 6.6 / 4.2 | 7.9 / 5.9 | 9.3 / 8.0 | 13.3 / 10.1 |
+| n | 399 / 139 | 270 / 31 | 314 / 25 | 270 / 14 |
+
+  Los golpes son **otro tipo**, no los mismos con más frecuencia: más graves, más largos y más
+  energéticos que los eventos sueltos del resto del tiempo.
+- **Ritmo:** llegan en trenes (sáb 12-18: 94 trenes de ≥ 3 golpes, mediana 7 golpes y 3 s, máximo
+  105 golpes y 32 s), con 50-150 ms entre golpes (7-10 por segundo) y sin período fijo; CV de los
+  intervalos 2.5-5 (Poisson = 1; horas de referencia 1.3-1.7).
+- [Suposición] Algo que traquetea en ráfagas (válvula o choke vibrando, pieza floja, tapones de
+  sólidos más grandes) más que una maza manual (~1 golpe/s). Las purgas no muestran más arena
+  esos días (14-15 kg) y la planilla está plana.
+- **No hay verdad de campo de arena con esta cadena:** ningún evento del 29/9 en adelante está
+  confirmado como arena; el 21/9 (arena confirmada) no tiene cruda en la PC y sus paquetes solo
+  traen área y kurtosis, así que no se puede comparar el espectro.
+- **Para la FPGA (pregunta del usuario):** los rasgos que separan los golpes del fondo son un
+  cociente de bandas del impacto (100-400 kHz contra > 400 kHz) y la duración del impacto; ninguno
+  sale de la kurtosis ni del área. Antes de implementarlos falta saber cuál de los dos tipos es arena.
 
