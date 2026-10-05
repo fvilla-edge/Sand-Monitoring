@@ -155,7 +155,8 @@ bitstream del 29/9 (`dfabb64`).
       arranque murió por el SIGSEGV del vendor al conectar ("Operation aborted",
       core dump) y el relanzamiento de systemd a los 60 s quedó bien.
       Script usado en campo: `/root/logs_campo/aplicar_umbral_34.sh` (log al lado).
-      Drop-in, la unit del repo no cambia:
+      Drop-in (desde el 5/10 la unit del repo también trae 3.4; el drop-in
+      queda en las placas ya instaladas para no reinstalar la unit):
       ```bash
       mkdir -p /etc/systemd/system/modo-evento.service.d
       printf '[Service]\nEnvironment=UMBRAL=3.4\n' > /etc/systemd/system/modo-evento.service.d/umbral.conf

@@ -37,7 +37,9 @@ Type=simple
 # capturar_eventos corta con codigo 4 (ver "Destino vigilado" en el .cpp) y
 # el relanzamiento sigue en la SD.
 Environment=DESTINO=/mnt/usb/eventos
-Environment=UMBRAL=5
+# UMBRAL=3.4 desde 2026-10-05 (antes 5): pedido del usuario tras la reunion; en las
+# placas ya instaladas se aplico con el drop-in modo-evento.service.d/umbral.conf
+Environment=UMBRAL=3.4
 # directorio de logs de campo: ahi caen los core dumps (core_pattern relativo)
 WorkingDirectory=/root/logs_campo
 LimitCORE=infinity
