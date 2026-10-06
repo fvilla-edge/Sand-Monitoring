@@ -1,6 +1,6 @@
 # Plan — IN2 como sensor independiente (área/kurtosis en la FPGA)
 
-Estado: **etapas 1-3 hechas; etapa 4 (placa de pruebas) lista** (2026-10-06). Reemplaza la "opción A" de
+Estado: **etapas 1-4 hechas; etapa 5 espera el T de OUT1 a IN1+IN2** (2026-10-06). Reemplaza la "opción A" de
 `docs/plan_dos_canales.md` (FPGA solo IN1, IN2 crudo): el IN2 tiene que
 funcionar **igual que el IN1**, como un segundo sensor. Todo en la placa de
 pruebas (`rp-f0fd8c`) hasta la última etapa; la placa de campo no se toca.
@@ -172,4 +172,22 @@ vez en el hardware.
   `~/respaldo_bitstream_7f23f7d_out`. Tropiezos (documentados en
   `COMPILAR.md` del repo fpga): el objetivo es `out/red_pitaya.bin` (no
   `.bit.bin`) y `write_cfgmem` falla si quedó un `.prm` viejo.
+- 2026-10-06, etapa 4 (`rp-f0fd8c`): `/opt/stream_app/fpga.bin` = bitstream
+  IN2 (md5 `b34cd26f…`), respaldo `fpga.bin.bak_7f23f7d_20261006`.
+  **Software actual sin tocar**: mono (dec32) y dual (dec64) andan igual que
+  con el bitstream viejo (20 ventanas/s, 100% muestras, 0 saltadas, IN2 del
+  stream al 100% y desfase 0). Registros nuevos (`leer_in2.py`, solo
+  lectura): ID `0x534d0002`; `window_count` del canal 1 = canal 0 en cada
+  ventana; reposo IN2 área ~0.507 / kurtosis ~2.97 a dec32 y ~0.563 / ~3.0
+  a dec64 (IN1: ~0.515 y ~0.578), valores propios ventana a ventana.
+  - **Reinicio de la placa por error mío:** leí los registros (`/dev/mem`)
+    segundos después de `systemctl start`, mientras `overlay.sh` recargaba
+    el bitstream. Lectura AXI con el PL reconfigurándose -> CPU colgada ->
+    watchdog a los 30s (18:10:56 -> reinicio 18:11:26). El drop-in recién
+    escrito quedó con 85 bytes en cero (sin `sync`). Repetido bien (leer
+    recién después de "Calibracion"): sin problemas. Regla: nunca leer
+    registros del PL durante un arranque de modo-evento; `sync` después de
+    escribir configs en las placas.
+  - Placa de pruebas queda en **mono con el bitstream IN2** y el software
+    actual (prueba de compatibilidad corriendo).
 
