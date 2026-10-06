@@ -220,3 +220,52 @@ y su jumper.
     con la cadena Python (`capturar_stream.py`, 1.4-9% de pérdida en las
     sesiones del 16/9); con el C++ dual dec32 pierde 0.0025% en reposo y 0.12%
     escribiendo 1 evento/s.
+- 2026-10-06: Fase 1b (sin commitear, rama `dos-canales`): `--dec 32|64`
+  (otra -> error). Al arrancar, el C++ escribe los 10 coeficientes del
+  pasabanda para esa fs (tabla de `generar_etapa4c.py` / `generar_coefs_dec64.py`
+  del repo fpga_pitaya; los de dec32 = defaults del bitstream) y verifica la
+  lectura (25 bits sin extensión de signo -> máscara). La ventana del
+  acumulador (0x328) se escribe con el stream ya a la decimación pedida.
+  - **Hallazgo:** el RTL cierra ventana con `sample_cnt == N-1`. Si se achica
+    N cuando el contador ya lo pasó, sigue hasta dar la vuelta a 2^32 (~36
+    min a dec64): `window_count` congelado (visto en HW, prueba `P1` de
+    `fase1b_pulsos.sh`, dec64 con pulsos: 0 ventanas). Arreglo por software:
+    escribir N justo después de un cambio de `window_count` (sample_cnt ~0) y
+    verificar ~20 ventanas/s; si no da, sale con error (el supervisor relanza
+    y la recarga del bitstream vuelve a defaults). `P2`: 5/5 arranques con
+    20 ventanas/s (dec32 y dec64, pulsos y reposo).
+  - Reposo dec64 (4000 ventanas): kurtosis mediana 2.998, p99 3.041, máx
+    3.06 (umbral 3.4 sigue lejos). ~1 evento/s del ruido con umbral 3.03.
+  - Verificación del pasabanda contra software: con pulsos por loopback
+    digital NO sirve (cruda con el bit de signo del loopback, saturada). Con
+    ruido real (W15, dec32): área FPGA/software constante (software -20%,
+    escala conocida de la FPGA) con los coeficientes correctos, +9% con los
+    de dec64; kurtosis dentro de 0.7%. A dec64 se espera el mismo -20% con
+    los coeficientes de dec64.
+  - `W15d64` (`fase1_dual.sh W15d64 900 3.03 2 64`): dual dec64, umbral
+    3.03, 900s. 1129 eventos = 1129 `_ch2.bin` (597MB), 0 fallidos, desfase
+    0, 0 con hueco. **Pérdidas 0.00045%, 0 saltadas, deriva máx. ~28ms**,
+    contra 0.12% / 5 / ~116ms de `W15` (dual dec32, mismo ritmo de eventos).
+    Dual a dec64 aguanta mucho mejor la escritura (la mitad de bytes y de
+    muestras por segundo). La banda de análisis 50-400kHz entra entera en
+    dec64 (Nyquist 976kHz).
+  - Pasabanda a dec64 con ruido real: área FPGA/software -1.6% con coefs
+    dec64, -28% con coefs dec32 (ambas constantes entre eventos; a dec32 el
+    correcto daba -20%). Con ruido de espectro fijo no se puede separar
+    filtro de ganancia: la evidencia de que el filtro es el correcto es la
+    lectura de los registros + el cableado del RTL. **La escala FPGA/software
+    cambia con la decimación** -> `ESCALA_FPGA_DEFAULT` (PC) necesita valor
+    propio a dec64. Para una prueba de forma de banda haría falta loopback
+    analógico (cable) con tonos.
+- 2026-10-06: **SIGSEGV de arranque = bug del vendor** (`arranques_core.sh`,
+  10 arranques dec32 mono con core dump: 3 caídas, las 3 con la misma
+  firma). Un hilo de asio corre el lambda de error de
+  `ConfigStreamClient::connect()` ("Error: 127.0.0.1 Operation aborted")
+  segundos después de que `connect()` volvió; el hilo principal (dormido
+  en un `usleep`) muere saltando a 0x4e: el lambda escribe en la pila de un
+  `connect()` que ya terminó. Cae en cualquier momento de los primeros
+  segundos (antes de conectar, recién conectado, después de calibrar), con
+  binario viejo y nuevo; explica también la caída del 5/10 en campo. El
+  supervisor relanza a los 60s. Posible parche (no aplicado): llamar a
+  `connect()` desde un hilo propio que queda vivo bloqueado, para que esas
+  escrituras caigan en pila sin uso.

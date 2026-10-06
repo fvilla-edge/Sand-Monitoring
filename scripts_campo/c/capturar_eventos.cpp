@@ -56,13 +56,17 @@
 //     TOLERANCIA_DERIVA (ej. stream congelado sin fpgaLost, visto al bajar
 //     eth0), se recalibra y se loguea.
 //
-// Uso: capturar_eventos [--umbral 3.4] [--destino DIR] [--dec 32] [--canales 1]
+// Uso: capturar_eventos [--umbral 3.4] [--destino DIR] [--dec 32|64] [--canales 1]
 //                       [--estado-s 10] [--duracion-s 0] [--host IP] [--margen-ms 10] [--sin-registro]
 //                       [--minimo-libre-mb 2048]
 //   --canales 2: enciende tambien el IN2 (referencia, docs/plan_dos_canales.md).
 //           La FPGA sigue mirando solo el IN1 (es el unico que dispara); cada
 //           evento guarda ademas el mismo tramo del IN2 en `<base>_ch2.bin`
 //           (mismo largo e indice de muestra que el .bin del IN1).
+//   --dec: 32 (default) o 64. Al arrancar escribe en la FPGA la ventana del
+//           acumulador (50ms = fs*0.05 muestras) y los coeficientes del
+//           pasabanda para esa fs, y los verifica (docs/plan_dos_canales.md,
+//           Fase 1b). OJO: el umbral 3.4 y el piso/escala de la PC son de dec32.
 //   --host: conectar a esa IP fija en vez del descubrimiento por broadcast
 //           del vendor (que ata la conexion a la IP de eth0).
 //
@@ -123,9 +127,27 @@ const uint32_t REG_BASE = 0x40000000;
 // Offsets del etapa7 viejo (Release_2025.2); el bitstream portado a
 // Release_2026.1 tiene el mismo bloque +0x100 (2026.1 ocupo 0x200-0x214).
 const uint32_t OFF_WINDOW_SAMPLES = 0x228;
+const uint32_t OFF_BP_COEFF = 0x200;  // 10 coeficientes del pasabanda: b0 b1 b2 a1 a2 (seccion 0), idem seccion 1
 const uint32_t OFF_WINDOW_COUNT = 0x22C, OFF_SUM_ABS_LO = 0x230, OFF_SUM_ABS_HI = 0x234,
                OFF_SUM_X2_LO = 0x238, OFF_SUM_X2_HI = 0x23C, OFF_SUM_X4_LO = 0x240,
                OFF_SUM_X4_MID = 0x244, OFF_SUM_X4_HI = 0x248;
+
+// Pasabanda de la FPGA (2 biquads, Butterworth 50-400kHz, Q20, 25 bits con
+// signo) por decimacion. Los defaults del bitstream son los de dec32; sin
+// reescribirlos, a dec64 la banda quedaba en ~25-200kHz. Generados con
+// generar_etapa4c.py (dec32, = defaults) y generar_coefs_dec64.py del repo
+// fpga_pitaya (tbn/vectores), mismo modelo de punto fijo que el RTL.
+struct CoefsPasabanda { int dec; int32_t c[10]; };
+const CoefsPasabanda COEFS_PASABANDA[] = {
+    {32, {58743, 117487, 58743, -1311029, 526845, 1048576, -2097152, 1048576, -1984139, 943367}},
+    {64, {182309, 364619, 182309, -480688, 286917, 1048576, -2097152, 1048576, -1865486, 846090}},
+};
+
+const CoefsPasabanda* coefs_para(int dec) {
+    for (const auto& c : COEFS_PASABANDA)
+        if (c.dec == dec) return &c;
+    return nullptr;
+}
 
 std::atomic<bool> g_stop{false};
 
@@ -272,9 +294,9 @@ class Registros {
     // 0x228 (etapa7 viejo). Si no responde en ninguno, el bitstream cargado
     // no tiene el acumulador (p.ej. el stream_app del vendor).
     bool abrir() {
-        int fd = open("/dev/mem", O_RDONLY | O_SYNC);
+        int fd = open("/dev/mem", O_RDWR | O_SYNC);
         if (fd < 0) return false;
-        void* m = mmap(nullptr, 0x1000, PROT_READ, MAP_SHARED, fd, REG_BASE);
+        void* m = mmap(nullptr, 0x1000, PROT_READ | PROT_WRITE, MAP_SHARED, fd, REG_BASE);
         close(fd);
         if (m == MAP_FAILED) return false;
         r_ = (volatile uint32_t*)m;
@@ -290,6 +312,25 @@ class Registros {
         return true;
     }
     const char* nombre() const { return nombre_; }
+    // Pasabanda segun la decimacion (los defaults del bitstream son de dec32).
+    // Devuelve false si algun registro no quedo con el valor escrito. Se leen
+    // de vuelta sin extension de signo (25 bits), por eso la mascara.
+    bool escribir_coefs(const CoefsPasabanda& c) {
+        for (int i = 0; i < 10; i++) w(OFF_BP_COEFF + 4 * i, (uint32_t)c.c[i]);
+        return coefs_ok(c);
+    }
+    bool coefs_ok(const CoefsPasabanda& c) const {
+        for (int i = 0; i < 10; i++)
+            if (r(OFF_BP_COEFF + 4 * i) != ((uint32_t)c.c[i] & 0x1FFFFFF)) return false;
+        return true;
+    }
+    // Muestras por ventana del acumulador. OJO: el RTL cierra la ventana con
+    // sample_cnt == N-1 (igualdad); si se ACHICA N cuando el contador ya paso
+    // el valor nuevo, sigue de largo hasta dar la vuelta a 2^32 (~36 min a
+    // dec64, visto en HW 2026-10-06: window_count congelado). Por eso se
+    // escribe justo despues de que window_count cambia (sample_cnt ~0), con
+    // el stream ya corriendo a la decimacion pedida. Ver ajustar_ventana().
+    void escribir_window_samples(uint32_t n) { w(OFF_WINDOW_SAMPLES, n); }
     uint32_t window_samples() const { return r(OFF_WINDOW_SAMPLES); }
     uint32_t window_count() const { return r(OFF_WINDOW_COUNT); }
     // Lee las sumas de la ultima ventana completa. Se relee window_count al
@@ -307,6 +348,7 @@ class Registros {
 
    private:
     uint32_t r(uint32_t off) const { return r_[(off + base_) / 4]; }
+    void w(uint32_t off, uint32_t v) { r_[(off + base_) / 4] = v; }
     volatile uint32_t* r_ = nullptr;
     uint32_t base_ = 0;
     const char* nombre_ = "";
@@ -553,6 +595,33 @@ int64_t calibrar(const Registros& reg, BufferCircular& buf, int64_t n, int dur_m
     return mejor;
 }
 
+// Deja la ventana del acumulador en n muestras (50ms a la fs pedida) y
+// verifica que la FPGA cierre ventanas al ritmo esperado. Se llama con el
+// stream ya corriendo a la decimacion pedida (antes, el contador corre a
+// decimacion 1). Ver Registros::escribir_window_samples por que se escribe
+// justo despues de un cambio de window_count. Si el ritmo no da, sale con
+// error: el supervisor relanza y la recarga del bitstream vuelve a defaults.
+bool ajustar_ventana(Registros& reg, uint32_t n, double fs) {
+    if (reg.window_samples() != n) {
+        uint32_t wc0 = reg.window_count();
+        int64_t t0 = ahora_ms();
+        while (reg.window_count() == wc0 && ahora_ms() - t0 < 3000) {
+        }  // espera activa: hay que escribir lo antes posible despues del cambio
+        reg.escribir_window_samples(n);
+    }
+    uint32_t a = reg.window_count();
+    usleep(1000000);
+    uint32_t b = reg.window_count();
+    double esperadas = fs / n;  // ventanas por segundo (20)
+    if (reg.window_samples() != n || std::fabs((double)(b - a) - esperadas) > 2) {
+        log("ERROR la ventana de la FPGA no quedo en %u muestras (lee %u, %u ventanas en 1s, esperadas %.0f)", n,
+            reg.window_samples(), b - a, esperadas);
+        return false;
+    }
+    log("Ventana de la FPGA: %u muestras (%u ventanas en 1s)", n, b - a);
+    return true;
+}
+
 // Registro continuo de area/kurtosis por ventana. El hilo de sondeo solo
 // agrega filas a un vector en RAM; un hilo propio las baja al CSV cada ~1s
 // (fflush a la SD puede trabarse, ver Escritor). Cota: 10 min de filas en
@@ -727,6 +796,8 @@ int main(int argc, char** argv) {
         else { fprintf(stderr, "argumento desconocido: %s\n", a.c_str()); return 2; }
     }
     if (canales != 1 && canales != 2) { fprintf(stderr, "--canales debe ser 1 o 2\n"); return 2; }
+    const CoefsPasabanda* coefs = coefs_para(dec);
+    if (!coefs) { fprintf(stderr, "--dec %d sin coeficientes del pasabanda (permitidas: 32, 64)\n", dec); return 2; }
     const double fs = 125e6 / dec;
     const int64_t N = (int64_t)(fs * VENTANA_S);
 
@@ -737,6 +808,11 @@ int main(int argc, char** argv) {
         return 1;
     }
     log("Acumulador de la FPGA: %s, %u muestras por ventana", reg.nombre(), reg.window_samples());
+    if (!reg.escribir_coefs(*coefs)) {
+        log("ERROR no se pudo escribir el pasabanda de la FPGA para dec=%d: el registro no devolvio lo escrito", dec);
+        return 1;
+    }
+    log("Pasabanda de la FPGA: 50-400kHz para dec=%d (fs=%.0f Hz)", dec, fs);
 
     const int64_t M = (int64_t)(fs * margen_ms / 1000);
     if (2 * M >= (int64_t)N * (BUFFER_VENTANAS - 2)) { log("ERROR --margen-ms demasiado grande para el buffer"); return 1; }
@@ -825,9 +901,19 @@ int main(int argc, char** argv) {
         return 1;
     }
     usleep(2000000);
+    if (!ajustar_ventana(reg, (uint32_t)N, fs)) {
+        adc->stopStreaming();
+        return 1;
+    }
     int64_t offset = calibrar(reg, buf, N, 1000);
     log("Calibracion: window_count=%u muestras_propias=%llu offset=%lld", reg.window_count(),
         (unsigned long long)buf.total(), (long long)offset);
+    // el streaming-server configura la decimacion despues de que escribimos: confirmar que no piso nada
+    if (reg.window_samples() != (uint32_t)N || !reg.coefs_ok(*coefs)) {
+        log("ERROR la ventana/pasabanda de la FPGA cambio despues de arrancar el stream (dec=%d)", dec);
+        adc->stopStreaming();
+        return 1;
+    }
 
     // el DAC arranca despues de calibrar, para no meter pulsos en la calibracion
     int64_t t_fin_pulsos = 0;
