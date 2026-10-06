@@ -50,6 +50,8 @@ MAX_EN_RAM = 1440
 # Destino real de la corrida en curso (supervisor_eventos.sh arrancar):
 # "<carpeta>" o "<carpeta> sin_disco"
 DESTINO_ACTUAL = "/run/modo-evento/destino"
+# "canales=N dec=M" de la corrida en curso (lo escribe supervisor_eventos.sh)
+MEDICION_ACTUAL = "/run/modo-evento/medicion"
 # Sin una ventana nueva en este tiempo, se reporta que no esta midiendo
 SIN_DATOS_MAX_S = 30
 LOG_REINICIOS = os.path.join(cfg.obtener("rutas.log_dir"), "modo_evento_reinicios.log")
@@ -62,6 +64,15 @@ _LIBC = ctypes.CDLL(None, use_errno=True)
 
 def log(msg):
     print(f"[{datetime.now(timezone.utc):%H:%M:%S}] {msg}", flush=True)
+
+
+def medicion_actual():
+    """{"canales": N, "dec": M} de la corrida en curso, o {} si no hay."""
+    try:
+        with open(MEDICION_ACTUAL) as f:
+            return {k: int(v) for k, _, v in (p.partition("=") for p in f.read().split()) if v.isdigit()}
+    except OSError:
+        return {}
 
 
 def estado_servicio():
@@ -149,7 +160,8 @@ class LectorCSV:
     def _parsear(lineas):
         for linea in lineas:
             partes = linea.split(",")
-            if len(partes) != 6 or partes[0] == "window_count":
+            # 7 columnas desde 2026-10-06 (dec al final); 6 en CSV viejos
+            if len(partes) not in (6, 7) or partes[0] == "window_count":
                 continue
             try:
                 wc, t_ms = int(partes[0]), int(partes[1])
@@ -388,6 +400,14 @@ def resumir(filas, lector, contadores, activo, umbral, ahora, sin_disco=False):
     # true si capturar_eventos pauso la señal cruda de los eventos por poco
     # espacio en el USB (el registro de ventanas sigue igual)
     data["me_cruda_pausada"] = os.path.exists(BANDERA_CRUDA_PAUSADA)
+    if activo:
+        med = medicion_actual()
+        if "canales" in med:
+            # 1 = mono (solo IN1), 2 = dual (IN1 + IN2 de referencia)
+            data["me_canales"] = med["canales"]
+        if "dec" in med:
+            # decimacion de la captura: 32 (3.9 MHz) o 64 (1.95 MHz)
+            data["me_dec"] = med["dec"]
     reinicios = reinicios_hoy(dia)
     if reinicios is not None:
         # veces que se cayo la medicion en el dia (UTC) y el supervisor la relanzo

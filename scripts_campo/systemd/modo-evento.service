@@ -15,7 +15,9 @@
 # se puede correr capturar_stream.py en la misma placa:
 #   systemctl disable --now modo-evento   (y al reves: enable --now)
 #
-# Destino y umbral: editar Environment= (o un drop-in con systemctl edit).
+# Destino, umbral, canales y decimacion: editar Environment= (o un drop-in
+# con systemctl edit). Cambiar = reiniciar el servicio (hueco de ~60s+arranque
+# en el CSV); el server recibe la configuracion de canales al conectar.
 # Instalar:
 #   cp /root/scripts_campo/systemd/modo-evento.service /etc/systemd/system/
 #   systemctl daemon-reload && systemctl enable --now modo-evento
@@ -40,6 +42,11 @@ Environment=DESTINO=/mnt/usb/eventos
 # UMBRAL=3.4 desde 2026-10-05 (antes 5): pedido del usuario tras la reunion; en las
 # placas ya instaladas se aplico con el drop-in modo-evento.service.d/umbral.conf
 Environment=UMBRAL=3.4
+# CANALES=1: solo IN1 (mono). CANALES=2: IN1 + IN2 de referencia (dual), cada
+# evento guarda ademas <base>_ch2.bin. DEC (32|64) es opcional: sin DEC, mono
+# va a 32 y dual a 64 (docs/plan_dos_canales.md). OJO: el umbral y el
+# piso/escala de la PC estan medidos a dec32.
+Environment=CANALES=1
 # directorio de logs de campo: ahi caen los core dumps (core_pattern relativo)
 WorkingDirectory=/root/logs_campo
 LimitCORE=infinity

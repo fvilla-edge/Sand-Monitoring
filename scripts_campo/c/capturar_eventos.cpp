@@ -34,6 +34,9 @@
 //     en la PC. Las ventanas que el sondeo no llego a leer van con
 //     estado=saltada y area/kurtosis vacias (el registro de la FPGA solo
 //     guarda la ultima). Escribe su propio hilo, igual que los eventos.
+//     Ultima columna `dec`: la escala del area cambia con la decimacion y un
+//     cambio de modo (mono dec32 <-> dual dec64) puede caer en la misma hora;
+//     los CSV viejos (6 columnas, sin dec) son todos dec32.
 //   - Destino vigilado: se anota el dispositivo de --destino al arrancar y se
 //     verifica antes de cada escritura; si cambia (USB desconectado -> /mnt/usb
 //     queda como carpeta de la SD) corta con codigo 4 en vez de escribir en la SD.
@@ -631,7 +634,8 @@ class RegistroVentanas {
     static const size_t MAX_FILAS = 20 * 600;
     struct Fila { uint32_t wc; int64_t t_ms; double area, kurt; bool saltada; uint64_t perdidas; };
 
-    explicit RegistroVentanas(std::string destino) : destino_(std::move(destino)), hilo_([this] { correr(); }) {}
+    RegistroVentanas(std::string destino, int dec)
+        : destino_(std::move(destino)), dec_(dec), hilo_([this] { correr(); }) {}
     ~RegistroVentanas() {
         if (hilo_.joinable()) cerrar();
     }
@@ -717,18 +721,19 @@ class RegistroVentanas {
             if (!f_) { log("WARNING no se pudo abrir %s", ruta.c_str()); return; }
             ruta_ = ruta;
             pos_bueno_ = ftell(f_);  // en modo "a" queda al final: lo ya escrito esta completo
-            if (nuevo) fprintf(f_, "window_count,t_utc_ms,area,kurtosis,estado,perdidas_fpga\n");
+            if (nuevo) fprintf(f_, "window_count,t_utc_ms,area,kurtosis,estado,perdidas_fpga,dec\n");
         }
         if (!f_) return;
         if (f.saltada)
-            fprintf(f_, "%u,%lld,,,saltada,%llu\n", f.wc, (long long)f.t_ms, (unsigned long long)f.perdidas);
+            fprintf(f_, "%u,%lld,,,saltada,%llu,%d\n", f.wc, (long long)f.t_ms, (unsigned long long)f.perdidas, dec_);
         else
-            fprintf(f_, "%u,%lld,%.6g,%.6g,ok,%llu\n", f.wc, (long long)f.t_ms, f.area, f.kurt,
-                    (unsigned long long)f.perdidas);
+            fprintf(f_, "%u,%lld,%.6g,%.6g,ok,%llu,%d\n", f.wc, (long long)f.t_ms, f.area, f.kurt,
+                    (unsigned long long)f.perdidas, dec_);
         escritas_++;
     }
 
     std::string destino_, hora_;
+    int dec_;
     FILE* f_ = nullptr;
     std::string ruta_;       // CSV abierto
     long pos_bueno_ = 0;     // hasta donde el CSV tiene filas completas (ultimo flush bueno)
@@ -829,7 +834,7 @@ int main(int argc, char** argv) {
     Escritor escritor(destino);
     VigiaEspacio espacio(destino, minimo_libre_mb);
     std::unique_ptr<RegistroVentanas> registro;
-    if (con_registro) registro.reset(new RegistroVentanas(destino));
+    if (con_registro) registro.reset(new RegistroVentanas(destino, dec));
     Stats st;
 
     auto conf = std::make_shared<ConfigStreamClient>();

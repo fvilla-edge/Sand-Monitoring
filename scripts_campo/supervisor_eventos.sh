@@ -4,6 +4,9 @@
 #   antes:   espera de uptime al boot; poda core dumps viejos (mismo limite
 #            que relanzar_captura.sh)
 #   arrancar: (ExecStart) elige el destino y hace exec de capturar_eventos.py.
+#            CANALES=1|2 (mono/dual, default 1) y DEC=32|64 (default: 32 en
+#            mono, 64 en dual, docs/plan_dos_canales.md) salen del
+#            Environment= de la unit; lo que corre queda en /run/modo-evento/medicion.
 #            Si DESTINO esta en /mnt/usb y no hay disco montado, mide igual:
 #            solo el CSV de ventanas en la SD (rutas.eventos_sd), con la señal
 #            cruda siempre pausada, y lo anota en /run/modo-evento/destino
@@ -20,6 +23,8 @@ mkdir -p "$LOG_DIR"
 MARCA_PARADA_RELE=/run/modo_evento_parada_rele
 # destino real de la corrida en curso: "<carpeta>" o "<carpeta> sin_disco"
 DESTINO_ACTUAL=/run/modo-evento/destino
+# canales y decimacion de la corrida en curso: "canales=N dec=M" (lo lee el anotador)
+MEDICION_ACTUAL=/run/modo-evento/medicion
 
 # true si /mnt/usb es un disco de verdad (no la carpeta comun de la SD ni un tmpfs)
 disco_montado() {
@@ -69,13 +74,19 @@ arrancar)
         fi
         ;;
     esac
+    # dual a dec64: a dec32 el dual pierde ~250x mas muestras escribiendo
+    # eventos (0.12% vs 0.00045%, pruebas W15/W15d64 del 2026-10-06)
+    canales="${CANALES:-1}"
+    dec="${DEC:-}"
+    [ -n "$dec" ] || { [ "$canales" = 2 ] && dec=64 || dec=32; }
     mkdir -p "$(dirname "$DESTINO_ACTUAL")" "$destino"
     echo "$destino$marca" > "$DESTINO_ACTUAL"
+    echo "canales=$canales dec=$dec" > "$MEDICION_ACTUAL"
     exec /usr/bin/python3 -u /root/scripts_campo/capturar_eventos.py \
-        --umbral "$UMBRAL" --destino "$destino" "${extra[@]}"
+        --umbral "$UMBRAL" --destino "$destino" --canales "$canales" --dec "$dec" "${extra[@]}"
     ;;
 despues)
-    rm -f "$DESTINO_ACTUAL"
+    rm -f "$DESTINO_ACTUAL" "$MEDICION_ACTUAL"
     # control_starlink.sh detiene el servicio para leer el rele (a veces todavia
     # en la espera de uptime del boot, que termina en resultado=signal): no es
     # una caida, se anota sin "resultado=" para que no la cuente el anotador

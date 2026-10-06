@@ -25,7 +25,9 @@ import argparse, collections, csv, glob, hashlib, os, re, sys
 from datetime import datetime, timezone
 
 PATRON = re.compile(r"^ventanas_(\d{8})_(\d{2})\.csv(\.con_nul)?$")
-ENCABEZADO = b"window_count,t_utc_ms,area,kurtosis,estado,perdidas_fpga"
+# columna dec desde 2026-10-06 (mono dec32 / dual dec64); las filas viejas de 6
+# columnas son todas dec32 y se completan con ",32" para que el archivo quede parejo
+ENCABEZADO = b"window_count,t_utc_ms,area,kurtosis,estado,perdidas_fpga,dec"
 
 
 def leer_filas(ruta):
@@ -33,8 +35,10 @@ def leer_filas(ruta):
     filas = []
     for linea in raw.replace(b"\0", b"").split(b"\n"):
         p = linea.split(b",")
-        if len(p) != 6 or linea.startswith(b"window_count"):
+        if len(p) not in (6, 7) or linea.startswith(b"window_count"):
             continue
+        if len(p) == 6:
+            linea += b",32"
         try:
             t = int(p[1])
         except ValueError:

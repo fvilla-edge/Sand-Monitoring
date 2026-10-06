@@ -172,6 +172,27 @@ bitstream del 29/9 (`dfabb64`).
       (`ventanas_umbral_1min`, `me_eventos_hoy` en Losant) toma el umbral nuevo
       solo. Volumen esperado con los CSV de campo 29/9-5/10: ~2.7× eventos
       (51/h contra 19/h, ~0.6 GB/día en el disco; peor hora ~1350 eventos, ~720 MB).
+- [ ] **Dos canales + decimación configurable** (rama `dos-canales`,
+      `docs/plan_dos_canales.md`, 2026-10-06; **solo en la placa de pruebas**).
+      Va todo junto: `c/capturar_eventos.cpp` (compilar en la placa),
+      `capturar_eventos.py`, `supervisor_eventos.sh`, `resumen_modo_evento.py`
+      y `systemd/modo-evento.service` (unit nueva: `daemon-reload` con la
+      captura parada). Con la unit nueva y sin drop-in la placa sigue en mono
+      dec32 como hoy. Cambios que se notan aunque siga en mono:
+      - el CSV de ventanas suma una 7.ª columna `dec` (32/64); en la PC
+        `organizar_csv_campo.py` y `ventanas_a_paquete.py` ya la entienden
+        (los CSV viejos de 6 columnas = dec32);
+      - el `.json` de cada evento suma `dec` y `canales`;
+      - el arranque tarda ~1 s más (verifica la ventana de la FPGA);
+      - Losant recibe `me_canales` y `me_dec`: **crear los atributos (Number)
+        en el Device de campo y en `test_SC`**.
+      Pasar a dual (antes: confirmar físicamente qué hay en el IN2 de campo y
+      su jumper): drop-in `canales.conf` con `Environment=CANALES=2` (DEC
+      queda en 64 solo), `daemon-reload` con la captura parada, `start`.
+      Verificar: `cat /run/modo-evento/medicion` = `canales=2 dec=64` y en el
+      journal `IN2: muestras=100%`. Volver a mono: borrar `canales.conf`.
+      OJO dual: el umbral 3.4 y la escala FPGA/software de la PC están medidos
+      a dec32 (a dec64 el área de reposo da ~0.575 en vez de ~0.514).
 
 ## 3. Control de Starlink (`starlink_remoto/`)
 

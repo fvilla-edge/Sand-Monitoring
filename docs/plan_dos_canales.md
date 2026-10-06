@@ -269,3 +269,25 @@ y su jumper.
   supervisor relanza a los 60s. Posible parche (no aplicado): llamar a
   `connect()` desde un hilo propio que queda vivo bloqueado, para que esas
   escrituras caigan en pila sin uso.
+- 2026-10-06: Fase 2 (sin commitear): `Environment=CANALES=1` en la unit;
+  `DEC` opcional (sin DEC: mono 32, dual 64). `supervisor_eventos.sh` pasa
+  `--canales/--dec` y deja `canales=N dec=M` en `/run/modo-evento/medicion`;
+  el anotador manda `me_canales` y `me_dec` a Losant. Falta en el plan y se
+  agregó: **columna `dec` en el CSV de ventanas** (7.ª; un cambio de modo
+  dentro de la misma hora mezclaba áreas de dec32 y dec64 sin forma de
+  separarlas). Lectores adaptados: `resumen_modo_evento.py` y
+  `organizar_csv_campo.py` (exigían 6 columnas; el organizador completa las
+  viejas con `,32`), `ventanas_a_paquete.py` (corta tramo si cambia `dec` y
+  lo anota en cada segmento). 61 tests de `analisis/tests` OK + CSV mezclado
+  a mano (6 col, 7 col dec32, 7 col dec64) -> 2 tramos correctos.
+  - Lab (`rp-f0fd8c`, respaldo `/root/respaldo_fase2_20261006/`): mono por
+    default -> `canales=1 dec=32`, 20 ventanas/s. Drop-in `canales.conf`
+    (`CANALES=2`) -> `canales=2 dec=64`, IN2 100%, desfase 0, Losant
+    `me_canales: 2, me_dec: 64`, CSV con `,64`. Vuelta a mono (borrar el
+    drop-in) -> `canales=1 dec=32`, CSV con `,32`, área de reposo 0.514.
+  - En el medio, dos caídas seguidas del vendor (relanzadas por systemd a
+    los 60s, como corresponde): SIGSEGV del lambda de `connect()` y, en el
+    relanzamiento, ABRT (`bad_alloc` en `requestStopStreamingCommon` desde
+    `startStreaming()`, la misma falla conocida del arranque temprano).
+    Costo: ~3 min sin medir.
+  - Pendiente: comando de Losant para cambiar de modo (opcional en el plan).
