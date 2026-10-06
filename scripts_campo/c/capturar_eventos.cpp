@@ -108,6 +108,7 @@
 #include <deque>
 #include <fcntl.h>
 #include <condition_variable>
+#include <future>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -746,6 +747,33 @@ class RegistroVentanas {
     std::thread hilo_;
 };
 
+// Bug del vendor (cores del 2026-10-06, ~30% de los arranques con --host):
+// ConfigStreamClient::connect() deja registrado un lambda de error que guarda
+// referencias a su propia pila. Segundos despues de que connect() volvio, el
+// hilo de asio lo dispara ("Error: 127.0.0.1 Operation aborted") y escribe en
+// esa pila muerta: el hilo que habia llamado a connect() (antes, el principal)
+// muere saltando a una direccion basura (0x4e). Arreglo sin tocar la libreria:
+// connect() corre en un hilo propio, por DEBAJO de un relleno de pila, y ese
+// hilo despues queda bloqueado para siempre mas arriba. Las escrituras
+// tardias caen en una zona de pila que nadie vuelve a usar.
+__attribute__((noinline)) void conectar_bajo_relleno(const std::shared_ptr<ConfigStreamClient>& conf,
+                                                     const std::string& host, std::promise<bool>& res) {
+    volatile char relleno[256 * 1024];  // connect() queda >=256KB mas abajo que el pause() de despues
+    relleno[0] = 0;
+    relleno[sizeof relleno - 1] = 0;
+    res.set_value(host.empty() ? conf->connect() : conf->connect(std::vector<std::string>{host}));
+}
+
+bool conectar_config(std::shared_ptr<ConfigStreamClient> conf, const std::string& host) {
+    auto res = std::make_shared<std::promise<bool>>();
+    auto fut = res->get_future();
+    std::thread([conf, host, res] {
+        conectar_bajo_relleno(conf, host, *res);
+        for (;;) pause();  // vivo hasta que termine el proceso: su pila vieja no se reusa
+    }).detach();
+    return fut.get();
+}
+
 int64_t ahora_utc_ms() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
                std::chrono::system_clock::now().time_since_epoch()).count();
@@ -841,7 +869,7 @@ int main(int argc, char** argv) {
     auto adc = std::make_shared<ADCStreamClient>(conf);
     conf->setVerbose(false);
     adc->setVerbose(false);
-    bool ok = host.empty() ? conf->connect() : conf->connect(std::vector<std::string>{host});
+    bool ok = conectar_config(conf, host);
     if (!ok) { log("ERROR no se pudo conectar al streaming-server%s%s", host.empty() ? "" : " en ", host.c_str()); return 1; }
     log("Config conectada via %s", host.empty() ? "descubrimiento broadcast" : host.c_str());
     conf->sendConfig("adc_pass_mode", "NET");

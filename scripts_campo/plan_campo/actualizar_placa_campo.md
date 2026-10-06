@@ -193,6 +193,9 @@ bitstream del 29/9 (`dfabb64`).
       journal `IN2: muestras=100%`. Volver a mono: borrar `canales.conf`.
       OJO dual: el umbral 3.4 y la escala FPGA/software de la PC están medidos
       a dec32 (a dec64 el área de reposo da ~0.575 en vez de ~0.514).
+      Incluye el parche del SIGSEGV de arranque del vendor (`connect()` en un
+      hilo propio; en lab 0/20 caídas contra 3/10 sin parche): es la caída
+      que se vio en campo el 5/10 al aplicar el umbral 3.4.
 
 ## 3. Control de Starlink (`starlink_remoto/`)
 

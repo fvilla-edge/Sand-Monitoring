@@ -266,9 +266,16 @@ y su jumper.
   `connect()` que ya terminó. Cae en cualquier momento de los primeros
   segundos (antes de conectar, recién conectado, después de calibrar), con
   binario viejo y nuevo; explica también la caída del 5/10 en campo. El
-  supervisor relanza a los 60s. Posible parche (no aplicado): llamar a
-  `connect()` desde un hilo propio que queda vivo bloqueado, para que esas
-  escrituras caigan en pila sin uso.
+  supervisor relanza a los 60s.
+  - Parche (sin commitear): `connect()` corre en un hilo propio, debajo de
+    256KB de relleno de pila, y ese hilo queda bloqueado (`pause()`) hasta
+    que termina el proceso. `arranques_core.sh P1 20`: **20/20 arranques
+    limpios, 0 cores, 0 mensajes "Operation aborted"** (antes 3/10, y el
+    mensaje salía solo en los que caían). O sea que el error de asio
+    directamente deja de dispararse; el mecanismo exacto no está entendido,
+    el resultado sí es claro (con 30% de caídas, 20 limpios por azar ~0.08%).
+    Instalado en el modo-evento de lab 15:50 UTC (respaldo
+    `/root/respaldo_parche_connect_20261006/`).
 - 2026-10-06: Fase 2 (sin commitear): `Environment=CANALES=1` en la unit;
   `DEC` opcional (sin DEC: mono 32, dual 64). `supervisor_eventos.sh` pasa
   `--canales/--dec` y deja `canales=N dec=M` en `/run/modo-evento/medicion`;
