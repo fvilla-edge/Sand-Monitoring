@@ -1,6 +1,6 @@
 # Diseño — cambiar mono/dual desde Losant
 
-Estado: **diseño, sin implementar** (2026-10-06). Decisiones del usuario:
+Estado: **implementado y probado en la placa de pruebas** (2026-10-06); faltan pruebas 4, 6 y 7 y algunos casos de la 2. Decisiones del usuario:
 modo en `config_campo.json` (no drop-in de systemd), el comando lleva solo
 `canales` (la decimación sale sola: mono 32, dual 64) y Losant recibe el
 resultado del último cambio.
@@ -103,3 +103,18 @@ resultado del último cambio.
 Va junto con el resto del IN2 (etapa 9 del plan del IN2): la unit cambia
 (sin `Environment=CANALES`), así que se instala con la captura parada y un
 solo `daemon-reload`. Anotar en `scripts_campo/plan_campo/actualizar_placa_campo.md`.
+
+## Bitácora
+
+- 2026-10-06: implementado. Lab (`rp-f0fd8c`, respaldo
+  `/root/respaldo_canales_remoto_20261006/`): clave agregada con
+  `fusionar_config.py` (conserva `gcs.habilitado: false` del lab), dual por
+  config (sin drop-in). A mano: pedir el modo actual -> `ok 2 (ya estaba)`
+  sin reiniciar; 2->1 `ok 1` en 30s; segundo pedido con uno en curso ->
+  rechazado. `me_cambio` en el resumen. Desde Losant (`test_SC`, usuario):
+  dual->mono->dual, `ok` los tres (20:15, 20:17, 20:18 UTC). Queda en dual
+  para la noche (etapa 8 del plan del IN2).
+  - Pendiente: corte de eth0 en medio, cruce con el lock del relé, modo
+    clásico, fallo forzado (vuelta automática), dual con bitstream viejo.
+  - De paso: `fusionar_config.py` ahora hace fsync (archivo y carpeta).
+

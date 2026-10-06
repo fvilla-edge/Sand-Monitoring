@@ -113,6 +113,10 @@ TIMEOUT_DISH_STARLINK = cfg.obtener("starlink_api.timeout_s")
 # WorkingDirectory=/root/panel_solar_ble (ver el .service), no en la raíz del
 # repo — los mismos "/root/..." que ya usa el sys.path.insert de arriba.
 SCRIPT_REPETIR_CAPTURA = "/root/scripts_campo_comun/repetir_captura.sh"
+# Comando "canales" ({"canales": 1|2}): mono/dual del modo evento. El script se
+# desacopla solo (systemd-run) y deja el resultado para el anotador (me_cambio).
+# Ver docs/plan_cambio_canales_remoto.md.
+SCRIPT_CAMBIAR_CANALES = "/root/scripts_campo/cambiar_canales.sh"
 SCRIPT_RELANZAR_CAPTURA = "/root/scripts_campo_comun/relanzar_captura.sh"
 SCRIPT_CAPTURAR_STREAM = "/root/scripts_campo/capturar_stream.py"
 
@@ -439,11 +443,29 @@ def _enviar_pendientes(dispositivo):
         print(f"Resumenes del modo evento al dia (ultimo {nombre})")
 
 
+def _cambiar_canales(payload):
+    canales = payload.get("canales") if isinstance(payload, dict) else None
+    if canales not in (1, 2, "1", "2"):
+        print(f"Comando 'canales' ignorado: payload invalido {payload!r} (se espera {{\"canales\": 1|2}})")
+        return
+    argv = ["bash", SCRIPT_CAMBIAR_CANALES, str(canales)]
+    print(f"Lanzando cambio de canales: {argv}")
+    # el script vuelve enseguida (se relanza solo como unidad transitoria);
+    # timeout por las dudas, para no colgar el reporte
+    try:
+        r = subprocess.run(argv, capture_output=True, text=True, timeout=30)
+        print((r.stdout + r.stderr).strip())
+    except Exception as exc:
+        print(f"No se pudo lanzar el cambio de canales: {exc}")
+
+
 def _al_recibir_comando(dispositivo, comando):
     nombre = comando["name"].lower()
     payload = comando.get("payload") or {}
     if nombre == "capturar":
         _capturar(payload)
+    elif nombre == "canales":
+        _cambiar_canales(payload)
     else:
         print(f"Comando desconocido ignorado: nombre={nombre!r} payload={payload}")
 

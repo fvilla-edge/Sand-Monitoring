@@ -15,6 +15,14 @@ Uso desde Python:
 
 Uso desde Bash:
     TIMEOUT_STOP=$(python3 /root/scripts_campo_comun/cfg.py starlink.timeout_stop_s)
+
+Escritura (solo claves que ya existen; el valor se interpreta como JSON si se
+puede, si no queda como texto):
+    python3 /root/scripts_campo_comun/cfg.py --poner modo_evento.canales 2
+Es atomica: temporal en la misma carpeta + fsync + rename + fsync de la
+carpeta. Un corte o un cuelgue en el medio deja el archivo viejo o el nuevo,
+nunca uno a medias (un archivo recien escrito sin fsync puede quedar en ceros
+si la placa se cuelga, visto el 2026-10-06).
 """
 import json
 import os
@@ -40,8 +48,47 @@ def obtener(clave):
     return valor
 
 
+def poner(clave, valor):
+    """Cambia `clave` (que tiene que existir) y guarda el config de forma atomica."""
+    global _config
+    with open(_CONFIG_PATH) as f:
+        config = json.load(f)   # releer: no pisar cambios hechos por otro proceso
+    partes = clave.split('.')
+    nodo = config
+    for parte in partes[:-1]:
+        nodo = nodo[parte]
+    if partes[-1] not in nodo:
+        raise KeyError(clave)
+    nodo[partes[-1]] = valor
+    carpeta = os.path.dirname(_CONFIG_PATH)
+    tmp = _CONFIG_PATH + '.tmp'
+    with open(tmp, 'w') as f:
+        json.dump(config, f, indent=2, ensure_ascii=False)
+        f.write('\n')
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, _CONFIG_PATH)
+    fd = os.open(carpeta, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    _config = config
+
+
 if __name__ == '__main__':
     import sys
+    if len(sys.argv) == 4 and sys.argv[1] == '--poner':
+        try:
+            nuevo = json.loads(sys.argv[3])
+        except ValueError:
+            nuevo = sys.argv[3]
+        try:
+            poner(sys.argv[2], nuevo)
+        except KeyError:
+            print(f'No existe la clave {sys.argv[2]}', file=sys.stderr)
+            sys.exit(1)
+        sys.exit(0)
     if len(sys.argv) < 2:
         print('Uso: cfg.py <clave.punteada> [<clave.punteada> ...]', file=sys.stderr)
         sys.exit(1)

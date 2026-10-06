@@ -52,6 +52,8 @@ MAX_EN_RAM = 1440
 DESTINO_ACTUAL = "/run/modo-evento/destino"
 # "canales=N dec=M" de la corrida en curso (lo escribe supervisor_eventos.sh)
 MEDICION_ACTUAL = "/run/modo-evento/medicion"
+# resultado del ultimo cambio mono/dual (cambiar_canales.sh, comando "canales")
+ESTADO_CAMBIO_CANALES = os.path.join(cfg.obtener("rutas.log_dir"), "cambio_canales_estado")
 # Sin una ventana nueva en este tiempo, se reporta que no esta midiendo
 SIN_DATOS_MAX_S = 30
 LOG_REINICIOS = os.path.join(cfg.obtener("rutas.log_dir"), "modo_evento_reinicios.log")
@@ -408,6 +410,13 @@ def resumir(filas, lector, contadores, activo, umbral, ahora, sin_disco=False, f
         if "dec" in med:
             # decimacion de la captura: 32 (3.9 MHz) o 64 (1.95 MHz)
             data["me_dec"] = med["dec"]
+    try:
+        with open(ESTADO_CAMBIO_CANALES) as f:
+            # resultado del ultimo cambio mono/dual pedido por Losant, p.ej.
+            # "ok 2 2026-10-06T20:15:03Z" o "error: ... (volvio a 1) ..."
+            data["me_cambio"] = f.read().strip()[:200]
+    except OSError:
+        pass
     # IN2 como sensor independiente (dual con el bitstream que lo calcula,
     # docs/plan_in2_independiente.md): solo maximos del ultimo minuto, el detalle
     # queda en su CSV (<destino>/in2)

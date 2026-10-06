@@ -202,6 +202,16 @@ bitstream del 29/9 (`dfabb64`).
       y `area_max_1min_in2` (**crear los atributos, Number, en el Device de
       campo y en `test_SC`**). Va en la etapa 9 del plan: primero el
       bitstream solo con el software actual en mono.
+      **Cambio mono/dual desde Losant** (`docs/plan_cambio_canales_remoto.md`,
+      2026-10-06, probado en `test_SC`): comando `canales` con
+      `{"canales": 1|2}`. Archivos: `cambiar_canales.sh` (nuevo),
+      `supervisor_eventos.sh`, unit (ya **sin** `Environment=CANALES`: el modo
+      sale de `config_campo.json` `modo_evento.canales`, que agrega la fusión
+      con valor 1), `cfg.py` (`--poner` atómico), `resumen_modo_evento.py`
+      (`me_cambio`), `panel_solar_ble/publicar_losant.py` (cartero: reiniciar
+      `panel-solar-informe`), `fusionar_config.py` (fsync). **Crear el
+      atributo `me_cambio` (String) en el Device de campo.** Si en campo
+      queda algún drop-in `canales.conf`, borrarlo (le gana al config).
       Incluye el parche del SIGSEGV de arranque del vendor (`connect()` en un
       hilo propio; en lab 0/20 caídas contra 3/10 sin parche): es la caída
       que se vio en campo el 5/10 al aplicar el umbral 3.4.

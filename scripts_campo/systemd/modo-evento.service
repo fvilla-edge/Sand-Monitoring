@@ -42,11 +42,12 @@ Environment=DESTINO=/mnt/usb/eventos
 # UMBRAL=3.4 desde 2026-10-05 (antes 5): pedido del usuario tras la reunion; en las
 # placas ya instaladas se aplico con el drop-in modo-evento.service.d/umbral.conf
 Environment=UMBRAL=3.4
-# CANALES=1: solo IN1 (mono). CANALES=2: IN1 + IN2 de referencia (dual), cada
-# evento guarda ademas <base>_ch2.bin. DEC (32|64) es opcional: sin DEC, mono
-# va a 32 y dual a 64 (docs/plan_dos_canales.md). OJO: el umbral y el
-# piso/escala de la PC estan medidos a dec32.
-Environment=CANALES=1
+# Mono/dual: modo_evento.canales de config_campo.json (1 o 2), lo cambia
+# cambiar_canales.sh (comando "canales" de Losant) sin daemon-reload.
+# Environment=CANALES=1|2 en un drop-in le gana (solo para pruebas a mano).
+# DEC (32|64) es opcional: sin DEC, mono va a 32 y dual a 64. Dual = IN1 + IN2
+# como sensor independiente (docs/plan_in2_independiente.md). OJO: el umbral y
+# el piso/escala de la PC estan medidos a dec32.
 # UMBRAL2 (opcional): umbral propio del IN2 en dual (sensor independiente,
 # docs/plan_in2_independiente.md). Sin UMBRAL2 se usa el mismo que UMBRAL.
 # directorio de logs de campo: ahi caen los core dumps (core_pattern relativo)

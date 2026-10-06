@@ -39,7 +39,8 @@
     "direccion": "0x68"
   },
   "modo_evento": {
-    "minimo_libre_mb": 2048
+    "minimo_libre_mb": 2048,
+    "canales": 1
   },
   "gcs": {
     "habilitado": true,

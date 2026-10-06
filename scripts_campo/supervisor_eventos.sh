@@ -4,9 +4,11 @@
 #   antes:   espera de uptime al boot; poda core dumps viejos (mismo limite
 #            que relanzar_captura.sh)
 #   arrancar: (ExecStart) elige el destino y hace exec de capturar_eventos.py.
-#            CANALES=1|2 (mono/dual, default 1) y DEC=32|64 (default: 32 en
-#            mono, 64 en dual, docs/plan_dos_canales.md) salen del
-#            Environment= de la unit; lo que corre queda en /run/modo-evento/medicion.
+#            Canales (1 mono / 2 dual): modo_evento.canales de config_campo.json
+#            (lo cambia cambiar_canales.sh, comando "canales" de Losant); una
+#            variable CANALES (drop-in a mano, pruebas) le gana. DEC=32|64
+#            opcional, default 32 en mono y 64 en dual. Lo que corre queda en
+#            /run/modo-evento/medicion.
 #            Si DESTINO esta en /mnt/usb y no hay disco montado, mide igual:
 #            solo el CSV de ventanas en la SD (rutas.eventos_sd), con la señal
 #            cruda siempre pausada, y lo anota en /run/modo-evento/destino
@@ -76,7 +78,11 @@ arrancar)
     esac
     # dual a dec64: a dec32 el dual pierde ~250x mas muestras escribiendo
     # eventos (0.12% vs 0.00045%, pruebas W15/W15d64 del 2026-10-06)
-    canales="${CANALES:-1}"
+    canales="${CANALES:-$(python3 "$CFG" modo_evento.canales 2>/dev/null)}"
+    case "$canales" in
+    1|2) ;;
+    *) echo "[supervisor] canales invalido ('$canales'), se mide en mono"; canales=1 ;;
+    esac
     dec="${DEC:-}"
     [ -n "$dec" ] || { [ "$canales" = 2 ] && dec=64 || dec=32; }
     mkdir -p "$(dirname "$DESTINO_ACTUAL")" "$destino"
