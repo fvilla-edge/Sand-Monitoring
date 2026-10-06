@@ -1,6 +1,6 @@
 # Plan — IN2 como sensor independiente (área/kurtosis en la FPGA)
 
-Estado: **etapas 1 y 2 hechas (sin commitear), etapa 3 lista para lanzar** (2026-10-06). Reemplaza la "opción A" de
+Estado: **etapas 1-3 hechas; etapa 4 (placa de pruebas) lista** (2026-10-06). Reemplaza la "opción A" de
 `docs/plan_dos_canales.md` (FPGA solo IN1, IN2 crudo): el IN2 tiene que
 funcionar **igual que el IN1**, como un segundo sensor. Todo en la placa de
 pruebas (`rp-f0fd8c`) hasta la última etapa; la placa de campo no se toca.
@@ -161,4 +161,15 @@ vez en el hardware.
     está instalado en la PC (aborta con `locale::facet::_S_create_c_locale`).
     Arreglo sin tocar el sistema: `localedef -i en_US -f UTF-8 DIR/en_US.UTF-8`
     y `export LOCPATH=DIR` antes de correr.
+- 2026-10-06, etapa 3 (commit `20ac88b`): build Vivado 2025.1, ~20 min.
+  **Timing cumplido** (WNS +0.157ns, antes +0.155ns). DSP 58/80 (72.5%,
+  antes 41: +17 = filtro + acumulador del canal 1, que antes Vivado
+  eliminaba), LUT 52.6% (51.5%), registros 37.2% (35.5%).
+  `out/red_pitaya.bin` md5 `b34cd26f…`, mismo encabezado que el de campo.
+  Copias: `~/bitstreams/in2_20ac88b_red_pitaya.bin` y
+  `~/bitstreams/campo_7f23f7d_red_pitaya.bin` (md5 `1e6b2cf2…`, el de las
+  placas); carpeta `out/` del 30/9 completa en
+  `~/respaldo_bitstream_7f23f7d_out`. Tropiezos (documentados en
+  `COMPILAR.md` del repo fpga): el objetivo es `out/red_pitaya.bin` (no
+  `.bit.bin`) y `write_cfgmem` falla si quedó un `.prm` viejo.
 
