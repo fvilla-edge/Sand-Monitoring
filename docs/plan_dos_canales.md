@@ -164,4 +164,59 @@ y su jumper.
     hay que vigilar (si llega a ~300ms se pierden eventos).
   - Ruido de base IN2 raw_max ~350-390 vs IN1 ~140 (en el lab, sin saber qué
     hay físicamente en el IN2).
-  - `D90` 5400s lanzada 20:17 UTC, resultado a leer el 6/10.
+  - `D90` 5400s (20:17-21:47 UTC): 107999 ventanas, **0 saltadas**, 0 eventos
+    (lab sin señal: no prueba escritura), recalibraciones 0, salida 0.
+    fpgaLost 529420 de 2.11e10 (0.0025%, igual IN1/IN2, en 56 de 539 líneas).
+    Deriva máx. 306600 muestras (~78ms) contra ~300ms de buffer.
+    **Dual dec32 aguanta en reposo -> no hace falta dec64 para dual.**
+- 2026-10-06: Fase 1 en la rama `dos-canales` (sin commitear): segundo buffer
+  circular del IN2, escrito ANTES que el IN1 en el callback (si la ventana del
+  IN1 está completa, la del IN2 también). Por evento: `.bin` (IN1) +
+  `_ch2.bin` (IN2, mismo tramo y largo); `.json` con `dec` y `canales` siempre
+  y, en dual, `archivo_ch2` (null si no se pudo sacar) y `con_hueco_ch2`. Si
+  algo falla al escribir se borran los tres juntos. ESTADO del IN2 agrega
+  `desfase` (paquetes con distinto largo/pérdidas entre canales) y `sin_ch2`.
+  Compilado sin warnings en `rp-f0fd8c:/root/staging_fase1/` (modo-evento
+  sigue con el binario de la Fase 0).
+  - `P1` (`/root/prueba_eth0/fase1_pulsos.sh`): 30 pulsos por loopback
+    digital DAC->IN1, dual y después mono. Dual: 31 eventos, 31 `_ch2.bin`,
+    desfase 0, sin_ch2 0, fallidos 0. IN1 con el pulso saturado (32765) dentro
+    de la ventana; IN2 solo ruido (std ~35, máx ~160-190, sin pulso): **los
+    canales no se cruzan**. Mono: 31 eventos sin `_ch2.bin`, `.json` igual
+    que antes más `dec` y `canales: 1`.
+  - **Dual + DAC pierde 7-29% de muestras** (fpgaLost, del lado del server,
+    igual en ambos canales; mono + DAC 0.2%, dual sin DAC 0.0025%). El stream
+    de bajada al DAC compite. En campo no hay DAC; sí afecta la prueba de
+    Fase 4 "tramo real por OUT1" en dual (corta, aceptar huecos o generador
+    externo).
+  - Escritura sostenida sin DAC (`fase1_dual.sh NOMBRE SEG UMBRAL [CAN]`),
+    umbral 3.01 (≈1 evento/s con el ruido del lab, ≈3x el pico de campo de
+    1275/h), 900s cada una, binario de staging:
+
+    | | eventos | a disco | pérdidas | saltadas | deriva máx. |
+    |---|---|---|---|---|---|
+    | `M15` mono | 1290 | 682MB | 0.014% | 1 | ~72ms |
+    | `W15` dual | 1052 | 1.1GB | 0.12% | 5 | ~116ms |
+
+    W15: 1052 `.json` = 1052 `_ch2.bin`, todos con el largo correcto y
+    `archivo_ch2` bien; 0 fallidos, 0 eventos perdidos, desfase 0, sin_ch2 0;
+    10 con hueco (los mismos en IN1 e IN2). Saltadas y ráfagas de pérdida
+    (0.4-1M muestras) juntas en los últimos 4 min: mismo mecanismo que PASE2
+    (vaciado de páginas sucias al USB). Dual escribe ~1.6x bytes y pierde ~8x
+    más que mono a igual umbral; sigue lejos del buffer (~300ms) y a ~1/3 del
+    ritmo de esta prueba en el peor caso de campo.
+  - Disco lleno en dual (`fase1_lleno.sh`, destino tmpfs de 12MB):
+    `L1` A sin control: 11 tríos completos, 79 fallidos (`No space left`),
+    **0 archivos sueltos ni tríos incompletos**, medición siguió.
+    `L1` B (pausa con mínimo 6MB): SIGSEGV del vendor al arrancar
+    (`Operation aborted`, antes de cualquier evento), con el server relanzado
+    ~4s después del anterior -> script corregido a 60s entre corridas.
+    `L2` B repetida: pausa a los 6s, 8 tríos completos, 60
+    `no_guardados_por_espacio`, 0 fallidos, 0 saltadas.
+  - 12:44 UTC: binario + cpp + py instalados en el modo-evento de lab
+    (respaldo `/root/respaldo_fase1_20261006/`). Arranca mono por el
+    supervisor igual que antes (umbral 3.40, 100% muestras, 0 saltadas).
+  - Nota del usuario: antes, en dual, se medía a dec64 por pérdidas. Eso era
+    con la cadena Python (`capturar_stream.py`, 1.4-9% de pérdida en las
+    sesiones del 16/9); con el C++ dual dec32 pierde 0.0025% en reposo y 0.12%
+    escribiendo 1 evento/s.

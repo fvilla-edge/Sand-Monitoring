@@ -59,9 +59,10 @@
 // Uso: capturar_eventos [--umbral 3.4] [--destino DIR] [--dec 32] [--canales 1]
 //                       [--estado-s 10] [--duracion-s 0] [--host IP] [--margen-ms 10] [--sin-registro]
 //                       [--minimo-libre-mb 2048]
-//   --canales 2: enciende tambien el IN2 (referencia). Fase 0 de
-//           docs/plan_dos_canales.md: por ahora solo cuenta muestras/perdidas
-//           del IN2 en la linea de ESTADO, no lo guarda.
+//   --canales 2: enciende tambien el IN2 (referencia, docs/plan_dos_canales.md).
+//           La FPGA sigue mirando solo el IN1 (es el unico que dispara); cada
+//           evento guarda ademas el mismo tramo del IN2 en `<base>_ch2.bin`
+//           (mismo largo e indice de muestra que el .bin del IN1).
 //   --host: conectar a esa IP fija en vez del descubrimiento por broadcast
 //           del vendor (que ata la conexion a la IP de eth0).
 //
@@ -206,9 +207,9 @@ struct Stats {
     std::atomic<int64_t> ultimo_paquete_ms{0};
     std::atomic<bool> conectado{false};
     std::atomic<int> raw_max{0};  // max |x| crudo desde la ultima linea de ESTADO
-    // IN2 (--canales 2, Fase 0 de docs/plan_dos_canales.md): por ahora solo se
-    // cuenta para medir si el dual aguanta; no se guarda.
-    std::atomic<uint64_t> paquetes2{0}, muestras2{0}, fpga_lost2{0};
+    // IN2 (--canales 2). desfase2: paquetes en que el IN2 trajo otra cantidad de
+    // muestras o de perdidas que el IN1 (desalinea los indices; esperado 0).
+    std::atomic<uint64_t> paquetes2{0}, muestras2{0}, fpga_lost2{0}, desfase2{0};
     std::atomic<int> raw_max2{0};
 };
 
@@ -219,9 +220,22 @@ int64_t ahora_ms() {
 
 class CB : public ADCCallback {
    public:
-    CB(BufferCircular& b, Stats& s, int canales) : buf_(b), st_(s), canales_(canales) {}
+    CB(BufferCircular& b, BufferCircular* b2, Stats& s) : buf_(b), buf2_(b2), st_(s) {}
     void receivePack(ADCStreamClient*, ADCPack& p) override {
         auto& ch = p.channel1;
+        // El IN2 se escribe ANTES que el IN1: cuando el hilo de sondeo ve
+        // completa una ventana del IN1, la del IN2 ya esta (mismo indice).
+        if (buf2_) {
+            auto& c2 = p.channel2;
+            buf2_->escribir(c2.raw.data(), c2.raw.size(), c2.fpgaLost);
+            int m2 = 0;
+            for (int16_t x : c2.raw) m2 = std::max(m2, std::abs((int)x));
+            if (m2 > st_.raw_max2) st_.raw_max2 = m2;
+            st_.paquetes2++;
+            st_.muestras2 += c2.raw.size();
+            st_.fpga_lost2 += c2.fpgaLost;
+            if (c2.raw.size() != ch.raw.size() || c2.fpgaLost != ch.fpgaLost) st_.desfase2++;
+        }
         buf_.escribir(ch.raw.data(), ch.raw.size(), ch.fpgaLost);
         int m = 0;
         for (int16_t x : ch.raw) m = std::max(m, std::abs((int)x));
@@ -230,15 +244,6 @@ class CB : public ADCCallback {
         if (ch.fpgaLost) {
             st_.fpga_lost += ch.fpgaLost;
             st_.paquetes_con_lost++;
-        }
-        if (canales_ == 2) {
-            auto& c2 = p.channel2;
-            int m2 = 0;
-            for (int16_t x : c2.raw) m2 = std::max(m2, std::abs((int)x));
-            if (m2 > st_.raw_max2) st_.raw_max2 = m2;
-            st_.paquetes2++;
-            st_.muestras2 += c2.raw.size();
-            st_.fpga_lost2 += c2.fpgaLost;
         }
         st_.ultimo_paquete_ms = ahora_ms();
     }
@@ -256,8 +261,8 @@ class CB : public ADCCallback {
 
    private:
     BufferCircular& buf_;
+    BufferCircular* buf2_;  // nullptr en mono
     Stats& st_;
-    int canales_;
 };
 
 class Registros {
@@ -323,6 +328,10 @@ struct Evento {
     int64_t margen;          // muestras de margen antes (y despues) de la ventana oficial
     int64_t ventana;         // muestras de la ventana oficial
     bool con_hueco;
+    int canales, dec;
+    std::vector<int16_t> x2;  // IN2, mismo tramo (solo canales == 2)
+    bool ch2_ok = false;      // false en dual = no se pudo sacar el IN2 del buffer
+    bool con_hueco2 = false;
     std::string base, iso;   // nombre y hora de deteccion
 };
 
@@ -355,41 +364,51 @@ bool destino_ok(const std::string& destino) {
     return false;
 }
 
+bool escribir_bin(const std::string& ruta, const std::vector<int16_t>& x) {
+    FILE* f = fopen(ruta.c_str(), "wb");
+    if (!f) return false;
+    bool ok = fwrite(x.data(), sizeof(int16_t), x.size(), f) == x.size();  // ARM es little-endian
+    if (fclose(f) != 0) ok = false;
+    return ok;
+}
+
 bool guardar_evento(const std::string& destino, const Evento& e) {
     if (!destino_ok(destino)) return false;
-    std::string bin = destino + "/" + e.base + ".bin";
     // Disco lleno: fwrite/fprintf fallan sin avisar y quedaba un archivo vacio o
-    // cortado. Se chequea todo y, si algo falla, se borra el par .bin/.json.
-    FILE* f = fopen(bin.c_str(), "wb");
-    bool ok = f != nullptr;
-    if (f) {
-        ok = fwrite(e.x.data(), sizeof(int16_t), e.x.size(), f) == e.x.size();  // ARM es little-endian
-        if (fclose(f) != 0) ok = false;
+    // cortado. Se chequea todo y, si algo falla, se borran juntos .bin,
+    // _ch2.bin y .json (nunca queda un canal sin el otro ni sin su .json).
+    std::string bin = destino + "/" + e.base + ".bin";
+    std::string bin2 = destino + "/" + e.base + "_ch2.bin";
+    std::string js = destino + "/" + e.base + ".json";
+    bool ok = escribir_bin(bin, e.x);
+    if (ok && e.ch2_ok) ok = escribir_bin(bin2, e.x2);
+    if (ok) {
+        FILE* f = fopen(js.c_str(), "w");
+        ok = f != nullptr;
+        if (f) {
+            char ch2[160] = "";
+            if (e.canales == 2)
+                snprintf(ch2, sizeof ch2, "  \"archivo_ch2\": %s,\n  \"con_hueco_ch2\": %s,\n",
+                         e.ch2_ok ? ("\"" + e.base + "_ch2.bin\"").c_str() : "null",
+                         e.ch2_ok && e.con_hueco2 ? "true" : "false");
+            ok = fprintf(f,
+                    "{\n  \"formato\": \"evento_ventana_cruda_int16_le\",\n  \"fs_hz\": %.1f,\n  \"dec\": %d,\n"
+                    "  \"ventana_s\": %.2f,\n  \"ventana_muestras\": %lld,\n  \"margen_muestras\": %lld,\n"
+                    "  \"inicio_ventana_en_archivo\": %lld,\n  \"muestras\": %zu,\n  \"window_count\": %u,\n"
+                    "  \"indice_inicio\": %lld,\n"
+                    "  \"area\": %.9g,\n  \"kurtosis\": %.6g,\n  \"con_hueco\": %s,\n"
+                    "  \"canales\": %d,\n%s"
+                    "  \"timestamp_iso\": \"%s\"\n}\n",
+                    e.fs, e.dec, VENTANA_S, (long long)e.ventana, (long long)e.margen, (long long)e.margen, e.x.size(),
+                    e.wc, (long long)e.indice_inicio, e.area, e.kurt, e.con_hueco ? "true" : "false", e.canales, ch2,
+                    e.iso.c_str()) > 0;
+            if (fclose(f) != 0) ok = false;
+        }
     }
     if (!ok) {
         int err = errno;  // unlink puede pisarlo; el llamador lo loguea
-        unlink(bin.c_str());
-        errno = err;
-        return false;
-    }
-    std::string js = destino + "/" + e.base + ".json";
-    f = fopen(js.c_str(), "w");
-    ok = f != nullptr;
-    if (f) {
-        ok = fprintf(f,
-                "{\n  \"formato\": \"evento_ventana_cruda_int16_le\",\n  \"fs_hz\": %.1f,\n"
-                "  \"ventana_s\": %.2f,\n  \"ventana_muestras\": %lld,\n  \"margen_muestras\": %lld,\n"
-                "  \"inicio_ventana_en_archivo\": %lld,\n  \"muestras\": %zu,\n  \"window_count\": %u,\n"
-                "  \"indice_inicio\": %lld,\n"
-                "  \"area\": %.9g,\n  \"kurtosis\": %.6g,\n  \"con_hueco\": %s,\n"
-                "  \"timestamp_iso\": \"%s\"\n}\n",
-                e.fs, VENTANA_S, (long long)e.ventana, (long long)e.margen, (long long)e.margen, e.x.size(), e.wc,
-                (long long)e.indice_inicio, e.area, e.kurt, e.con_hueco ? "true" : "false", e.iso.c_str()) > 0;
-        if (fclose(f) != 0) ok = false;
-    }
-    if (!ok) {
-        int err = errno;
         unlink(js.c_str());
+        unlink(bin2.c_str());
         unlink(bin.c_str());
         errno = err;
     }
@@ -448,7 +467,7 @@ class VigiaEspacio {
 
 // Escribe los eventos en disco desde un hilo propio. Cola acotada: si se
 // llena (disco trabado), el evento se descarta y se cuenta, en vez de
-// comerse la RAM de la placa (~0.5MB por evento, 459MB en total).
+// comerse la RAM de la placa (~0.5MB por evento, ~1MB en dual; 459MB en total).
 class Escritor {
    public:
     static const size_t MAX_COLA = 40;
@@ -722,6 +741,8 @@ int main(int argc, char** argv) {
     const int64_t M = (int64_t)(fs * margen_ms / 1000);
     if (2 * M >= (int64_t)N * (BUFFER_VENTANAS - 2)) { log("ERROR --margen-ms demasiado grande para el buffer"); return 1; }
     BufferCircular buf((size_t)N * BUFFER_VENTANAS);
+    std::unique_ptr<BufferCircular> buf2;
+    if (canales == 2) buf2.reset(new BufferCircular((size_t)N * BUFFER_VENTANAS));
     mkdir(destino.c_str(), 0755);
     {
         struct stat st;
@@ -752,7 +773,7 @@ int main(int argc, char** argv) {
     } else {
         conf->sendConfig("channel_state_2", "OFF");
     }
-    adc->setCallback(std::make_shared<CB>(buf, st, canales));
+    adc->setCallback(std::make_shared<CB>(buf, buf2.get(), st));
 
     // Modo prueba: DAC por el MISMO ConfigStreamClient (una segunda conexion
     // de configuracion tira la primera, ver generador_pulsos.h).
@@ -847,7 +868,7 @@ int main(int argc, char** argv) {
     }
 
     uint64_t ventanas_vistas = 0, ventanas_saltadas = 0, eventos = 0, eventos_perdidos = 0,
-             recalibraciones = 0, sin_senal_periodo = 0, no_guardados = 0;
+             recalibraciones = 0, sin_senal_periodo = 0, no_guardados = 0, eventos_sin_ch2 = 0;
     int ventanas_fuera = 0;  // ventanas seguidas con deriva fuera de tolerancia y stream fluyendo
     int64_t fuera_min = INT64_MAX, fuera_max = INT64_MIN;
     int64_t t_disturbio = 0;  // ultima reanudacion o reporte de fpgaLost
@@ -862,7 +883,7 @@ int main(int argc, char** argv) {
 
     struct Pendiente { uint32_t wc; double area, kurt; int64_t t_ms; };
     std::deque<Pendiente> pendientes;  // cruzaron el umbral, su señal todavia no llego
-    std::vector<int16_t> ventana;
+    std::vector<int16_t> ventana, ventana2;
 
     double sa, s2, s4;
     uint32_t ultimo_wc = reg.leer(sa, s2, s4);
@@ -954,6 +975,21 @@ int main(int argc, char** argv) {
                 e.margen = M;
                 e.ventana = N;
                 e.con_hueco = con_hueco;
+                e.canales = canales;
+                e.dec = dec;
+                if (buf2) {
+                    // escrito antes que el IN1 en el callback: si el IN1 esta, el IN2 tambien
+                    // (salvo desfase entre canales, que se cuenta en ESTADO)
+                    e.ch2_ok = buf2->extraer(idx_ini, (size_t)(N + 2 * M), ventana2, e.con_hueco2) ==
+                               BufferCircular::OK;
+                    if (e.ch2_ok) {
+                        e.x2 = std::move(ventana2);
+                        ventana2 = std::vector<int16_t>();
+                    } else if (++eventos_sin_ch2 % 100 == 1) {
+                        log("WARNING evento wc=%u sin IN2 (no estaba en su buffer) — %llu hasta ahora", p.wc,
+                            (unsigned long long)eventos_sin_ch2);
+                    }
+                }
                 std::string nombre = e.base;
                 if (escritor.encolar(std::move(e))) {
                     eventos++;
@@ -992,9 +1028,10 @@ int main(int argc, char** argv) {
             char in2[160] = "";
             if (canales == 2) {
                 uint64_t m2 = st.muestras2, l2 = st.fpga_lost2;
-                snprintf(in2, sizeof in2, "  IN2: muestras=%.1f%% perdidas_fpga=+%llu raw_max=%d",
+                snprintf(in2, sizeof in2, "  IN2: muestras=%.1f%% perdidas_fpga=+%llu raw_max=%d desfase=%llu sin_ch2=%llu",
                          (m2 - muestras2_ult) / (fs * dt) * 100, (unsigned long long)(l2 - lost2_ult),
-                         st.raw_max2.exchange(0));
+                         st.raw_max2.exchange(0), (unsigned long long)st.desfase2.load(),
+                         (unsigned long long)eventos_sin_ch2);
                 muestras2_ult = m2;
                 lost2_ult = l2;
             }
@@ -1047,8 +1084,10 @@ int main(int argc, char** argv) {
         (unsigned long long)no_guardados, (unsigned long long)eventos_perdidos,
         (unsigned long long)recalibraciones);
     if (canales == 2)
-        log("IN2: paquetes=%llu muestras=%llu fpgaLost_total=%llu", (unsigned long long)st.paquetes2.load(),
-            (unsigned long long)st.muestras2.load(), (unsigned long long)st.fpga_lost2.load());
+        log("IN2: paquetes=%llu muestras=%llu fpgaLost_total=%llu desfase=%llu eventos_sin_ch2=%llu",
+            (unsigned long long)st.paquetes2.load(), (unsigned long long)st.muestras2.load(),
+            (unsigned long long)st.fpga_lost2.load(), (unsigned long long)st.desfase2.load(),
+            (unsigned long long)eventos_sin_ch2);
     if (gen) {
         log("PRUEBA: pulsos emitidos=%llu", (unsigned long long)gen->emitidos());
         fclose(pulsos_log);

@@ -37,8 +37,8 @@ def main():
                      help='carpeta donde se guardan los eventos que cruzan el umbral')
     ap.add_argument('--dec', type=int, default=32, help='decimacion (default 32)')
     ap.add_argument('--canales', type=int, default=1, choices=[1, 2],
-                     help='1 = solo IN1 (default); 2 = IN1 + IN2 de referencia (Fase 0: el IN2 '
-                          'solo se cuenta en la linea de ESTADO, no se guarda)')
+                     help='1 = solo IN1 (default); 2 = IN1 + IN2 de referencia: cada evento '
+                          'guarda ademas <base>_ch2.bin con el mismo tramo del IN2')
     ap.add_argument('--estado-s', type=int, default=10,
                      help='cada cuantos segundos loguear una linea de ESTADO (default 10)')
     ap.add_argument('--duracion-s', type=int, default=0,
