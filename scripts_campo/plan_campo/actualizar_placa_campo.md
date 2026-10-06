@@ -197,9 +197,11 @@ bitstream del 29/9 (`dfabb64`).
       `docs/plan_in2_independiente.md`, en curso): requiere además el
       bitstream nuevo (fpga_pitaya `20ac88b`+); con el bitstream viejo el
       software nuevo mide solo el IN1 aunque esté en dual. El IN1 ya no
-      guarda `_ch2.bin`; el IN2 tiene eventos y CSV en `<destino>/in2/`
-      (falta agregarlo a GCS y al anotador, etapa 7). Va en la etapa 9 del
-      plan: primero el bitstream solo con el software actual en mono.
+      guarda `_ch2.bin`; el IN2 tiene eventos y CSV en `<destino>/in2/`,
+      que suben a GCS con sufijo `_in2`; Losant recibe `kurt_max_1min_in2`
+      y `area_max_1min_in2` (**crear los atributos, Number, en el Device de
+      campo y en `test_SC`**). Va en la etapa 9 del plan: primero el
+      bitstream solo con el software actual en mono.
       Incluye el parche del SIGSEGV de arranque del vendor (`connect()` en un
       hilo propio; en lab 0/20 caídas contra 3/10 sin parche): es la caída
       que se vio en campo el 5/10 al aplicar el umbral 3.4.

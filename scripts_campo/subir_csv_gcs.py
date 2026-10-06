@@ -9,6 +9,10 @@ del modo evento una vez que la hora se cerro, comprimidos con gzip
     (ventanas_AAAAMMDD_HH_sd.csv.gz), porque la misma hora puede existir
     partida en los dos lados (p.ej. el disco se cae a mitad de hora) y con
     ifGenerationMatch=0 la segunda no subiria nunca.
+  - El IN2 como sensor independiente (dual, docs/plan_in2_independiente.md)
+    escribe su propio CSV, con el MISMO nombre, en <carpeta>/in2: sube con
+    sufijo _in2 (o _sd_in2 sin disco) para no chocar con el del IN1. En mono
+    o con el bitstream viejo esa carpeta no existe y no sube nada de mas.
 
 Lo corre subir-csv-gcs.timer cada pocos minutos (oneshot): si no hay
 internet (de noche, sin Starlink) falla rapido y los CSV quedan para la
@@ -27,7 +31,7 @@ gcs.registro_sd registra los que ya subieron.
   ultimos MARGEN_CIERRE_S (capturar_eventos rota el archivo a la hora justa).
 - Nunca lista la carpeta de eventos (puede tener decenas de miles de
   archivos): los nombres salen de las horas de los ultimos gcs.dias_atras.
-- Objeto: <gcs.prefijo>/<hostname>/AAAA/MM/DD/ventanas_AAAAMMDD_HH[_sd].csv.gz,
+- Objeto: <gcs.prefijo>/<hostname>/AAAA/MM/DD/ventanas_AAAAMMDD_HH[_sd][_in2].csv.gz,
   con ifGenerationMatch=0: nunca pisa. Si ya existe (412, p.ej. se corto la
   conexion despues de que GCS lo guardo), se da por subido.
 - Se verifica el md5 que devuelve GCS contra el del gzip local.
@@ -60,6 +64,7 @@ import cfg  # noqa: E402 (import tardio, necesita el sys.path de arriba)
 
 DIR_EVENTOS = "/mnt/usb/eventos"
 SUFIJO_SD = "_sd"
+SUFIJO_IN2 = "_in2"
 MARGEN_CIERRE_S = 120
 TIMEOUT_S = 60
 # gzip 1: en PC 0.024s contra 0.109s del 6 por CSV, 1.0 MB contra 0.82 MB
@@ -123,8 +128,9 @@ def disco_montado():
 
 def origenes():
     """(carpeta, sufijo) de donde subir: el disco solo si esta montado."""
-    lista = [(DIR_EVENTOS, "")] if disco_montado() else []
-    return lista + [(cfg.obtener("rutas.eventos_sd"), SUFIJO_SD)]
+    lista = [(DIR_EVENTOS, ""), (os.path.join(DIR_EVENTOS, "in2"), SUFIJO_IN2)] if disco_montado() else []
+    sd = cfg.obtener("rutas.eventos_sd")
+    return lista + [(sd, SUFIJO_SD), (os.path.join(sd, "in2"), SUFIJO_SD + SUFIJO_IN2)]
 
 
 def horas_cerradas(dias_atras, subidos, fuentes):

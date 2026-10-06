@@ -1,6 +1,6 @@
 # Plan — IN2 como sensor independiente (área/kurtosis en la FPGA)
 
-Estado: **etapas 1-4 y 6 hechas (6 sin commitear); etapa 5 espera el T** (2026-10-06). Reemplaza la "opción A" de
+Estado: **etapas 1-4, 6 y 7 hechas (7 sin commitear); etapa 5 espera el T** (2026-10-06). Reemplaza la "opción A" de
 `docs/plan_dos_canales.md` (FPGA solo IN1, IN2 crudo): el IN2 tiene que
 funcionar **igual que el IN1**, como un segundo sensor. Todo en la placa de
 pruebas (`rp-f0fd8c`) hasta la última etapa; la placa de campo no se toca.
@@ -214,4 +214,19 @@ vez en el hardware.
     bitstream viejo (7f23f7d): "WARNING bitstream sin calculo del IN2 (ID
     0x00000000): se mide solo el IN1", 48 eventos del IN1, sin `in2/`, sin
     `_ch2.bin`. Al final bitstream IN2 de vuelta (md5 verificado).
+- 2026-10-06, etapa 7: `resumen_modo_evento.py` lee también
+  `<destino>/in2` (solo si la corrida actual es dual según
+  `/run/modo-evento/medicion` y la carpeta existe) y manda
+  `kurt_max_1min_in2` y `area_max_1min_in2`. `subir_csv_gcs.py`: orígenes
+  `<eventos>/in2` (sufijo `_in2`) y `<eventos_sd>/in2` (`_sd_in2`), así el
+  CSV del IN2 (mismo nombre de archivo) no choca con el del IN1 en el
+  bucket ni en el registro. Probado en local (resumir con/sin filas del
+  IN2; horas_cerradas con disco, sin disco y con el `_in2` ya subido).
+  Lab (19:08 UTC, respaldo `/root/respaldo_in2_etapa7_20261006/`): todo el
+  software de las etapas 6-7 instalado en el servicio; dual por drop-in:
+  `canales=2 dec=64`, ESTADO con el IN2, CSV en `/mnt/usb/eventos/in2/`,
+  resumen con `kurt_max_1min_in2` 3.072 y `area_max_1min_in2` 0.5705.
+  - El timer de GCS del lab estaba arrancado a mano (no habilitado) y quedó
+    parado por el reinicio de las 18:11 (última subida 18:06). No se
+    rearrancó: decisión del usuario.
 

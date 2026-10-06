@@ -348,7 +348,7 @@ def estado_medicion(activo, sin_disco, n_filas, seg_sin_datos):
     return "midiendo_sin_disco" if sin_disco else "midiendo"
 
 
-def resumir(filas, lector, contadores, activo, umbral, ahora, sin_disco=False):
+def resumir(filas, lector, contadores, activo, umbral, ahora, sin_disco=False, filas_in2=None):
     ok = [f for f in filas if f[4] == "ok" and f[3] is not None]
     kurts = [f[3] for f in ok]
     areas = [f[2] for f in ok if f[2] is not None]
@@ -408,6 +408,17 @@ def resumir(filas, lector, contadores, activo, umbral, ahora, sin_disco=False):
         if "dec" in med:
             # decimacion de la captura: 32 (3.9 MHz) o 64 (1.95 MHz)
             data["me_dec"] = med["dec"]
+    # IN2 como sensor independiente (dual con el bitstream que lo calcula,
+    # docs/plan_in2_independiente.md): solo maximos del ultimo minuto, el detalle
+    # queda en su CSV (<destino>/in2)
+    ok2 = [f for f in (filas_in2 or []) if f[4] == "ok" and f[3] is not None]
+    if ok2:
+        # kurtosis mas alta del IN2 en el ultimo minuto
+        data["kurt_max_1min_in2"] = round(max(f[3] for f in ok2), 3)
+        areas2 = [f[2] for f in ok2 if f[2] is not None]
+        if areas2:
+            # area mas alta del IN2 en el ultimo minuto
+            data["area_max_1min_in2"] = round(max(areas2), 4)
     reinicios = reinicios_hoy(dia)
     if reinicios is not None:
         # veces que se cayo la medicion en el dia (UTC) y el supervisor la relanzo
@@ -444,6 +455,7 @@ def main():
     args = ap.parse_args()
 
     lector = LectorCSV()
+    lector_in2 = LectorCSV()
     contadores = Contadores(os.path.join(args.pendientes, ".contadores.json"))
     en_ram = []
     log(f"Anotador del modo evento: un resumen cada {INTERVALO_S}s en {args.pendientes}")
@@ -452,7 +464,14 @@ def main():
         ahora = datetime.now(timezone.utc)
         activo, destino, umbral, sin_disco = estado_servicio()
         filas = lector.filas_nuevas(destino, ahora) if destino else []
-        resumen = resumir(filas, lector, contadores, activo, umbral, ahora, sin_disco)
+        # CSV del IN2 solo si la corrida actual es dual y lo esta escribiendo
+        # (con el bitstream viejo o en mono no hay carpeta in2, o es de antes)
+        destino_in2 = os.path.join(destino, "in2") if destino else None
+        if activo and medicion_actual().get("canales") == 2 and destino_in2 and os.path.isdir(destino_in2):
+            filas_in2 = lector_in2.filas_nuevas(destino_in2, ahora)
+        else:
+            filas_in2 = []
+        resumen = resumir(filas, lector, contadores, activo, umbral, ahora, sin_disco, filas_in2)
         guardar(args.pendientes, en_ram, resumen)
         log(f"resumen: {resumen['data']}")
         # monotonic: un salto de reloj por NTP (sin RTC) no adelanta ni frena el ciclo
