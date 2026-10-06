@@ -1,6 +1,6 @@
 # Plan — IN2 como sensor independiente (área/kurtosis en la FPGA)
 
-Estado: **etapas 1-4 hechas; etapa 5 espera el T de OUT1 a IN1+IN2** (2026-10-06). Reemplaza la "opción A" de
+Estado: **etapas 1-4 y 6 hechas (6 sin commitear); etapa 5 espera el T** (2026-10-06). Reemplaza la "opción A" de
 `docs/plan_dos_canales.md` (FPGA solo IN1, IN2 crudo): el IN2 tiene que
 funcionar **igual que el IN1**, como un segundo sensor. Todo en la placa de
 pruebas (`rp-f0fd8c`) hasta la última etapa; la placa de campo no se toca.
@@ -190,4 +190,28 @@ vez en el hardware.
     escribir configs en las placas.
   - Placa de pruebas queda en **mono con el bitstream IN2** y el software
     actual (prueba de compatibilidad corriendo).
+- 2026-10-06, etapa 6 (rama `in2-sensor` de Sand Monitoring, binario en
+  `rp-f0fd8c:/root/staging_fase1/`, sin instalar en el servicio; se
+  adelantó a la 5 porque el T tarda unos días):
+  - 6a: `Registros::tiene_in2()` (base 2026.1 y ID `0x534D0002`) y
+    `leer(..., canal)` (canal 1 = +0x20). ESTADO del IN2 con
+    `kurt_max`, `area_max` y `otra_ventana` (lectura del canal 1 en otra
+    ventana que el 0: 0 en todas las corridas). 60s dual dec64: IN2
+    kurt_max ~3.05, area_max ~0.568.
+  - 6b: CSV del IN2 en `<destino>/in2/` (mismo formato, columna `dec`,
+    pérdidas del stream del IN2). 60s: 1200 filas en cada CSV, mismos
+    `window_count` y hora, valores propios.
+  - 6c: eventos propios del IN2 (`--umbral2`, default = `--umbral`; en la
+    unit `UMBRAL2` opcional) en `<destino>/in2/`, escritor propio. El IN1
+    ya no guarda `_ch2.bin`. `.json` suma `"canal": "IN1"|"IN2"`. Log
+    `[EVENTO IN1]` / `[EVENTO IN2]` (nada lee esa marca). 120s dual dec64
+    umbral 3.03: IN1 81 eventos = sus 81 ventanas ≥3.03 del CSV, IN2 132 =
+    sus 132; todos bien formados; solo 6 ventanas en común (por azar ~4-5):
+    independientes.
+  - 6d (`in2_6d.sh`): mono igual que antes (sin carpeta `in2/`); disco lleno
+    en dual (tmpfs 12MB): IN1 25 escritos / 27 fallidos, IN2 20 / 36, sin
+    archivos sueltos en ninguna carpeta, medición sigue; dual con el
+    bitstream viejo (7f23f7d): "WARNING bitstream sin calculo del IN2 (ID
+    0x00000000): se mide solo el IN1", 48 eventos del IN1, sin `in2/`, sin
+    `_ch2.bin`. Al final bitstream IN2 de vuelta (md5 verificado).
 

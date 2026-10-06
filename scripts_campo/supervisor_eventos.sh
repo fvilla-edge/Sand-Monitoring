@@ -83,7 +83,8 @@ arrancar)
     echo "$destino$marca" > "$DESTINO_ACTUAL"
     echo "canales=$canales dec=$dec" > "$MEDICION_ACTUAL"
     exec /usr/bin/python3 -u /root/scripts_campo/capturar_eventos.py \
-        --umbral "$UMBRAL" --destino "$destino" --canales "$canales" --dec "$dec" "${extra[@]}"
+        --umbral "$UMBRAL" --umbral2 "${UMBRAL2:-$UMBRAL}" --destino "$destino" --canales "$canales" --dec "$dec" \
+        "${extra[@]}"
     ;;
 despues)
     rm -f "$DESTINO_ACTUAL" "$MEDICION_ACTUAL"

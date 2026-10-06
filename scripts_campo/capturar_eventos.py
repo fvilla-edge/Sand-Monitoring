@@ -33,14 +33,17 @@ def main():
     ap.add_argument('--umbral', type=float, default=3.4,
                      help='kurtosis minima para guardar la ventana (default 3.4 desde '
                           '2026-10-05, antes 5.0; reposo ~2.97)')
+    ap.add_argument('--umbral2', type=float, default=None,
+                     help='kurtosis minima del IN2 (sensor independiente, solo en dual con el '
+                          'bitstream que calcula el IN2). Default: el mismo que --umbral')
     ap.add_argument('--destino', default='/root/eventos',
                      help='carpeta donde se guardan los eventos que cruzan el umbral')
     ap.add_argument('--dec', type=int, default=32, choices=[32, 64],
                      help='decimacion (default 32). El C++ ajusta la ventana y el pasabanda de la '
                           'FPGA; el umbral y el piso/escala de la PC estan medidos a 32')
     ap.add_argument('--canales', type=int, default=1, choices=[1, 2],
-                     help='1 = solo IN1 (default); 2 = IN1 + IN2 de referencia: cada evento '
-                          'guarda ademas <base>_ch2.bin con el mismo tramo del IN2')
+                     help='1 = solo IN1 (default); 2 = IN1 + IN2: con el bitstream que calcula el '
+                          'IN2, es un sensor independiente (eventos y CSV propios en <destino>/in2)')
     ap.add_argument('--estado-s', type=int, default=10,
                      help='cada cuantos segundos loguear una linea de ESTADO (default 10)')
     ap.add_argument('--duracion-s', type=int, default=0,
@@ -73,6 +76,7 @@ def main():
                        '--estado-s', str(args.estado_s),
                        '--duracion-s', str(args.duracion_s),
                        '--minimo-libre-mb', str(minimo_libre_mb)]
+             + ([] if args.umbral2 is None else ['--umbral2', str(args.umbral2)])
              + ([] if args.host == 'auto' else ['--host', args.host]))
 
 
