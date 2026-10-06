@@ -226,7 +226,29 @@ vez en el hardware.
   software de las etapas 6-7 instalado en el servicio; dual por drop-in:
   `canales=2 dec=64`, ESTADO con el IN2, CSV en `/mnt/usb/eventos/in2/`,
   resumen con `kurt_max_1min_in2` 3.072 y `area_max_1min_in2` 0.5705.
-  - El timer de GCS del lab estaba arrancado a mano (no habilitado) y quedó
-    parado por el reinicio de las 18:11 (última subida 18:06). No se
-    rearrancó: decisión del usuario.
+  - GCS en la placa de pruebas está deshabilitado por config
+    (`gcs.habilitado: false`): el timer corría pero no subía nada ("no se
+    sube nada" cada 5 min hasta las 18:06). El reinicio de las 18:11 solo lo
+    dejó parado (no estaba habilitado al arranque); no se perdió ninguna
+    subida. Para ver el IN2 en el bucket: `/root/prueba_eth0/subir_in2_prueba.py
+    AAAAMMDD_HH [--subir]` (sube solo esa hora del IN1 y del IN2, sin tocar
+    la config).
+- 2026-10-06, etapa 8 (parte): escritura sostenida con los dos sensores
+  disparando (`fase1_dual.sh W15in2 900 3.03 2 64`, 19:17-19:32 UTC): IN1
+  702 + IN2 1125 eventos (~2 ev/s, ~6x el peor caso de campo de un sensor),
+  todos bien formados en su carpeta, 0 fallidos, 0 perdidos, 0 saltadas,
+  `otra_ventana` 0, CSV 17999 filas cada uno; pérdidas del stream 0.00056%,
+  deriva máx. ~33ms (W15d64 con un solo escritor: 0.00045%, ~28ms). El
+  segundo escritor no cambia nada medible.
+- 2026-10-06, etapa 8 (parte): **ensayo de vuelta atrás completa** en
+  `rp-f0fd8c` (19:37 UTC). Versión de campo = tag `campo-2026-10-05b`
+  (`capturar_eventos.cpp/.py`, `resumen_modo_evento.py`,
+  `subir_csv_gcs.py`, `supervisor_eventos.sh`, unit; binario compilado en
+  la placa en `/root/rollback_campo/`) + bitstream `7f23f7d`, sin drop-in de
+  dual. Anduvo como campo: log viejo (sin "Pasabanda"/"Ventana" ni
+  canales), mono dec32, 100% muestras, 0 saltadas, CSV de 6 columnas,
+  resumen sin `me_canales`, área ~0.515. Vuelta a lo nuevo
+  (`/root/nuevo_in2/` + bitstream IN2 + `canales.conf`, 19:38): dual dec64
+  con el IN2 al toque. El CSV de la hora 19 del IN1 quedó con filas de 6 y
+  7 columnas mezcladas (los lectores de la PC lo soportan).
 
