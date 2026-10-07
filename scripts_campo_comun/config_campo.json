@@ -26,6 +26,10 @@
     "informe_intervalo_min": 15,
     "reintento_conexion_s": 30
   },
+  "energia": {
+    "dir_usb": "/mnt/usb/energia",
+    "dir_sd": "/root/energia_sd"
+  },
   "starlink_api": {
     "modo": "live",
     "host": "192.168.100.1:9200",

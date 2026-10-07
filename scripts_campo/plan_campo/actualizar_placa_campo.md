@@ -308,6 +308,21 @@ Pasos en campo (uno por vez, mirando; `evidencia.sh on` en las subidas):
       Comprobar después en campo: `subtree_control` sin `cpu`, ventanas saltadas ~0
       y `muestras` ~98 % con Starlink on.
 
+## 4c. Registro de energía (rama `perfiles-energia`, 2026-10-07)
+
+Plan: `docs/plan_perfiles_energia.md` (etapa 1). Sale de `main` = tag
+`campo-2026-10-05b`: va a campo antes que el IN2.
+
+- [ ] `panel_solar_ble/registro_energia.py` (nuevo) y
+      `panel_solar_ble/publicar_losant.py` (lo llama): una fila por minuto
+      en `/mnt/usb/energia/energia_AAAAMMDD_HH.csv` (sin USB,
+      `/root/energia_sd/`), con `fsync`, filtro de lecturas imposibles.
+- [ ] `config_campo.json`: clave `energia` (`dir_usb`, `dir_sd`) con
+      `fusionar_config.py` (sin la clave, `publicar_losant.py` usa los
+      mismos valores por defecto).
+- [ ] Reiniciar `panel-solar-informe.service` y verificar que aparezca el
+      CSV de la hora con filas cada minuto y `lecturas` > 0.
+
 ## 5. Sistema
 
 - [x] **Watchdog de systemd 5 s → 30 s** (`RuntimeWatchdogSec=30s` en

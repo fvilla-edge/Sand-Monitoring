@@ -62,6 +62,7 @@ from config import DEVICES
 # Device ID, Access Key y Access Secret del dispositivo en Losant.
 from losant_config import ACCESS_KEY, ACCESS_SECRET, DEVICE_ID
 from puerto import resolver_puerto
+from registro_energia import RegistroEnergia
 from victron_scanner import SerialDecoder
 
 BAUDRATE = 115200
@@ -139,6 +140,18 @@ PENDIENTES_INTERVALO_S = 1.0
 PENDIENTES_RELISTAR_S = 10.0
 SERVICIO_MODO_EVENTO = "modo-evento"
 
+# Registro local de energia (registro_energia.py, docs/plan_perfiles_energia.md):
+# una fila por minuto en CSV haya o no internet. Este proceso es el unico que
+# abre el puerto del ESP32, por eso el registro vive aca.
+# Con default: si este script llega a una placa cuyo config todavia no tiene
+# la clave, un KeyError al importar dejaria sin informe a Losant.
+try:
+    DIR_ENERGIA_USB = cfg.obtener("energia.dir_usb")
+    DIR_ENERGIA_SD = cfg.obtener("energia.dir_sd")
+except KeyError:
+    DIR_ENERGIA_USB, DIR_ENERGIA_SD = "/mnt/usb/energia", "/root/energia_sd"
+STATE_FILE_STARLINK = cfg.obtener("rutas.state_file")
+
 # Defaults = la invocación que más se repite en campo (ver COMANDOS.md), para
 # que un comando "capturar" sin payload (o con payload parcial) siga siendo
 # útil. Todo override por payload es opcional.
@@ -154,6 +167,8 @@ DEFAULTS_CAPTURA = {
 }
 
 _decoder = SerialDecoder(DEVICES)
+_registro = RegistroEnergia(DIR_ENERGIA_USB, DIR_ENERGIA_SD, STATE_FILE_STARLINK)
+_registro_avisado = False  # ya se aviso un fallo del registro (se vuelve a avisar tras uno bueno)
 _ultima_lectura = {}      # address -> (rssi, data), la más reciente decodificada
 _pendientes = set()       # addresses a informar en cuanto llegue una lectura nueva
 _ultima_publicacion = {}  # address -> time.monotonic() de la última vez que se publicó
@@ -461,12 +476,27 @@ def _al_conectar(dispositivo):
     _publicar_starlink(dispositivo)
 
 
+def _registrar_energia(funcion, *args):
+    # Un fallo del registro (disco lleno, USB que se va) no puede tirar abajo
+    # el informe a Losant ni el cartero del modo evento: se avisa una vez por
+    # racha (hasta la proxima fila escrita bien) y se sigue.
+    global _registro_avisado
+    try:
+        if funcion(*args):
+            _registro_avisado = False
+    except Exception as exc:
+        if not _registro_avisado:
+            print(f"Registro de energia: fallo ({exc}), sigo sin registrar", file=sys.stderr)
+            _registro_avisado = True
+
+
 def procesar_linea(linea, device):
     resultado = _decoder.procesar_linea(linea)
     if resultado is None:
         return
     address, rssi, data = resultado
     _ultima_lectura[address] = (rssi, data)
+    _registrar_energia(_registro.agregar, data)
     if address in _pendientes and device.is_connected():
         _publicar_informe(device, address, rssi, data)
 
@@ -543,6 +573,7 @@ def main():
             # sin ESP32 el readline(timeout=1) ya no marca el paso del loop
             time.sleep(0.9)
 
+        _registrar_energia(_registro.tick)
         revisar_periodico(device)
         _revisar_estado_captura(device)
         _revisar_espacio_disco(device)
