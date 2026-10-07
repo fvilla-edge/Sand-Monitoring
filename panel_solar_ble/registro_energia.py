@@ -115,7 +115,10 @@ class _RelojConfiable:
 
 class RegistroEnergia:
     def __init__(self, dir_usb, dir_sd, state_file, punto_usb="/mnt/usb",
-                 reloj_confiable=None, ahora=time.time):
+                 reloj_confiable=None, ahora=time.time, al_escribir=None):
+        # al_escribir(fila, minuto): se llama con cada fila ya escrita
+        # (balance_energia.BalanceEnergia.minuto)
+        self.al_escribir = al_escribir
         self.dir_usb = dir_usb
         self.dir_sd = dir_sd
         self.state_file = state_file
@@ -153,7 +156,10 @@ class RegistroEnergia:
         self._minuto, self._validas, self._descartadas = None, [], 0
         if minuto is None or (not validas and not descartadas):
             return False
-        self._escribir(self._fila(minuto, validas, descartadas), minuto)
+        fila = self._fila(minuto, validas, descartadas)
+        self._escribir(fila, minuto)
+        if self.al_escribir:
+            self.al_escribir(fila, minuto)
         return True
 
     def _fila(self, minuto, validas, descartadas):

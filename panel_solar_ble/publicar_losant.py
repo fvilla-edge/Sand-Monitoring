@@ -62,7 +62,8 @@ from config import DEVICES
 # Device ID, Access Key y Access Secret del dispositivo en Losant.
 from losant_config import ACCESS_KEY, ACCESS_SECRET, DEVICE_ID
 from puerto import resolver_puerto
-from registro_energia import RegistroEnergia
+from balance_energia import BalanceEnergia, horas_starlink
+from registro_energia import RegistroEnergia, disco_montado
 from victron_scanner import SerialDecoder
 
 BAUDRATE = 115200
@@ -145,11 +146,28 @@ SERVICIO_MODO_EVENTO = "modo-evento"
 # abre el puerto del ESP32, por eso el registro vive aca.
 # Con default: si este script llega a una placa cuyo config todavia no tiene
 # la clave, un KeyError al importar dejaria sin informe a Losant.
-try:
-    DIR_ENERGIA_USB = cfg.obtener("energia.dir_usb")
-    DIR_ENERGIA_SD = cfg.obtener("energia.dir_sd")
-except KeyError:
-    DIR_ENERGIA_USB, DIR_ENERGIA_SD = "/mnt/usb/energia", "/root/energia_sd"
+ENERGIA_DEFAULTS = {
+    "dir_usb": "/mnt/usb/energia",
+    "dir_sd": "/root/energia_sd",
+    # balance (balance_energia.py): estado en la SD, nunca en el USB
+    "estado_file": "/root/energia_estado.json",
+    "capacidad_ah": 100,
+    "capacidad_util_wh": 1150,
+    # valores de partida del historial del MPPT (7/9-7/10), hasta tener promedios propios
+    "p_base_w_inicial": 7.5,
+    "p_starlink_w_inicial": 20,
+}
+
+
+def _energia(clave):
+    try:
+        return cfg.obtener(f"energia.{clave}")
+    except KeyError:
+        return ENERGIA_DEFAULTS[clave]
+
+
+DIR_ENERGIA_USB = _energia("dir_usb")
+DIR_ENERGIA_SD = _energia("dir_sd")
 STATE_FILE_STARLINK = cfg.obtener("rutas.state_file")
 
 # Defaults = la invocación que más se repite en campo (ver COMANDOS.md), para
@@ -167,7 +185,17 @@ DEFAULTS_CAPTURA = {
 }
 
 _decoder = SerialDecoder(DEVICES)
-_registro = RegistroEnergia(DIR_ENERGIA_USB, DIR_ENERGIA_SD, STATE_FILE_STARLINK)
+_balance = BalanceEnergia(
+    _energia("estado_file"),
+    lambda: PENDIENTES_DIRS[0] if disco_montado() else PENDIENTES_DIRS[1],
+    capacidad_ah=_energia("capacidad_ah"),
+    capacidad_util_wh=_energia("capacidad_util_wh"),
+    p_base_w=_energia("p_base_w_inicial"),
+    p_starlink_w=_energia("p_starlink_w_inicial"),
+    horas_sl=horas_starlink(cfg.obtener("starlink.hora_on"), cfg.obtener("starlink.hora_off")),
+)
+_registro = RegistroEnergia(DIR_ENERGIA_USB, DIR_ENERGIA_SD, STATE_FILE_STARLINK,
+                            al_escribir=_balance.minuto)
 _registro_avisado = False  # ya se aviso un fallo del registro (se vuelve a avisar tras uno bueno)
 _ultima_lectura = {}      # address -> (rssi, data), la más reciente decodificada
 _pendientes = set()       # addresses a informar en cuanto llegue una lectura nueva

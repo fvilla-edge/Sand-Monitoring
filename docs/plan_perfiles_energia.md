@@ -83,25 +83,52 @@ Starlink se pueden pagar.
 
 ## Etapa 2 — Cálculo y resumen horario
 
-Al cerrar cada hora, un resumen con su hora original va a la cola de
-pendientes (mismo mecanismo que los resúmenes del modo evento,
-`_enviar_pendientes`), así Losant recibe también la noche.
+Módulo `panel_solar_ble/balance_energia.py`: `registro_energia.py` le pasa
+cada fila de minuto que escribe. Corre en el mismo proceso
+(`publicar_losant.py`), sin tocar hardware.
 
-| Variable | Cálculo |
+**Valores de partida** (historial del MPPT, `datos_campo/cargador/SolarHistory.csv`,
+7/9–7/10; las fechas del historial están corridas 1–2 días respecto del
+calendario): consumo de la salida LOAD 320–380 Wh/día con Starlink y
+150–220 Wh/día sin Starlink ⇒ base ≈ 7,5 W las 24 h y Starlink ≈ +20 W
+mientras está prendida. Se usan solo hasta que haya datos propios: los
+promedios se actualizan minuto a minuto (media móvil de ~7 días).
+
+**Estado en disco** (`energia.estado_file`, en la SD, escritura atómica +
+`fsync` cada minuto): SOC en Ah, hora del último float, acumuladores de la
+hora y del día local (UTC−3), promedios de consumo con y sin Starlink.
+
+**SOC**
+- Cada minuto: `soc_ah += i_bat × 1/60`, limitado a 0–`capacidad_ah`
+  (100 Ah).
+- `estado_carga = float` ⇒ 100 %.
+- Al arrancar: el último SOC guardado. Si la salida LOAD estuvo apagada,
+  la batería solo pudo cargarse, así que es una cota inferior (el 6/10 se
+  cortó LOAD con la batería ~90 %: asumir "casi vacía" habría sido falso).
+- Sin estado previo (primera vez): 50 %, marcado no confiable.
+- `en_soc_confiable` = hubo float en los últimos 7 días.
+
+**Resumen horario** a la cola del cartero (`<ms>.energia.json`, mismo
+formato `{"time", "data"}` que los del modo evento; el cartero ordena por el
+número del nombre):
+
+| Atributo Losant | Cálculo |
 |---|---|
-| `p_carga_w` (prom/máx) | carga × V |
-| `p_pv_w` | `solar_power` |
-| `e_carga_wh`, `e_pv_wh`, `e_bat_wh` | Σ P·Δt de la hora |
-| `balance_dia_wh` | Σ `e_bat_wh` del día local |
-| `soc_pct` | conteo de Ah sobre la capacidad; vuelve a 100 % al entrar en float |
-| `energia_restante_wh` | SOC × capacidad útil |
-| `autonomia_h_con_sl`, `autonomia_h_sin_sl` | energía restante / carga promedio con y sin Starlink (últimos días) |
-| `capacidad_util_wh` | arranca en 1150 Wh (supuesto: 90 % de 1280); se corrige con los Ah descargados entre un float y un corte real de LOAD |
-| `cortes_load` | hueco en el registro + primera lectura al volver |
+| `en_soc_pct`, `en_soc_confiable` | SOC al cierre de la hora |
+| `en_energia_restante_wh` | SOC × `capacidad_util_wh` (1150 Wh, supuesto 90 % de 1280) |
+| `en_autonomia_sin_sl_h` | energía restante / consumo promedio sin Starlink |
+| `en_autonomia_con_sl_dias` | energía restante / consumo de un día con el horario actual de Starlink |
+| `en_p_carga_w` | consumo promedio de la hora |
+| `en_e_carga_wh`, `en_e_pv_wh`, `en_e_bat_wh` | Σ P·Δt de la hora |
+| `en_balance_dia_wh` | Σ `e_bat` del día local hasta el cierre de la hora |
+| `en_v_min` | tensión mínima de la hora |
+| `en_starlink_min`, `en_minutos` | minutos con Starlink y minutos con datos en la hora |
 
-El SOC se guarda en disco (con `fsync`) para sobrevivir reinicios; después
-de un corte de LOAD arranca en "desconocido" hasta el próximo float, y
-mientras tanto se usa una cota por tensión.
+Control cruzado: el consumo diario calculado tiene que parecerse al
+"Consumption" del historial del MPPT.
+
+Pendiente: corregir `capacidad_util_wh` con los Ah descargados entre un
+float y un corte real de LOAD; detectar cortes de LOAD (hueco + vuelta).
 
 ## Etapa 3 — Medir lo que falta (antes de fijar umbrales)
 
@@ -188,4 +215,28 @@ Después de la placa de pruebas, anotado en
   `pruebas/energia/rp-f0fd8c/2026/10/07/energia_20261007_15.csv.gz`, 581 ->
   259 B, md5 ok; la cuenta de servicio acepta el prefijo nuevo. Segunda
   corrida: nada pendiente.
+- 2026-10-07: historial del MPPT y capturas de VictronConnect
+  (`datos_campo/cargador/`): el corte del 6/10 NO fue por batería baja
+  (13,20 V a las 11:41 local, float el 4/10, ~90 % al cortar; hoy LOAD
+  apagada con 13,52 V cargando). Causa sin identificar: revisar la
+  configuración de la salida de carga en el sitio. Consumo LOAD: 320–380
+  Wh/día con Starlink, 150–220 sin Starlink.
+- 2026-10-07: etapa 2 escrita (sin commitear): `balance_energia.py` +
+  callback desde `registro_energia.py` + claves nuevas en `energia`.
+  Probada en la PC (20 chequeos: conteo de Ah, cierre de hora y resumen en
+  la cola, cambio de día local, reinicio y hueco con el estado de disco,
+  float, minuto basura, límites, promedios, autonomía, estado corrupto).
+  La hora se cierra con el primer minuto de la hora siguiente (sin datos
+  del ESP32, la última hora queda abierta hasta que vuelvan).
 
+- 2026-10-07 17:11-17:22 UTC: **prueba de punta a punta de la etapa 2 en la
+  placa de pruebas, OK.** Simulador ESP32 + `publicar_losant.py` de la rama
+  con el reloj del registro adelantado 45 min (17:12 real = 17:57
+  simulado) para cruzar una hora en punto sin esperar. CSV de 17 y 18 con
+  las filas esperadas (hueco en 18:00-18:01); al llegar el minuto 18:02 se
+  cerró la hora 17 y el cartero mandó `1791392400000.energia.json`
+  (17:00 UTC) a `test_SC`: SOC 49,9 %, restante 574 Wh, autonomía 76,5 h
+  sin Starlink / 1,66 días con Starlink, 3 minutos, 27,4 W, -1,0 Wh,
+  13,0 V. Reprocesar las mismas filas en la PC da el mismo SOC final que
+  la placa (49,815 Ah). Estado y CSV de la prueba movidos a
+  `/root/prueba_energia/` (la placa de pruebas queda sin estado de balance).

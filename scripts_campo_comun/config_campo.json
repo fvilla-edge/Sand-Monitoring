@@ -28,7 +28,12 @@
   },
   "energia": {
     "dir_usb": "/mnt/usb/energia",
-    "dir_sd": "/root/energia_sd"
+    "dir_sd": "/root/energia_sd",
+    "estado_file": "/root/energia_estado.json",
+    "capacidad_ah": 100,
+    "capacidad_util_wh": 1150,
+    "p_base_w_inicial": 7.5,
+    "p_starlink_w_inicial": 20
   },
   "starlink_api": {
     "modo": "live",

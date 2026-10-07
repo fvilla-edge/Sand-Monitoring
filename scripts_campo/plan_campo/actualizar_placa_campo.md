@@ -322,6 +322,17 @@ Plan: `docs/plan_perfiles_energia.md` (etapa 1). Sale de `main` = tag
       mismos valores por defecto).
 - [ ] Reiniciar `panel-solar-informe.service` y verificar que aparezca el
       CSV de la hora con filas cada minuto y `lecturas` > 0.
+- [ ] `panel_solar_ble/balance_energia.py` (nuevo, etapa 2): SOC por conteo
+      de Ah, estado en `/root/energia_estado.json` (SD), resumen horario
+      `<ms>.energia.json` en la cola del cartero. Claves nuevas en
+      `energia` (`estado_file`, `capacidad_ah`, `capacidad_util_wh`,
+      `p_base_w_inicial`, `p_starlink_w_inicial`; sin ellas, mismos
+      defaults en `publicar_losant.py`).
+- [ ] Crear en el Device de campo los atributos `en_soc_pct`,
+      `en_soc_confiable`, `en_energia_restante_wh`, `en_autonomia_sin_sl_h`,
+      `en_autonomia_con_sl_dias`, `en_balance_dia_wh`, `en_minutos`,
+      `en_starlink_min`, `en_p_carga_w`, `en_e_carga_wh`, `en_e_pv_wh`,
+      `en_e_bat_wh`, `en_v_min`.
 - [ ] `scripts_campo/subir_csv_gcs.py`: sube también los CSV de energía
       (horas cerradas, cupo propio de 12 por corrida) a
       `campo/energia/<hostname>/AAAA/MM/DD/energia_AAAAMMDD_HH[_sd].csv.gz`.
