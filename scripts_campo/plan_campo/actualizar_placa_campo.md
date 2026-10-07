@@ -332,7 +332,12 @@ Plan: `docs/plan_perfiles_energia.md` (etapa 1). Sale de `main` = tag
       `en_soc_confiable`, `en_energia_restante_wh`, `en_autonomia_sin_sl_h`,
       `en_autonomia_con_sl_dias`, `en_balance_dia_wh`, `en_minutos`,
       `en_starlink_min`, `en_p_carga_w`, `en_e_carga_wh`, `en_e_pv_wh`,
-      `en_e_bat_wh`, `en_v_min`.
+      `en_e_bat_wh`, `en_v_min` (Number, salvo `en_soc_confiable` Boolean);
+      etapa 4: `en_nivel` y `en_nivel_motivo` (String), `en_v_prom_30min`
+      (Number).
+- [ ] `config_campo.json`: sección `perfiles` (umbrales, histéresis,
+      tensiones, `nivel_file`). Sin ella, `balance_energia.py` usa los
+      mismos valores por defecto.
 - [ ] `scripts_campo/subir_csv_gcs.py`: sube también los CSV de energía
       (horas cerradas, cupo propio de 12 por corrida) a
       `campo/energia/<hostname>/AAAA/MM/DD/energia_AAAAMMDD_HH[_sd].csv.gz`.

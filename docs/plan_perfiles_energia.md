@@ -294,3 +294,12 @@ Después de la placa de pruebas, anotado en
   13,0 V. Reprocesar las mismas filas en la PC da el mismo SOC final que
   la placa (49,815 Ah). Estado y CSV de la prueba movidos a
   `/root/prueba_energia/` (la placa de pruebas queda sin estado de balance).
+- 2026-10-07: etapa 4, paso 1 (sin commitear): cálculo del nivel en
+  `balance_energia.py` → `/run/energia_nivel.json` cada minuto y
+  `en_nivel`, `en_nivel_motivo`, `en_v_prom_30min` en el resumen horario;
+  sección `perfiles` en el config. 18 chequeos en la PC (recién instalado
+  = ahorro, float, umbrales con histéresis al subir, absorción = normal,
+  tensión promedio de 30 min que solo baja, pico aislado ignorado, estado
+  viejo de la etapa 2 migrado). Falta: `decidir_objetivo.sh`, timer de
+  bordes y GCS en Ahorro/Crítico.
+

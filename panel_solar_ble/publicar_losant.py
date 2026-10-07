@@ -166,6 +166,14 @@ def _energia(clave):
         return ENERGIA_DEFAULTS[clave]
 
 
+def _perfiles():
+    # sin la seccion perfiles en el config, balance_energia usa sus defaults
+    try:
+        return cfg.obtener("perfiles")
+    except KeyError:
+        return {}
+
+
 DIR_ENERGIA_USB = _energia("dir_usb")
 DIR_ENERGIA_SD = _energia("dir_sd")
 STATE_FILE_STARLINK = cfg.obtener("rutas.state_file")
@@ -193,6 +201,7 @@ _balance = BalanceEnergia(
     p_base_w=_energia("p_base_w_inicial"),
     p_starlink_w=_energia("p_starlink_w_inicial"),
     horas_sl=horas_starlink(cfg.obtener("starlink.hora_on"), cfg.obtener("starlink.hora_off")),
+    perfiles=_perfiles(),
 )
 _registro = RegistroEnergia(DIR_ENERGIA_USB, DIR_ENERGIA_SD, STATE_FILE_STARLINK,
                             al_escribir=_balance.minuto)

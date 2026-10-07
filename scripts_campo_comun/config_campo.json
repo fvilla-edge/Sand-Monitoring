@@ -35,6 +35,13 @@
     "p_base_w_inicial": 7.5,
     "p_starlink_w_inicial": 20
   },
+  "perfiles": {
+    "umbrales_pct": [70, 40, 20],
+    "histeresis_pct": 10,
+    "v_critico": 12.9,
+    "v_supervivencia": 12.7,
+    "nivel_file": "/run/energia_nivel.json"
+  },
   "starlink_api": {
     "modo": "live",
     "host": "192.168.100.1:9200",
