@@ -164,3 +164,15 @@ Después de la placa de pruebas, anotado en
   y arreglado en la prueba: tras una línea cortada la fila nueva se pegaba
   al pedazo. Falta: prueba en placa (sin ESP32 real) y subida a GCS (1b).
 
+- 2026-10-07: **prueba en la placa de pruebas con ESP32 simulado, OK.**
+  Simulador (pty + líneas `MAC=.. DATA=..` cifradas con la clave real,
+  AES-CTR como el SmartSolar) y `publicar_losant.py` de esta rama desde
+  `/root/prueba_energia/` (servicio `panel-solar-informe` parado durante la
+  prueba, 15:03-15:12 UTC, y vuelto a arrancar). 7 minutos con valores
+  conocidos, hueco en 15:07-15:08, una lectura de 231 V y líneas con hex
+  roto por minuto: el CSV salió idéntico a lo enviado (5 filas, 58
+  lecturas y 1 descartada por minuto, sin fila en el hueco), en
+  `/mnt/usb/energia/` con la clave `energia` ausente del config (usó los
+  valores por defecto). El informe a Losant (`test_SC`) siguió igual, y al
+  cerrarse el puerto siguió sin ESP32. El CSV de la prueba quedó en
+  `/root/prueba_energia/` de la placa.
