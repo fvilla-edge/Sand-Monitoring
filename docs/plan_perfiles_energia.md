@@ -182,6 +182,10 @@ Después de la placa de pruebas, anotado en
   12 por corrida y 2 s de pausa, después de los de ventanas; un corte de red
   corta la corrida entera. Probada en la PC con subida simulada (11
   chequeos: una noche de 16 h en 2 corridas, hora en curso no sube, hora
-  partida USB/SD, nada dos veces, corte de red y recuperación). Falta una
-  subida real a GCS desde la placa de pruebas.
+  partida USB/SD, nada dos veces, corte de red y recuperación).
+- 2026-10-07 16:29 UTC: **subida real OK** desde la placa de pruebas (copia
+  aparte del script, registro temporal, sin tocar `gcs.habilitado=false`):
+  `pruebas/energia/rp-f0fd8c/2026/10/07/energia_20261007_15.csv.gz`, 581 ->
+  259 B, md5 ok; la cuenta de servicio acepta el prefijo nuevo. Segunda
+  corrida: nada pendiente.
 
