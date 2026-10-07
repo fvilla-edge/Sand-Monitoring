@@ -130,36 +130,90 @@ Control cruzado: el consumo diario calculado tiene que parecerse al
 Pendiente: corregir `capacidad_util_wh` con los Ah descargados entre un
 float y un corte real de LOAD; detectar cortes de LOAD (hueco + vuelta).
 
-## Etapa 3 — Medir lo que falta (antes de fijar umbrales)
+## Etapa 3 — Valores de diseño (cerrada con estimaciones, 2026-10-07)
 
-1. Carga de noche (sin Starlink): sale sola de la etapa 1.
-2. **Costo de un encendido de Starlink**: tiempo desde el pulso del relé
-   hasta la primera conexión a Losant, y Wh del arranque (picos de
-   40–60 W). Define si conviene prender seguido y poco o pocas veces y más
-   tiempo.
-3. Tiempo para vaciar lo pendiente: hoy los resúmenes salen de a uno por
-   segundo (`PENDIENTES_INTERVALO_S = 1`); un día de resúmenes del modo
-   evento por minuto (1440) tarda ~24 min. Más el subir CSV a GCS.
+Decisión del usuario: no medir aparte, usar el historial del MPPT y los
+datos de Losant con margen.
+
+| Dato | Medido | Valor de diseño |
+|---|---|---|
+| Base (Pitaya + ESP32 + hub) | ~7,5 W | **9 W** (216 Wh/día) |
+| Starlink prendida | ~+20 W | **+25 W** (25 Wh por hora) |
+| Costo de un encendido | sin medir | **2 Wh y 5 min** sin servicio (supuesto: arranque ~30 W) |
+| Energía útil de la batería | — | 1150 Wh |
+| Generación | lluvia 60–230, mediana 350, sol 400–590 Wh/día | la medida |
+
+El límite real de una ventana corta no es la energía sino lo pendiente:
+los CSV de ventanas suben de a 2 cada 5 min (una noche de 16 h ≈ 40 min) y
+los resúmenes de a uno por segundo (1 h de resúmenes ≈ 1 min). Por eso las
+ventanas son de 1 h, no menos.
 
 ## Etapa 4 — Perfiles
 
-- Nivel calculado con la energía restante (variable principal), la
-  tendencia (balance de las últimas 24 h) y una cota por tensión como
-  respaldo (el SOC deriva si pasan días sin float).
-- Niveles propuestos, umbrales a definir con los datos de las etapas 1–3:
+### Niveles (umbrales y horarios decididos por el usuario, 2026-10-07)
 
-| Nivel | Starlink | Captura |
-|---|---|---|
-| Normal | horario actual | normal |
-| Ahorro | ventanas cortas N veces por día (vaciar pendientes y apagar) | normal |
-| Crítico | una ventana corta por día | normal |
-| Supervivencia | apagada | normal (o mono, a decidir) |
+| Nivel | Energía restante | Starlink (hora local) | Consumo/día (diseño) | Días sin sol desde llena |
+|---|---|---|---|---|
+| **Normal** | ≥ 70 % | horario actual (`hora_on`–`hora_off`, `dias_habilitados`) | ~430 Wh | ~2,7 |
+| **Ahorro** | 40–70 % | 09:00–10:00, 12:30–13:30, 16:00–17:00 | ~300 Wh | ~3,8 |
+| **Crítico** | 20–40 % | 12:30–13:30 | ~245 Wh | ~4,7 |
+| **Supervivencia** | < 20 % | apagada (la captura sigue) | ~216 Wh | ~5,3 |
 
-- Se integra en `starlink_remoto/decidir_objetivo.sh` como una capa más,
-  por debajo del modo manual y del rescate, y sin tocar la regla de "reloj
-  no confiable → on".
-- Histéresis entre niveles, para no alternar en cada hora.
-- El nivel, la autonomía y el motivo de cada decisión van a Losant.
+### Cómo se decide el nivel (cada minuto, en `balance_energia.py`)
+
+1. **Energía restante (SOC)**: nivel por los umbrales 70 / 40 / 20 %.
+   Histéresis: para **subir** de nivel hace falta +10 % sobre el umbral
+   (Ahorro → Normal con ≥ 80 %); para bajar alcanza con cruzarlo.
+2. **SOC no confiable** (sin float en 7 días, o recién instalado): como
+   máximo **Ahorro**.
+3. **Float o absorción hoy** (día local): la batería ya se llenó, sobra
+   sol: se permite **Normal** (el float además pone el SOC en 100 %).
+4. **Tensión** (respaldo, solo baja el nivel): promedio de los últimos 30
+   minutos < 12,9 V ⇒ como máximo **Crítico**; < 12,7 V ⇒
+   **Supervivencia**. Umbrales iniciales supuestos (con carga), a ajustar
+   con una descarga real del registro. Se usa el promedio y no la mínima:
+   el historial tiene mínimas de 12,6 V en días que terminaron en float
+   (caídas momentáneas).
+
+El nivel y el motivo van a `/run/energia_nivel.json` (tmpfs: se recalcula
+al arrancar con el primer minuto) y a Losant (`en_nivel`, `en_nivel_motivo`,
+`en_v_prom_30min`).
+
+### Cómo se aplica a Starlink
+
+- `starlink_remoto/decidir_objetivo.sh`: el perfil entra entre "reloj no
+  confiable → on" y el horario. Orden: rescate manual vencido > modo manual
+  > reloj no confiable > **perfil** > horario. Normal = el horario de hoy.
+  La autolimpieza del modo manual compara contra el resultado nuevo.
+- Nivel vencido (archivo con más de 15 min o inexistente: sin ESP32,
+  `publicar_losant.py` caído, clave del Victron cambiada): **horario
+  normal**, igual que hoy (decisión del usuario, 2026-10-07: una falla del
+  sensor no tiene que dejar sin acceso remoto para arreglarla).
+- Bordes de las ventanas: un timer nuevo (`starlink-perfil.timer`) con un
+  `OnCalendar` por cada borde (09:00, 10:00, 12:30, 13:30, 16:00, 17:00,
+  hora local) que corre `aplicar_objetivo.sh` (sin `--reconciliar`: el
+  borde se aplica en el momento). Un cambio de nivel entre bordes lo aplica
+  el reconciliador (≤ ~10 min). Si cambian los horarios en el config, hay
+  que regenerar el timer.
+- Supervivencia: Starlink **apagada del todo** hasta que la batería se
+  recupere y el nivel suba solo (decisión del usuario, 2026-10-07: sin
+  ventana de rescate).
+- GCS: en Ahorro y Crítico, más archivos por corrida (6 en vez de 2) para
+  vaciar lo pendiente dentro de la ventana de 1 h.
+
+### Config (`config_campo.json`, sección nueva `perfiles`)
+
+`umbrales_pct` [70, 40, 20], `histeresis_pct` 10, `v_critico` 12.9,
+`v_supervivencia` 12.7, `ventanas_ahorro` ["09:00-10:00", "12:30-13:30",
+"16:00-17:00"], `ventanas_critico` ["12:30-13:30"], `nivel_file`
+`/run/energia_nivel.json`, `nivel_vencido_min` 15, `gcs_max_por_corrida_ventanas` 6.
+
+### Pruebas en la placa de pruebas
+
+La decisión (`decidir_objetivo.sh`) no toca hardware: se prueba escribiendo
+el archivo de nivel a mano y moviendo la hora. El relé del lab no confirma
+"off" (DIO2_P a GND = siempre "on"), así que la parte de hardware solo se
+verifica en el pedido, no en el feedback.
 
 ## Etapa 5 — Placa de pruebas
 
