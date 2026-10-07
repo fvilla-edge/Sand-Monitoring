@@ -1,8 +1,10 @@
 # Plan — Perfiles de energía (registro de batería + Starlink según autonomía)
 
-Creado 2026-10-07. Estado: **plan, sin código**. Rama `perfiles-energia`,
+Creado 2026-10-07. Estado: **etapas 1, 1b y 2 hechas y probadas en la placa de pruebas**. Rama `registro-energia`
+(etapas 1, 1b y 2, lo que va a campo; antes se llamaba `perfiles-energia`),
 sale de `main` = tag de campo `campo-2026-10-05b` (`3dd05e9`): va a campo
-antes que el IN2, sin arrastrarlo. De `in2-sensor` no se trae el comando
+antes que el IN2, sin arrastrarlo. Los perfiles (etapa 4) siguen en la
+rama `perfiles-energia`. De `in2-sensor` no se trae el comando
 `canales` (depende de `cambiar_canales.sh` y del IN2). Datos de partida en
 `datos_campo/bateria.csv` (export de Losant, 7/9 → 6/10).
 

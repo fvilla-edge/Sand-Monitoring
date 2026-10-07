@@ -308,7 +308,7 @@ Pasos en campo (uno por vez, mirando; `evidencia.sh on` en las subidas):
       Comprobar después en campo: `subtree_control` sin `cpu`, ventanas saltadas ~0
       y `muestras` ~98 % con Starlink on.
 
-## 4c. Registro de energía (rama `perfiles-energia`, 2026-10-07)
+## 4c. Registro de energía (rama `registro-energia`, ex `perfiles-energia`, 2026-10-07)
 
 Plan: `docs/plan_perfiles_energia.md` (etapa 1). Sale de `main` = tag
 `campo-2026-10-05b`: va a campo antes que el IN2.
