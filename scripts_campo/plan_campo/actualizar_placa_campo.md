@@ -322,6 +322,10 @@ Plan: `docs/plan_perfiles_energia.md` (etapa 1). Sale de `main` = tag
       mismos valores por defecto).
 - [ ] Reiniciar `panel-solar-informe.service` y verificar que aparezca el
       CSV de la hora con filas cada minuto y `lecturas` > 0.
+- [ ] `scripts_campo/subir_csv_gcs.py`: sube también los CSV de energía
+      (horas cerradas, cupo propio de 12 por corrida) a
+      `campo/energia/<hostname>/AAAA/MM/DD/energia_AAAAMMDD_HH[_sd].csv.gz`.
+      Verificar en el journal de `subir-csv-gcs` la primera hora subida.
 
 ## 5. Sistema
 

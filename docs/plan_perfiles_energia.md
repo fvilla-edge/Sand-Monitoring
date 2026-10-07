@@ -176,3 +176,12 @@ Después de la placa de pruebas, anotado en
   valores por defecto). El informe a Losant (`test_SC`) siguió igual, y al
   cerrarse el puerto siguió sin ESP32. El CSV de la prueba quedó en
   `/root/prueba_energia/` de la placa.
+- 2026-10-07: etapa 1b escrita: `scripts_campo/subir_csv_gcs.py` sube los
+  CSV de energía (USB y `_sd`) con prefijo propio (el de `gcs.prefijo` con
+  `energia` como última parte: `campo/energia`, `pruebas/energia`), cupo de
+  12 por corrida y 2 s de pausa, después de los de ventanas; un corte de red
+  corta la corrida entera. Probada en la PC con subida simulada (11
+  chequeos: una noche de 16 h en 2 corridas, hora en curso no sube, hora
+  partida USB/SD, nada dos veces, corte de red y recuperación). Falta una
+  subida real a GCS desde la placa de pruebas.
+

@@ -9,6 +9,11 @@ del modo evento una vez que la hora se cerro, comprimidos con gzip
     (ventanas_AAAAMMDD_HH_sd.csv.gz), porque la misma hora puede existir
     partida en los dos lados (p.ej. el disco se cae a mitad de hora) y con
     ifGenerationMatch=0 la segunda no subiria nunca.
+Y los CSV horarios del registro de energia (panel_solar_ble/registro_energia.py,
+docs/plan_perfiles_energia.md): energia.dir_usb si hay disco y energia.dir_sd
+(sufijo _sd), con prefijo propio: el de gcs.prefijo con "energia" en lugar
+de su ultima parte (campo/csv_ventanas -> campo/energia). Pesan ~7 KB por
+hora, asi que tienen su propio cupo por corrida y casi sin pausa.
 
 Lo corre subir-csv-gcs.timer cada pocos minutos (oneshot): si no hay
 internet (de noche, sin Starlink) falla rapido y los CSV quedan para la
@@ -27,7 +32,8 @@ gcs.registro_sd registra los que ya subieron.
   ultimos MARGEN_CIERRE_S (capturar_eventos rota el archivo a la hora justa).
 - Nunca lista la carpeta de eventos (puede tener decenas de miles de
   archivos): los nombres salen de las horas de los ultimos gcs.dias_atras.
-- Objeto: <gcs.prefijo>/<hostname>/AAAA/MM/DD/ventanas_AAAAMMDD_HH[_sd].csv.gz,
+- Objeto: <gcs.prefijo>/<hostname>/AAAA/MM/DD/ventanas_AAAAMMDD_HH[_sd].csv.gz
+  (energia: <prefijo de energia>/<hostname>/AAAA/MM/DD/energia_AAAAMMDD_HH[_sd].csv.gz),
   con ifGenerationMatch=0: nunca pisa. Si ya existe (412, p.ej. se corto la
   conexion despues de que GCS lo guardo), se da por subido.
 - Se verifica el md5 que devuelve GCS contra el del gzip local.
@@ -59,6 +65,10 @@ sys.path.insert(0, "/root/scripts_campo_comun")
 import cfg  # noqa: E402 (import tardio, necesita el sys.path de arriba)
 
 DIR_EVENTOS = "/mnt/usb/eventos"
+# Mismos defaults que publicar_losant.py si el config de la placa todavia no
+# tiene la clave energia.
+DIR_ENERGIA_USB = "/mnt/usb/energia"
+DIR_ENERGIA_SD = "/root/energia_sd"
 SUFIJO_SD = "_sd"
 MARGEN_CIERRE_S = 120
 TIMEOUT_S = 60
@@ -69,6 +79,10 @@ NIVEL_GZIP = 1
 # 2 por corrida cada 5 min (timer) = 24/h: la noche (~16 h) sale en ~40 min.
 MAX_POR_CORRIDA = 2
 PAUSA_ENTRE_S = 30
+# Energia: ~7 KB por hora, el gzip no pesa. 12 por corrida: una noche sale
+# en dos corridas (~10 min).
+MAX_ENERGIA_POR_CORRIDA = 12
+PAUSA_ENERGIA_S = 2
 SCOPE = "https://www.googleapis.com/auth/devstorage.read_write"
 
 
@@ -127,18 +141,35 @@ def origenes():
     return lista + [(cfg.obtener("rutas.eventos_sd"), SUFIJO_SD)]
 
 
-def horas_cerradas(dias_atras, subidos, fuentes):
+def origenes_energia():
+    """Igual que origenes(), para los CSV del registro de energia."""
+    try:
+        dir_usb, dir_sd = cfg.obtener("energia.dir_usb"), cfg.obtener("energia.dir_sd")
+    except KeyError:
+        dir_usb, dir_sd = DIR_ENERGIA_USB, DIR_ENERGIA_SD
+    lista = [(dir_usb, "")] if disco_montado() else []
+    return lista + [(dir_sd, SUFIJO_SD)]
+
+
+def prefijo_energia(prefijo):
+    """campo/csv_ventanas -> campo/energia (pruebas/... en la placa de pruebas)."""
+    padre = prefijo.rstrip("/").rpartition("/")[0]
+    return f"{padre}/energia" if padre else "energia"
+
+
+def horas_cerradas(dias_atras, subidos, fuentes, base="ventanas"):
     """CSV de horas ya cerradas que existen y no subieron, del mas viejo al mas
-    nuevo: (hora, ruta, nombre con el que sube y se registra)."""
+    nuevo: (hora, ruta, nombre con el que sube y se registra). base es el
+    comienzo del nombre del archivo (ventanas o energia)."""
     ahora = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
     pendientes = []
     for h in range(dias_atras * 24, 0, -1):
         t = ahora - timedelta(hours=h)
         for carpeta, sufijo in fuentes:
-            nombre = f"ventanas_{t:%Y%m%d_%H}{sufijo}.csv"
+            nombre = f"{base}_{t:%Y%m%d_%H}{sufijo}.csv"
             if nombre in subidos:
                 continue
-            ruta = os.path.join(carpeta, f"ventanas_{t:%Y%m%d_%H}.csv")
+            ruta = os.path.join(carpeta, f"{base}_{t:%Y%m%d_%H}.csv")
             try:
                 mtime = os.stat(ruta).st_mtime
             except FileNotFoundError:
@@ -188,45 +219,57 @@ def main():
         except FileNotFoundError:
             pass
 
-    pendientes = horas_cerradas(cfg.obtener("gcs.dias_atras"), subidos, origenes())
-    if not pendientes:
+    dias_atras = cfg.obtener("gcs.dias_atras")
+    pendientes = horas_cerradas(dias_atras, subidos, origenes())
+    pend_energia = horas_cerradas(dias_atras, subidos, origenes_energia(), base="energia")
+    if not pendientes and not pend_energia:
         log("nada pendiente")
         return 0
-    log(f"{len(pendientes)} CSV pendientes (se suben hasta {args.max})")
+    log(f"{len(pendientes)} CSV de ventanas pendientes (se suben hasta {args.max}), "
+        f"{len(pend_energia)} de energia (hasta {MAX_ENERGIA_POR_CORRIDA})")
     if args.seco:
-        for _, ruta, nombre in pendientes[:args.max]:
+        for _, ruta, nombre in pendientes[:args.max] + pend_energia[:MAX_ENERGIA_POR_CORRIDA]:
             log(f"  subiria {ruta} como {nombre}.gz")
         return 0
 
     bucket = cfg.obtener("gcs.bucket")
     base = f"{cfg.obtener('gcs.prefijo')}/{socket.gethostname()}"
+    base_energia = f"{prefijo_energia(cfg.obtener('gcs.prefijo'))}/{socket.gethostname()}"
     try:
         token = pedir_token(cfg.obtener("gcs.credenciales_file"))
     except (OSError, urllib.error.URLError, subprocess.CalledProcessError) as e:
         log(f"sin token (¿sin internet?): {e} — se reintenta en la proxima corrida")
         return 0
 
-    n_ok = 0
-    for i, (t, ruta, nombre) in enumerate(pendientes[:args.max]):
-        if i:
-            time.sleep(PAUSA_ENTRE_S)
-        objeto = f"{base}/{t:%Y/%m/%d}/{nombre}.gz"
-        with open(ruta, "rb") as f:
-            crudo = f.read()
-        datos = gzip.compress(crudo, NIVEL_GZIP)
-        t0 = time.time()
-        try:
-            subir(token, bucket, objeto, datos)
-        except (OSError, urllib.error.URLError, RuntimeError) as e:
-            log(f"{objeto}: fallo ({e}) — se corta la corrida, se reintenta en la proxima")
-            break
-        with open(registro, "a") as f:
-            f.write(nombre + "\n")
-            f.flush()
-            os.fsync(f.fileno())
-        n_ok += 1
-        log(f"{objeto}: {len(crudo)} -> {len(datos)} B en {time.time() - t0:.1f}s, md5 ok")
-    log(f"subidos {n_ok}/{min(len(pendientes), args.max)}, quedan {len(pendientes) - n_ok}")
+    tandas = ((pendientes[:args.max], base, PAUSA_ENTRE_S),
+              (pend_energia[:MAX_ENERGIA_POR_CORRIDA], base_energia, PAUSA_ENERGIA_S))
+    n_ok = n_total = 0
+    cortado = False
+    for lista, prefijo, pausa in tandas:
+        for i, (t, ruta, nombre) in enumerate(lista):
+            if cortado:
+                break
+            n_total += 1
+            if i:
+                time.sleep(pausa)
+            objeto = f"{prefijo}/{t:%Y/%m/%d}/{nombre}.gz"
+            with open(ruta, "rb") as f:
+                crudo = f.read()
+            datos = gzip.compress(crudo, NIVEL_GZIP)
+            t0 = time.time()
+            try:
+                subir(token, bucket, objeto, datos)
+            except (OSError, urllib.error.URLError, RuntimeError) as e:
+                log(f"{objeto}: fallo ({e}) — se corta la corrida, se reintenta en la proxima")
+                cortado = True
+                break
+            with open(registro, "a") as f:
+                f.write(nombre + "\n")
+                f.flush()
+                os.fsync(f.fileno())
+            n_ok += 1
+            log(f"{objeto}: {len(crudo)} -> {len(datos)} B en {time.time() - t0:.1f}s, md5 ok")
+    log(f"subidos {n_ok}/{n_total}, quedan {len(pendientes) + len(pend_energia) - n_ok}")
     return 0
 
 
