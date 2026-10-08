@@ -198,6 +198,16 @@ ssh root@<IP_PLACA> "journalctl -u starlink-aplicar-objetivo.service"
 `apagar-starlink` corta la sesión SSH en el acto si depende del mismo Starlink que se
 está apagando — es lo esperado.
 
+**Desde Losant** (Device > Send Device Command): nombre `starlink`, payload
+`{"accion": "off"}` — corre lo mismo que `apagar-starlink`, a los 10 s (para que antes
+salga a Losant el atributo `starlink_comando` = `"off"`, String, crearlo en el Device).
+No existe "on" a proposito: en campo el unico enlace es el propio Starlink, asi que
+apagada ya no llega ningun comando. Vuelve sola como cualquier `apagar-starlink`
+(autolimpieza en `hora_off` => prende al dia siguiente en `hora_on`, o rescate a las
+`rescate_manual_horas`). Cualquier otro payload se ignora (queda en
+`journalctl -u panel-solar-informe`); lo que hizo el apagado:
+`journalctl -u apagar-starlink-losant`.
+
 ### Cambiar el horario (`hora_on`/`hora_off`)
 
 El horario NO se edita en los `.timer` directamente — vive en

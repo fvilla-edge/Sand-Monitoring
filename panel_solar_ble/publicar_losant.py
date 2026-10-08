@@ -118,6 +118,16 @@ SCRIPT_REPETIR_CAPTURA = "/root/scripts_campo_comun/repetir_captura.sh"
 SCRIPT_RELANZAR_CAPTURA = "/root/scripts_campo_comun/relanzar_captura.sh"
 SCRIPT_CAPTURAR_STREAM = "/root/scripts_campo/capturar_stream.py"
 
+# Comando "starlink" recibido por MQTT: solo {"accion": "off"}, lo mismo que
+# el alias "apagar-starlink" por SSH. No hay "on": en campo el unico enlace es
+# la propia Starlink, asi que una vez apagada Losant ya no llega a la placa;
+# vuelve sola por el horario (el manual "off" se autolimpia en hora_off) o
+# por el rescate de starlink.rescate_manual_horas.
+SCRIPT_STARLINK_MANUAL = "/root/starlink_remoto/starlink_manual.sh"
+# Segundos que espera la unidad antes de cortar, para que el aviso
+# "starlink_comando" alcance a salir por MQTT antes de perder el enlace.
+ESPERA_APAGADO_S = 10
+
 # USB donde caen las capturas (mismo default que usa capturar_stream.py para
 # --directorio, ver config_campo.json: captura_defaults.directorio). Se
 # reporta su espacio libre a Losant porque capturar_stream.py ya corta una
@@ -322,6 +332,39 @@ def _capturar(payload):
     _proceso_captura = subprocess.Popen(argv)
 
 
+def _apagar_starlink(dispositivo, payload):
+    accion = payload.get("accion") if isinstance(payload, dict) else None
+    if not isinstance(accion, str) or accion.strip().lower() != "off":
+        print(f"Comando 'starlink' ignorado: payload invalido {payload!r} "
+              '(se espera {"accion": "off"})')
+        return
+    # Aviso antes de cortar: despues del corte es lo unico que va a quedar en
+    # Losant (la placa se desconecta en cuanto el rele baja).
+    if not _publicar_estado_con_hora(dispositivo, {"starlink_comando": "off"},
+                                     int(time.time() * 1000)):
+        print("Comando 'starlink': no salio el aviso a Losant, se apaga igual")
+    # Unidad transitoria (no hijo de este proceso): un restart de
+    # panel-solar-informe en el medio no corta el apagado a la mitad. Si ya
+    # hay uno en curso, systemd-run rechaza el segundo por el nombre de unidad.
+    argv = [
+        "systemd-run", "--unit=apagar-starlink-losant", "--collect", "--quiet",
+        "bash", "-c",
+        f"sleep {ESPERA_APAGADO_S}; exec {SCRIPT_STARLINK_MANUAL} off",
+    ]
+    print(f"Apagando Starlink por comando de Losant en {ESPERA_APAGADO_S} s: {argv}")
+    # systemd-run vuelve enseguida (la espera corre dentro de la unidad);
+    # timeout por las dudas, para no colgar el reporte
+    try:
+        r = subprocess.run(argv, capture_output=True, text=True, timeout=30)
+        salida = (r.stdout + r.stderr).strip()
+        if r.returncode != 0:
+            print(f"Comando 'starlink': systemd-run fallo (rc={r.returncode}) {salida}")
+        elif salida:
+            print(salida)
+    except Exception as exc:
+        print(f"Comando 'starlink': no se pudo lanzar el apagado ({exc})")
+
+
 def _hay_captura_externa():
     """True si hay un capturar_stream.py corriendo que este servicio no lanzo
     el mismo (ej. relanzado a mano por SSH, o via repetir_captura.sh) —
@@ -496,6 +539,8 @@ def _al_recibir_comando(dispositivo, comando):
     payload = comando.get("payload") or {}
     if nombre == "capturar":
         _capturar(payload)
+    elif nombre == "starlink":
+        _apagar_starlink(dispositivo, payload)
     else:
         print(f"Comando desconocido ignorado: nombre={nombre!r} payload={payload}")
 

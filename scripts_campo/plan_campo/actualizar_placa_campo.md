@@ -409,6 +409,33 @@ ssh root@<IP_CAMPO> 'R=/root/respaldo_registro_energia_<fecha>;
 (`registro_energia.py` y `balance_energia.py` pueden quedar: el publicador
 viejo no los importa.)
 
+## 4d. Comando de Losant para apagar Starlink (rama `comando-starlink`, 2026-10-08)
+
+- [ ] Comando `starlink` con payload `{"accion": "off"}` = `apagar-starlink`
+  (a los 10 s, unidad `apagar-starlink-losant`); avisa antes con el atributo
+  `starlink_comando` = `"off"`. Solo "off": apagada, Losant ya no llega.
+  Vuelve sola al día siguiente en `hora_on` (ver COMANDOS.md). Probado en el
+  lab 8/10 desde `test_SC` (off ejecutado, `{"accion":"on"}` ignorado).
+
+Instalación (solo `publicar_losant.py`, desde un commit que ya tenga
+registro-energia; md5 = el de la rama):
+1. Crear en el Device de campo el atributo **`starlink_comando`** (String).
+2. Respaldo + copia + restart:
+```bash
+ssh root@<IP_CAMPO> 'mkdir -p /root/respaldo_comando_starlink_<fecha> &&
+  cp -p /root/panel_solar_ble/publicar_losant.py /root/respaldo_comando_starlink_<fecha>/'
+scp panel_solar_ble/publicar_losant.py root@<IP_CAMPO>:/root/panel_solar_ble/
+ssh root@<IP_CAMPO> 'sync; md5sum /root/panel_solar_ble/publicar_losant.py;
+  systemctl restart panel-solar-informe; sleep 10; systemctl is-active panel-solar-informe'
+```
+3. NO probar el "off" en campo dentro del horario salvo que se quiera dejar
+   el sitio sin Starlink hasta el día siguiente. Para verificar sin cortar:
+   mandar `{"accion": "on"}` y ver `Comando 'starlink' ignorado` en
+   `journalctl -u panel-solar-informe`.
+
+Revertir: `cp -p` del respaldo a `/root/panel_solar_ble/` + restart
+`panel-solar-informe`.
+
 ## 5. Sistema
 
 - [x] **Watchdog de systemd 5 s → 30 s** (`RuntimeWatchdogSec=30s` en
