@@ -13,13 +13,21 @@
 # Uso:
 #   bash scripts_campo/actualizacion/armar_paquete_actualizacion.sh \
 #       --bitstream ~/RedPitaya-FPGA-Release_2025.2/prj/stream_app/out/red_pitaya.bin \
-#       --compilar-en root@192.168.0.136 [--commit HEAD] [--salida DIR]
+#       --compilar-en root@<IP_LAB> [--commit HEAD] [--salida DIR] \
+#       [--bitstream-commit <commit del repo FPGA con que se compilo el .bin>]
+#
+# --commit acepta un tag: se anota el commit al que apunta, no el objeto tag
+# (campo-2026-10-05b es cb826cc como tag y 3dd05e9 como commit).
+# --bitstream-commit se anota tal cual en VERSION; sin el va "?" (no se
+# deduce de la ruta: el HEAD del repo FPGA no tiene por que ser el commit del
+# .bin, ej. out/red_pitaya.bin fue el del IN2 con el repo en otra rama).
 set -euo pipefail
 
 REPO=$(git rev-parse --show-toplevel)
 COMMIT=HEAD
 SALIDA="$REPO/paquetes_actualizacion"
 BITSTREAM=""
+BITSTREAM_COMMIT="?"
 COMPILAR_EN=""
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -27,12 +35,14 @@ while [ $# -gt 0 ]; do
     --salida) SALIDA="$2"; shift 2 ;;
     --bitstream) BITSTREAM="$2"; shift 2 ;;
     --compilar-en) COMPILAR_EN="$2"; shift 2 ;;
+    --bitstream-commit) BITSTREAM_COMMIT="$2"; shift 2 ;;
     *) echo "argumento desconocido: $1" >&2; exit 1 ;;
     esac
 done
 [ -f "$BITSTREAM" ] || { echo "falta --bitstream <fpga.bin propio>" >&2; exit 1; }
 [ -n "$COMPILAR_EN" ] || { echo "falta --compilar-en root@<placa con toolchain>" >&2; exit 1; }
 
+COMMIT=$(git -C "$REPO" rev-parse --verify "$COMMIT^{commit}")
 CORTO=$(git -C "$REPO" rev-parse --short "$COMMIT")
 ID="$(date -u +%Y%m%d_%H%M%S)_$CORTO"
 TMP=$(mktemp -d)
@@ -82,15 +92,14 @@ printf '%s\n' modo-evento.service resumen-modo-evento.service > "$PKG/habilitar.
 
 # Manifiesto: rutas relativas a archivos/ (= rutas absolutas en la placa sin la / inicial)
 (cd "$A" && find . -type f -printf '%P\0' | sort -z | xargs -0 sha256sum) > "$PKG/MANIFIESTO"
-FPGA_REPO=$(dirname "$(dirname "$(dirname "$(dirname "$(readlink -f "$BITSTREAM")")")")")
 {
     echo "id=$ID"
-    echo "commit=$(git -C "$REPO" rev-parse "$COMMIT")"
+    echo "commit=$COMMIT"
     echo "commit_desc=$(git -C "$REPO" log -1 --format='%cs %s' "$COMMIT")"
     echo "armado_utc=$(date -u +%FT%TZ)"
     echo "bitstream_sha256=$(sha256sum < "$BITSTREAM" | cut -d' ' -f1)"
     echo "bitstream_origen=$(readlink -f "$BITSTREAM")"
-    echo "bitstream_repo_commit=$(git -C "$FPGA_REPO" rev-parse --short HEAD 2>/dev/null || echo '?')"
+    echo "bitstream_repo_commit=$BITSTREAM_COMMIT"
     echo "binario_sha256=$(sha256sum < "$A/root/scripts_campo/c/capturar_eventos" | cut -d' ' -f1)"
     echo "binario_compilado_en=$COMPILAR_EN"
     echo "archivos=$(wc -l < "$PKG/MANIFIESTO")"

@@ -308,6 +308,107 @@ Pasos en campo (uno por vez, mirando; `evidencia.sh on` en las subidas):
       Comprobar después en campo: `subtree_control` sin `cpu`, ventanas saltadas ~0
       y `muestras` ~98 % con Starlink on.
 
+## 4c. Registro de energía (rama `registro-energia`, ex `perfiles-energia`, 2026-10-07)
+
+Plan: `docs/plan_perfiles_energia.md` (etapas 1, 1b y 2). Sale de `main` =
+tag `campo-2026-10-05b` (`3dd05e9`): va a campo antes que el IN2. **No toca
+el relé, el horario de Starlink ni el modo evento**: solo el proceso que
+publica a Losant (`panel-solar-informe`), la subida a GCS y el config.
+
+Qué cambia:
+- `panel_solar_ble/registro_energia.py` (nuevo): una fila por minuto en
+  `/mnt/usb/energia/energia_AAAAMMDD_HH.csv` (sin USB, `/root/energia_sd/`).
+- `panel_solar_ble/balance_energia.py` (nuevo): SOC, energía de la hora y
+  del día, resumen horario `<ms>.energia.json` en la cola del cartero.
+  Estado en `/root/energia_estado.json` (SD).
+- `panel_solar_ble/publicar_losant.py`: los llama (si fallan, avisa una
+  vez y el informe sigue igual).
+- `scripts_campo/subir_csv_gcs.py`: sube también los CSV de energía a
+  `campo/energia/<hostname>/AAAA/MM/DD/`. Reestructura el bucle de subida:
+  **verificar que los CSV de ventanas sigan subiendo**.
+- `config_campo.json`: clave `energia` (se fusiona; sin ella los scripts usan
+  los mismos valores por defecto).
+
+**Aplicado en campo 2026-10-08 18:28 UTC** (pasos 3-7 OK: inventario = tag
+`campo-2026-10-05b`, respaldo en `/root/respaldo_registro_energia_20261008`,
+md5 = rama `registro-energia` @ `aeb470c`, config solo agregó `energia`,
+publicador `active` sin reinicios, CSV de energía con lecturas). Paso 9 OK
+(19:03 UTC subieron `ventanas_20261008_18` y `energia_20261008_18`). Paso 8
+con **bug**: el MPPT reportó "float" 18:38-18:41 UTC descargando (i_bat < 0,
+V volviendo a 12,9) y `balance_energia.py` calibró el SOC a 100 % confiable:
+`en_soc_*` y autonomías falsos hasta el arreglo. Tag `campo-2026-10-08` = lo
+que está en la placa (con el bug), sobre `registro-energia`, sin merge a
+`main` todavía.
+
+### Camino para instalarlo (actualización puntual, sin paquete)
+
+Se eligió copiar solo los 4 archivos en vez del paquete de la sección 6: el
+paquete para el modo evento y recarga el bitstream, y acá no cambia nada de
+eso. Vuelta atrás = volver a copiar los 4 archivos y el config del respaldo.
+
+**Antes (oficina):**
+1. Crear en el Device de **campo** los 14 atributos (Number salvo
+   `en_soc_confiable`, Boolean): `en_soc_pct`, `en_soc_confiable`,
+   `en_energia_restante_wh`, `en_autonomia_sin_sl_h`,
+   `en_autonomia_con_sl_dias`, `en_balance_dia_wh`, `en_minutos`,
+   `en_starlink_min`, `en_p_carga_w`, `en_e_carga_wh`, `en_e_pv_wh`,
+   `en_e_bat_wh`, `en_v_min`, `en_sin_lecturas_min`.
+   (`en_sin_lecturas_min` no es del resumen horario: va con el informe cada
+   15 min = minutos sin lectura valida del ESP32, 0 = todo bien.)
+2. Placa de campo prendida (salida LOAD del MPPT encendida, con captura de
+   su configuración antes) y con Starlink.
+
+**En la placa de campo (ventana de Starlink):**
+3. Inventario de solo lectura y compararlo con `inventario_rp-f0fbda_20260930.txt`
+   (que nada haya cambiado por fuera).
+4. Respaldo de lo que se va a tocar:
+   ```bash
+   ssh root@<IP_CAMPO> 'R=/root/respaldo_registro_energia_$(date +%Y%m%d); mkdir -p $R &&
+     cp -p /root/panel_solar_ble/publicar_losant.py /root/scripts_campo/subir_csv_gcs.py \
+           /root/scripts_campo_comun/config_campo.json $R/ && ls -l $R'
+   ```
+5. Copiar los 4 archivos de la rama y el config del repo a un temporal,
+   verificar md5 contra la PC, y fusionar el config:
+   ```bash
+   git switch registro-energia
+   scp panel_solar_ble/{registro_energia.py,balance_energia.py,publicar_losant.py} root@<IP_CAMPO>:/root/panel_solar_ble/
+   scp scripts_campo/subir_csv_gcs.py root@<IP_CAMPO>:/root/scripts_campo/
+   scp scripts_campo_comun/config_campo.json root@<IP_CAMPO>:/tmp/config_nuevo.json
+   scp scripts_campo/actualizacion/fusionar_config.py root@<IP_CAMPO>:/tmp/
+   ssh root@<IP_CAMPO> 'python3 /tmp/fusionar_config.py /root/scripts_campo_comun/config_campo.json /tmp/config_nuevo.json'
+   # esperado: "claves agregadas: energia"
+   ```
+6. Reiniciar solo el publicador y mirar que no se reinicie solo:
+   ```bash
+   ssh root@<IP_CAMPO> 'systemctl restart panel-solar-informe; sleep 60;
+     systemctl is-active panel-solar-informe; systemctl show -p NRestarts --value panel-solar-informe;
+     journalctl -u panel-solar-informe --since "-2min" --no-pager | tail -15'
+   ```
+   Esperado: `active`, `0`, "Conectado a Losant", lecturas del ESP32, sin
+   "Registro de energia: fallo" ni "sin lecturas validas del ESP32".
+   En Losant `en_sin_lecturas_min` = 0.
+
+**Verificación (en la hora siguiente):**
+7. A los ~2 min: `/mnt/usb/energia/energia_<hoy>_<hora UTC>.csv` con filas
+   por minuto y `lecturas` > 0; `/root/energia_estado.json` existe.
+8. Al cerrar la primera hora completa: el resumen `en_*` en el Device de
+   campo, con la hora original. SOC arranca en 50 % no confiable (se calibra
+   en el primer float).
+9. En el journal de `subir-csv-gcs`, después de la hora cerrada: sube el
+   `energia_..._HH.csv.gz` **y siguen subiendo los `ventanas_*`**.
+10. Si todo bien: merge `registro-energia` → `main` ("Registro de energía
+    (sin perfiles)") y tag `campo-2026-10-08` sobre ese commit.
+
+**Si algo se porta mal** (el publicador se reinicia solo, no llegan datos
+a Losant, no suben las ventanas):
+```bash
+ssh root@<IP_CAMPO> 'R=/root/respaldo_registro_energia_<fecha>;
+  cp -p $R/publicar_losant.py /root/panel_solar_ble/ && cp -p $R/subir_csv_gcs.py /root/scripts_campo/ &&
+  cp -p $R/config_campo.json /root/scripts_campo_comun/ && systemctl restart panel-solar-informe'
+```
+(`registro_energia.py` y `balance_energia.py` pueden quedar: el publicador
+viejo no los importa.)
+
 ## 5. Sistema
 
 - [x] **Watchdog de systemd 5 s → 30 s** (`RuntimeWatchdogSec=30s` en
@@ -357,13 +458,17 @@ estado de cada placa quedan fuera de git (`paquetes_actualizacion/`,
    ssh root@<IP_CAMPO> 'bash -s' < scripts_campo_comun/inventario_placa.sh \
        > datos_campo/inventarios/inventario_rp-f0fbda_<fecha>.txt
    ```
-3. Armar el paquete desde el commit a instalar (compila el binario en la
+3. Armar el paquete desde el commit a instalar. **OJO (2026-10-07):** el
+   `out/red_pitaya.bin` del repo FPGA hoy es el bitstream del IN2
+   (`b34cd26f`); el de campo es `~/bitstreams/campo_7f23f7d_red_pitaya.bin`
+   (md5 `1e6b2cf2`). Verificar el md5 antes de armar (compila el binario en la
    placa de pruebas, en `/tmp`, sin tocar lo instalado):
    ```bash
    bash scripts_campo/actualizacion/armar_paquete_actualizacion.sh \
-       --bitstream ~/RedPitaya-FPGA-Release_2025.2/prj/stream_app/out/red_pitaya.bin \
-       --compilar-en root@192.168.0.136
+       --bitstream ~/bitstreams/campo_7f23f7d_red_pitaya.bin --bitstream-commit 7f23f7d \
+       --compilar-en root@<IP_LAB>
    ```
+   (`--commit <tag>` para armar desde un tag; en `VERSION` queda el commit.)
 
 **En la ventana de Starlink (hora_on), con tiempo para volver:**
 

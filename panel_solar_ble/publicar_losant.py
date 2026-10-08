@@ -62,6 +62,8 @@ from config import DEVICES
 # Device ID, Access Key y Access Secret del dispositivo en Losant.
 from losant_config import ACCESS_KEY, ACCESS_SECRET, DEVICE_ID
 from puerto import resolver_puerto
+from balance_energia import BalanceEnergia, horas_starlink
+from registro_energia import RegistroEnergia, disco_montado, lectura_valida
 from victron_scanner import SerialDecoder
 
 BAUDRATE = 115200
@@ -139,6 +141,41 @@ PENDIENTES_INTERVALO_S = 1.0
 PENDIENTES_RELISTAR_S = 10.0
 SERVICIO_MODO_EVENTO = "modo-evento"
 
+# Registro local de energia (registro_energia.py, docs/plan_perfiles_energia.md):
+# una fila por minuto en CSV haya o no internet. Este proceso es el unico que
+# abre el puerto del ESP32, por eso el registro vive aca.
+# Con default: si este script llega a una placa cuyo config todavia no tiene
+# la clave, un KeyError al importar dejaria sin informe a Losant.
+ENERGIA_DEFAULTS = {
+    "dir_usb": "/mnt/usb/energia",
+    "dir_sd": "/root/energia_sd",
+    # balance (balance_energia.py): estado en la SD, nunca en el USB
+    "estado_file": "/root/energia_estado.json",
+    "capacidad_ah": 100,
+    "capacidad_util_wh": 1150,
+    # valores de partida del historial del MPPT (7/9-7/10), hasta tener promedios propios
+    "p_base_w_inicial": 7.5,
+    "p_starlink_w_inicial": 20,
+}
+
+
+def _energia(clave):
+    try:
+        return cfg.obtener(f"energia.{clave}")
+    except KeyError:
+        return ENERGIA_DEFAULTS[clave]
+
+
+# Minutos sin ninguna lectura valida del SmartSolar (ESP32 desenchufado,
+# colgado, fuera de alcance BLE o clave cambiada) a partir de los cuales se
+# avisa en el journal. A Losant va siempre el valor (en_sin_lecturas_min) con
+# el informe periodico: el journal vive en RAM y no se ve desde la oficina.
+SIN_LECTURAS_AVISO_MIN = 10
+
+DIR_ENERGIA_USB = _energia("dir_usb")
+DIR_ENERGIA_SD = _energia("dir_sd")
+STATE_FILE_STARLINK = cfg.obtener("rutas.state_file")
+
 # Defaults = la invocación que más se repite en campo (ver COMANDOS.md), para
 # que un comando "capturar" sin payload (o con payload parcial) siga siendo
 # útil. Todo override por payload es opcional.
@@ -154,6 +191,18 @@ DEFAULTS_CAPTURA = {
 }
 
 _decoder = SerialDecoder(DEVICES)
+_balance = BalanceEnergia(
+    _energia("estado_file"),
+    lambda: PENDIENTES_DIRS[0] if disco_montado() else PENDIENTES_DIRS[1],
+    capacidad_ah=_energia("capacidad_ah"),
+    capacidad_util_wh=_energia("capacidad_util_wh"),
+    p_base_w=_energia("p_base_w_inicial"),
+    p_starlink_w=_energia("p_starlink_w_inicial"),
+    horas_sl=horas_starlink(cfg.obtener("starlink.hora_on"), cfg.obtener("starlink.hora_off")),
+)
+_registro = RegistroEnergia(DIR_ENERGIA_USB, DIR_ENERGIA_SD, STATE_FILE_STARLINK,
+                            al_escribir=_balance.minuto)
+_registro_avisado = False  # ya se aviso un fallo del registro (se vuelve a avisar tras uno bueno)
 _ultima_lectura = {}      # address -> (rssi, data), la más reciente decodificada
 _pendientes = set()       # addresses a informar en cuanto llegue una lectura nueva
 _ultima_publicacion = {}  # address -> time.monotonic() de la última vez que se publicó
@@ -166,6 +215,9 @@ _ultimo_listado = 0.0       # time.monotonic() del ultimo listado de PENDIENTES_
 _ultimo_pendiente = 0.0     # time.monotonic() del ultimo resumen mandado
 _modo_evento_cache = (0.0, False)  # (time.monotonic() del chequeo, activo)
 _esp32_avisado = False      # ya se aviso que no hay ESP32 (se vuelve a avisar si aparece y se pierde)
+_ultima_valida = time.monotonic()  # ultima lectura valida (arranque = cuenta desde ahi)
+_sin_lecturas_avisado = False      # ya se aviso la racha actual sin lecturas validas
+_ultimo_envio_lecturas = 0.0       # time.monotonic() del ultimo publish de en_sin_lecturas_min
 
 
 def _crear_dispositivo():
@@ -461,12 +513,34 @@ def _al_conectar(dispositivo):
     _publicar_starlink(dispositivo)
 
 
+def _registrar_energia(funcion, *args):
+    # Un fallo del registro (disco lleno, USB que se va) no puede tirar abajo
+    # el informe a Losant ni el cartero del modo evento: se avisa una vez por
+    # racha (hasta la proxima fila escrita bien) y se sigue.
+    global _registro_avisado
+    try:
+        if funcion(*args):
+            _registro_avisado = False
+    except Exception as exc:
+        if not _registro_avisado:
+            print(f"Registro de energia: fallo ({exc}), sigo sin registrar", file=sys.stderr)
+            _registro_avisado = True
+
+
 def procesar_linea(linea, device):
+    global _ultima_valida, _sin_lecturas_avisado
     resultado = _decoder.procesar_linea(linea)
     if resultado is None:
         return
     address, rssi, data = resultado
+    if lectura_valida(data):
+        if _sin_lecturas_avisado:
+            minutos = int((time.monotonic() - _ultima_valida) // 60)
+            print(f"Panel solar: vuelven las lecturas validas del ESP32 (despues de {minutos} min)")
+            _sin_lecturas_avisado = False
+        _ultima_valida = time.monotonic()
     _ultima_lectura[address] = (rssi, data)
+    _registrar_energia(_registro.agregar, data)
     if address in _pendientes and device.is_connected():
         _publicar_informe(device, address, rssi, data)
 
@@ -482,6 +556,27 @@ def revisar_periodico(device):
         ultima = _ultima_publicacion.get(address)
         if ultima is not None and ahora - ultima >= INTERVALO_INFORME_S:
             _publicar_informe(device, address, rssi, data)
+
+
+def _revisar_lecturas_esp32(dispositivo):
+    # Se llama en cada vuelta del loop (~1s). Cubre lo que _abrir_serial no
+    # ve: puerto abierto pero sin lecturas validas (ESP32 colgado, MPPT fuera
+    # de alcance, clave de Instant Readout cambiada, solo basura). Aviso al
+    # journal una vez por racha; a Losant el valor cada INTERVALO_INFORME_S
+    # (0 = hay lecturas), mismo patron que _revisar_espacio_disco.
+    global _sin_lecturas_avisado, _ultimo_envio_lecturas
+    ahora = time.monotonic()
+    minutos = int((ahora - _ultima_valida) // 60)
+    if minutos >= SIN_LECTURAS_AVISO_MIN and not _sin_lecturas_avisado:
+        print(f"Panel solar: sin lecturas validas del ESP32 hace {minutos} min", file=sys.stderr)
+        _sin_lecturas_avisado = True
+    if not dispositivo.is_connected() or ahora - _ultimo_envio_lecturas < INTERVALO_INFORME_S:
+        return
+    try:
+        dispositivo.send_state({"en_sin_lecturas_min": minutos})
+        _ultimo_envio_lecturas = ahora
+    except Exception as exc:
+        print(f"Lecturas ESP32: no se pudo publicar ({exc})", file=sys.stderr)
 
 
 def _abrir_serial():
@@ -543,9 +638,11 @@ def main():
             # sin ESP32 el readline(timeout=1) ya no marca el paso del loop
             time.sleep(0.9)
 
+        _registrar_energia(_registro.tick)
         revisar_periodico(device)
         _revisar_estado_captura(device)
         _revisar_espacio_disco(device)
+        _revisar_lecturas_esp32(device)
         _enviar_pendientes(device)
         try:
             device.loop(timeout=0.1)
