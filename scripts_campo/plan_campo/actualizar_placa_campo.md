@@ -454,9 +454,10 @@ estado de cada placa quedan fuera de git (`paquetes_actualizacion/`,
    placa de pruebas, en `/tmp`, sin tocar lo instalado):
    ```bash
    bash scripts_campo/actualizacion/armar_paquete_actualizacion.sh \
-       --bitstream ~/bitstreams/campo_7f23f7d_red_pitaya.bin \
-       --compilar-en root@192.168.0.136
+       --bitstream ~/bitstreams/campo_7f23f7d_red_pitaya.bin --bitstream-commit 7f23f7d \
+       --compilar-en root@<IP_LAB>
    ```
+   (`--commit <tag>` para armar desde un tag; en `VERSION` queda el commit.)
 
 **En la ventana de Starlink (hora_on), con tiempo para volver:**
 
