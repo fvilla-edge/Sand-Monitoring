@@ -336,12 +336,14 @@ paquete para el modo evento y recarga el bitstream, y acá no cambia nada de
 eso. Vuelta atrás = volver a copiar los 4 archivos y el config del respaldo.
 
 **Antes (oficina):**
-1. Crear en el Device de **campo** los 13 atributos (Number salvo
+1. Crear en el Device de **campo** los 14 atributos (Number salvo
    `en_soc_confiable`, Boolean): `en_soc_pct`, `en_soc_confiable`,
    `en_energia_restante_wh`, `en_autonomia_sin_sl_h`,
    `en_autonomia_con_sl_dias`, `en_balance_dia_wh`, `en_minutos`,
    `en_starlink_min`, `en_p_carga_w`, `en_e_carga_wh`, `en_e_pv_wh`,
-   `en_e_bat_wh`, `en_v_min`.
+   `en_e_bat_wh`, `en_v_min`, `en_sin_lecturas_min`.
+   (`en_sin_lecturas_min` no es del resumen horario: va con el informe cada
+   15 min = minutos sin lectura valida del ESP32, 0 = todo bien.)
 2. Placa de campo prendida (salida LOAD del MPPT encendida, con captura de
    su configuración antes) y con Starlink.
 
@@ -372,7 +374,8 @@ eso. Vuelta atrás = volver a copiar los 4 archivos y el config del respaldo.
      journalctl -u panel-solar-informe --since "-2min" --no-pager | tail -15'
    ```
    Esperado: `active`, `0`, "Conectado a Losant", lecturas del ESP32, sin
-   "Registro de energia: fallo".
+   "Registro de energia: fallo" ni "sin lecturas validas del ESP32".
+   En Losant `en_sin_lecturas_min` = 0.
 
 **Verificación (en la hora siguiente):**
 7. A los ~2 min: `/mnt/usb/energia/energia_<hoy>_<hora UTC>.csv` con filas

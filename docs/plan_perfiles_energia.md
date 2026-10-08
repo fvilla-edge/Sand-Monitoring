@@ -126,6 +126,13 @@ número del nombre):
 | `en_v_min` | tensión mínima de la hora |
 | `en_starlink_min`, `en_minutos` | minutos con Starlink y minutos con datos en la hora |
 
+Aparte del resumen horario, `en_sin_lecturas_min` va con el informe cada
+15 min (mientras haya conexion): minutos desde la ultima lectura valida del
+ESP32 (0 = todo bien). Cubre el ESP32 colgado, fuera de alcance BLE o con la
+clave cambiada, que no se ven en el journal (avisa una vez a los 10 min y al
+volver). Sin ESP32 el resumen horario no sale y sin esto no habria forma de
+distinguir "sin ESP32" de "sin datos" desde la oficina.
+
 Control cruzado: el consumo diario calculado tiene que parecerse al
 "Consumption" del historial del MPPT.
 
