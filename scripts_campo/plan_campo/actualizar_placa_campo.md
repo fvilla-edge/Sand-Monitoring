@@ -329,6 +329,17 @@ Qué cambia:
 - `config_campo.json`: clave `energia` (se fusiona; sin ella los scripts usan
   los mismos valores por defecto).
 
+**Aplicado en campo 2026-10-08 18:28 UTC** (pasos 3-7 OK: inventario = tag
+`campo-2026-10-05b`, respaldo en `/root/respaldo_registro_energia_20261008`,
+md5 = rama `registro-energia` @ `aeb470c`, config solo agregó `energia`,
+publicador `active` sin reinicios, CSV de energía con lecturas). Paso 9 OK
+(19:03 UTC subieron `ventanas_20261008_18` y `energia_20261008_18`). Paso 8
+con **bug**: el MPPT reportó "float" 18:38-18:41 UTC descargando (i_bat < 0,
+V volviendo a 12,9) y `balance_energia.py` calibró el SOC a 100 % confiable:
+`en_soc_*` y autonomías falsos hasta el arreglo. Tag `campo-2026-10-08` = lo
+que está en la placa (con el bug), sobre `registro-energia`, sin merge a
+`main` todavía.
+
 ### Camino para instalarlo (actualización puntual, sin paquete)
 
 Se eligió copiar solo los 4 archivos en vez del paquete de la sección 6: el
