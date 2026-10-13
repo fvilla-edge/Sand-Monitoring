@@ -14,9 +14,6 @@
   },
   "starlink": {
     "timeout_stop_s": 150,
-    "hora_on": "08:55",
-    "hora_off": "17:15",
-    "dias_habilitados": "1,2,3,4,5,6,7",
     "rescate_manual_horas": 24,
     "sin_rele": false,
     "alerta_fallos_consecutivos": 4,
@@ -26,7 +23,8 @@
     "ventana_minuto": 5,
     "ventana_espera_internet_min": 15,
     "ventana_espera_losant_s": 120,
-    "ventana_extension_update_min": 30
+    "ventana_extension_update_min": 30,
+    "ventana_duracion_estimada_min": 10
   },
   "panel_solar": {
     "informe_intervalo_min": 15,

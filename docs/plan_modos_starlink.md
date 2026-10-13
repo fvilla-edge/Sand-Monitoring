@@ -304,6 +304,23 @@ En `publicar_losant.py`:
 - `sl_modo` (String): al conectar y cada 15 min mientras haya conexión.
 - Workflow y tag del lado de Losant: Fase 0.
 
+### Resultado Fase 4 (2026-10-13)
+
+- `publicar_losant.py`: `sl_modo` solo (sin otros atributos) al conectar
+  (primero de todo), cada `informe_intervalo_min` y tras un cambio; comando
+  `modo` => `modo_operacion.sh <modo>`, publica `sl_modo`, y
+  `systemd-run --unit=modo-starlink-losant "sleep 10; aplicar_objetivo.sh"`.
+  Valor distinto de `ventana`/`permanente` exacto: se ignora.
+- Balance de energía: `horas_starlink(modo, ventana_cada_h,
+  ventana_duracion_estimada_min)` (nueva clave, 10 min, a medir): ventana =
+  2 h/día, permanente = 24 h. Se recalcula con cada `sl_modo`. Salen del
+  config del repo `hora_on`, `hora_off`, `dias_habilitados` (en las placas
+  quedan, sin uso).
+- Lab con el workflow real de `test_SC`: tag `ventana` + placa en
+  permanente => 1 comando, placa a ventana, "off" a los 10 s, sin bucle;
+  tag `permanente` + placa en ventana => "on"; `{"modo": "Permanente"}` a
+  mano => ignorado.
+
 ## Fase 5 — Informes solo en vivo
 
 Hoy (`resumen_modo_evento.py` + el "cartero" de `publicar_losant.py`) los
@@ -401,3 +418,4 @@ Pruebas que dependen de la hora: adelantar el reloj, no esperar.
 - 2026-10-13: Fase 0 cerrada en `test_SC` (workflow con dos Conditionals,
   ver "Resultado" en la Fase 0). Sin código en la placa.
 - 2026-10-13: Fases 1, 2 y 3a hechas y probadas en el lab (11/11).
+- 2026-10-13: Fase 3b (ensayo de paquete) y Fase 4 (Losant real) OK en el lab.

@@ -24,6 +24,11 @@ Va al mismo Device de Losant que el panel solar (a propósito, ver
 servicio separado, no se puede tener dos conexiones MQTT distintas con
 el mismo Device ID al mismo tiempo.
 
+Modo de Starlink (docs/plan_modos_starlink.md): publica `sl_modo`
+("ventana" | "permanente") al conectar, cada informe_intervalo_min y al
+cambiarlo; el workflow de Losant lo compara con el tag `modo_starlink` del
+Device y, si difieren, manda el comando `modo` {"modo": ...}.
+
 Tambien es el "cartero" del reporte del modo evento: manda a Losant, con
 su hora original, los resumenes por minuto que deja
 scripts_campo/resumen_modo_evento.py en /mnt/usb/losant_pendientes/ (de
@@ -121,12 +126,22 @@ SCRIPT_CAPTURAR_STREAM = "/root/scripts_campo/capturar_stream.py"
 # Comando "starlink" recibido por MQTT: solo {"accion": "off"}, lo mismo que
 # el alias "apagar-starlink" por SSH. No hay "on": en campo el unico enlace es
 # la propia Starlink, asi que una vez apagada Losant ya no llega a la placa;
-# vuelve sola por el horario (el manual "off" se autolimpia en hora_off) o
-# por el rescate de starlink.rescate_manual_horas.
+# vuelve sola en la proxima ventana (modo ventana: el manual "off" se
+# autolimpia al cerrarla) o por el rescate de starlink.rescate_manual_horas
+# (modo permanente).
 SCRIPT_STARLINK_MANUAL = "/root/starlink_remoto/starlink_manual.sh"
 # Segundos que espera la unidad antes de cortar, para que el aviso
 # "starlink_comando" alcance a salir por MQTT antes de perder el enlace.
 ESPERA_APAGADO_S = 10
+
+# Modo de Starlink (ventana | permanente): modo_operacion.sh lo guarda/lee,
+# aplicar_objetivo.sh mueve el rele segun el modo. Tras un comando "modo" el
+# objetivo se aplica a los ESPERA_APAGADO_S, por la misma razon que el "off":
+# pasar a ventana fuera de una ventana apaga Starlink, y antes tiene que
+# salir sl_modo.
+SCRIPT_MODO_OPERACION = "/root/starlink_remoto/modo_operacion.sh"
+SCRIPT_APLICAR_OBJETIVO = "/root/starlink_remoto/aplicar_objetivo.sh"
+MODOS_STARLINK = ("ventana", "permanente")
 
 # USB donde caen las capturas (mismo default que usa capturar_stream.py para
 # --directorio, ver config_campo.json: captura_defaults.directorio). Se
@@ -200,6 +215,28 @@ DEFAULTS_CAPTURA = {
     "decimacion": 32,
 }
 
+def _leer_modo_starlink():
+    """Modo vigente segun modo_operacion.sh, o None si no se pudo leer."""
+    try:
+        r = subprocess.run([SCRIPT_MODO_OPERACION], capture_output=True, text=True, timeout=15)
+        modo = r.stdout.strip()
+        return modo if modo in MODOS_STARLINK else None
+    except Exception as exc:
+        print(f"Modo Starlink: no se pudo leer ({exc})", file=sys.stderr)
+        return None
+
+
+def _horas_sl(modo):
+    """Horas por dia con Starlink para el balance de energia (autonomias)."""
+    try:
+        defecto = cfg.obtener("starlink.modo_defecto")
+        cada_h = cfg.obtener("starlink.ventana_cada_h")
+        duracion = cfg.obtener("starlink.ventana_duracion_estimada_min")
+    except KeyError:
+        defecto, cada_h, duracion = "ventana", 2, 10
+    return horas_starlink(modo or defecto, cada_h, duracion)
+
+
 _decoder = SerialDecoder(DEVICES)
 _balance = BalanceEnergia(
     _energia("estado_file"),
@@ -208,7 +245,7 @@ _balance = BalanceEnergia(
     capacidad_util_wh=_energia("capacidad_util_wh"),
     p_base_w=_energia("p_base_w_inicial"),
     p_starlink_w=_energia("p_starlink_w_inicial"),
-    horas_sl=horas_starlink(cfg.obtener("starlink.hora_on"), cfg.obtener("starlink.hora_off")),
+    horas_sl=_horas_sl(_leer_modo_starlink()),
 )
 _registro = RegistroEnergia(DIR_ENERGIA_USB, DIR_ENERGIA_SD, STATE_FILE_STARLINK,
                             al_escribir=_balance.minuto)
@@ -228,6 +265,7 @@ _esp32_avisado = False      # ya se aviso que no hay ESP32 (se vuelve a avisar s
 _ultima_valida = time.monotonic()  # ultima lectura valida (arranque = cuenta desde ahi)
 _sin_lecturas_avisado = False      # ya se aviso la racha actual sin lecturas validas
 _ultimo_envio_lecturas = 0.0       # time.monotonic() del ultimo publish de en_sin_lecturas_min
+_ultimo_envio_sl_modo = 0.0        # time.monotonic() del ultimo publish de sl_modo
 
 
 def _crear_dispositivo():
@@ -398,6 +436,64 @@ def _modo_evento_activo(forzar=False):
     return activo
 
 
+def _publicar_sl_modo(dispositivo):
+    """Publica sl_modo solo (sin otros atributos: lo que mira el workflow) y
+    actualiza las horas de Starlink del balance de energia."""
+    global _ultimo_envio_sl_modo
+    modo = _leer_modo_starlink()
+    if modo is None:
+        return
+    _balance.horas_sl = _horas_sl(modo)
+    try:
+        dispositivo.send_state({"sl_modo": modo})
+        _ultimo_envio_sl_modo = time.monotonic()
+        print(f"Modo Starlink publicado: {modo}")
+    except Exception as exc:
+        print(f"Modo Starlink: no se pudo publicar ({exc})", file=sys.stderr)
+
+
+def _revisar_sl_modo(dispositivo):
+    # Cada vuelta del loop (~1s): re-publica cada INTERVALO_INFORME_S mientras
+    # siga conectado (un cambio de tag con la placa en permanente se aplica
+    # recien con la proxima publicacion). Al conectar lo publica _al_conectar.
+    if dispositivo.is_connected() and time.monotonic() - _ultimo_envio_sl_modo >= INTERVALO_INFORME_S:
+        _publicar_sl_modo(dispositivo)
+
+
+def _cambiar_modo_starlink(dispositivo, payload):
+    modo = payload.get("modo") if isinstance(payload, dict) else None
+    if modo not in MODOS_STARLINK:
+        print(f"Comando 'modo' ignorado: payload invalido {payload!r} "
+              '(se espera {"modo": "ventana"} o {"modo": "permanente"})')
+        return
+    try:
+        r = subprocess.run([SCRIPT_MODO_OPERACION, modo], capture_output=True, text=True, timeout=15)
+    except Exception as exc:
+        print(f"Comando 'modo': no se pudo guardar el modo ({exc})")
+        return
+    if r.returncode != 0:
+        print(f"Comando 'modo': modo_operacion.sh fallo (rc={r.returncode}) {(r.stdout + r.stderr).strip()}")
+        return
+    print(f"Modo Starlink cambiado a '{modo}' por comando de Losant")
+    _publicar_sl_modo(dispositivo)
+    # Unidad transitoria, igual que el "off": sobrevive a un restart de este
+    # proceso y no se apilan dos (systemd-run rechaza el nombre repetido).
+    argv = [
+        "systemd-run", "--unit=modo-starlink-losant", "--collect", "--quiet",
+        "bash", "-c",
+        f"sleep {ESPERA_APAGADO_S}; exec {SCRIPT_APLICAR_OBJETIVO}",
+    ]
+    try:
+        r = subprocess.run(argv, capture_output=True, text=True, timeout=30)
+        salida = (r.stdout + r.stderr).strip()
+        if r.returncode != 0:
+            print(f"Comando 'modo': systemd-run fallo (rc={r.returncode}) {salida}")
+        elif salida:
+            print(salida)
+    except Exception as exc:
+        print(f"Comando 'modo': no se pudo aplicar el objetivo ({exc})")
+
+
 def _revisar_estado_captura(dispositivo):
     # Se llama en cada vuelta del loop principal (~1s, ver main()) en vez de
     # publicar directo desde _capturar(): evita duplicar la lógica de
@@ -541,12 +637,17 @@ def _al_recibir_comando(dispositivo, comando):
         _capturar(payload)
     elif nombre == "starlink":
         _apagar_starlink(dispositivo, payload)
+    elif nombre == "modo":
+        _cambiar_modo_starlink(dispositivo, payload)
     else:
         print(f"Comando desconocido ignorado: nombre={nombre!r} payload={payload}")
 
 
 def _al_conectar(dispositivo):
     print("Conectado a Losant.")
+    # Primero: en modo ventana la conexion dura un par de minutos y el
+    # workflow necesita sl_modo para mandar (si hace falta) el comando "modo"
+    _publicar_sl_modo(dispositivo)
     if _ultima_lectura:
         for address, (rssi, data) in list(_ultima_lectura.items()):
             _publicar_informe(dispositivo, address, rssi, data)
@@ -688,6 +789,7 @@ def main():
         _revisar_estado_captura(device)
         _revisar_espacio_disco(device)
         _revisar_lecturas_esp32(device)
+        _revisar_sl_modo(device)
         _enviar_pendientes(device)
         try:
             device.loop(timeout=0.1)

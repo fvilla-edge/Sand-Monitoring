@@ -229,6 +229,15 @@ ssh root@<IP_PLACA> "systemctl start --no-block starlink-ventana.service"
 ssh root@<IP_PLACA> "journalctl -u starlink-ventana -f"
 ```
 
+**Desde Losant:** el modo deseado es el tag `modo_starlink` del Device (`ventana` |
+`permanente`). La placa publica `sl_modo` (String, crearlo en el Device) al conectar,
+cada `informe_intervalo_min` y al cambiarlo; un workflow (dos Conditionals, ver
+`docs/plan_modos_starlink.md` Fase 0) manda el comando `modo` `{"modo": "<tag>"}` solo
+si difieren. La placa lo guarda y aplica el objetivo a los 10 s
+(`journalctl -u modo-starlink-losant`); otro valor se ignora (queda en
+`journalctl -u panel-solar-informe`). En modo ventana, un cambio de tag llega recién
+en la próxima ventana (hasta 2 h).
+
 Cambiar el período o el minuto exige tocar `starlink-ventana.timer` (`OnCalendar=`
 es estático) además de `starlink.ventana_cada_h`/`ventana_minuto` del config.
 Antes de aplicar una actualización por paquete, el modo tiene que estar en

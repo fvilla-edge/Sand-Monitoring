@@ -37,11 +37,13 @@ def _float(fila, clave):
         return None
 
 
-def horas_starlink(hora_on, hora_off):
-    """Duracion de la ventana diaria de Starlink en horas ("08:55", "17:15")."""
-    h1, m1 = map(int, hora_on.split(":"))
-    h2, m2 = map(int, hora_off.split(":"))
-    return ((h2 * 60 + m2) - (h1 * 60 + m1)) % (24 * 60) / 60
+def horas_starlink(modo, ventana_cada_h, ventana_duracion_min):
+    """Horas por dia con Starlink prendida segun el modo (docs/plan_modos_starlink.md):
+    permanente = 24; ventana = una ventana de ventana_duracion_min cada
+    ventana_cada_h horas (12 x 10 min = 2 h con los valores de diseno)."""
+    if modo == "permanente":
+        return 24.0
+    return 24 / ventana_cada_h * ventana_duracion_min / 60
 
 
 class BalanceEnergia:

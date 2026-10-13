@@ -442,12 +442,14 @@ de 24 h.
 
 ## 4e. Modos de Starlink ventana / permanente (rama `modos-starlink`, 2026-10-13)
 
-Plan y resultados: `docs/plan_modos_starlink.md`. **Incompleto: faltan las
-Fases 4 (comando `modo` y `sl_modo` en Losant) y 5 (informes solo en vivo).**
-No instalar en campo hasta cerrarlas; esto queda como lista de lo que ya se
-sabe.
+Plan y resultados: `docs/plan_modos_starlink.md`. **Incompleto: falta la
+Fase 5 (informes solo en vivo).** No instalar en campo hasta cerrarla; esto
+queda como lista de lo que ya se sabe.
 
 - [x] Fases 1-3a probadas en el lab 13/10 (11/11, ver plan).
+- [x] Fase 3b: ensayo del paquete en el lab 13/10 (sin permanente aborta,
+  falla forzada revierte, aplicación OK).
+- [x] Fase 4: comando `modo` y `sl_modo` con el workflow de `test_SC` 13/10.
 - [ ] Va **por paquete** (cambian units: entra `starlink-ventana.timer`, se
   deshabilitan `starlink-rele-on/off.timer`). Incluye 4d.
 - [ ] **Antes de aplicar**, con SSH por Starlink: poner el modo permanente.
