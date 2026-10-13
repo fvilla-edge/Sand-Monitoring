@@ -180,9 +180,20 @@ valor válido (`ventana` | `permanente`); otro valor no dispara nada.
     modo antes de apagar)
   - `ventana_extension_update_min`: `30` (tope extra si la antena está
     actualizando firmware; valor a revisar con la Fase 6)
-  - salen `hora_on`, `hora_off`, `dias_habilitados` (quedan ignoradas si
-    siguen en un config viejo).
-- `gcs.dias_atras`: 7 => 30.
+  - `hora_on`, `hora_off`, `dias_habilitados` **se quedan por ahora**:
+    además de los timers, el balance de energía usa `hora_on`/`hora_off`
+    para las horas de Starlink por día (`publicar_losant.py` =>
+    `horas_starlink`, autonomías). Se resuelve en la Fase 2.
+- `gcs.dias_atras`: 7 => 30. **Ojo:** `fusionar_config.py` solo agrega
+  claves nuevas, no pisa valores: en el lab y en campo hay que cambiarlo a
+  mano al instalar (Fase 7).
+- Hecho (2026-10-13): `starlink_remoto/modo_operacion.sh` (sin argumento
+  imprime el modo vigente; `ventana|permanente` lo guarda con `sync`,
+  escritura atómica) + claves en el config. No cambia ningún
+  comportamiento: nadie lee el modo hasta la Fase 2. Prueba en la PC
+  13/13; en el lab rp-f0fd8c 8/8 (respaldo
+  `/root/respaldo_modos_fase1_20261013`, claves agregadas con
+  `fusionar_config.py`, `dias_atras` quedó en 7 como se esperaba).
 
 ## Fase 2 — La decisión del relé (`decidir_objetivo.sh`)
 
