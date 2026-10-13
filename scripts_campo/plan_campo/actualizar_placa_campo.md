@@ -442,14 +442,21 @@ de 24 h.
 
 ## 4e. Modos de Starlink ventana / permanente (rama `modos-starlink`, 2026-10-13)
 
-Plan y resultados: `docs/plan_modos_starlink.md`. **Incompleto: falta la
-Fase 5 (informes solo en vivo).** No instalar en campo hasta cerrarla; esto
-queda como lista de lo que ya se sabe.
+Plan y resultados: `docs/plan_modos_starlink.md`. Fases 0-5 hechas y
+probadas en el lab; en campo falta medir la duración real de las ventanas
+(Fase 6, punto 1) y que no haya pérdidas nuevas por las conmutaciones.
 
 - [x] Fases 1-3a probadas en el lab 13/10 (11/11, ver plan).
 - [x] Fase 3b: ensayo del paquete en el lab 13/10 (sin permanente aborta,
   falla forzada revierte, aplicación OK).
 - [x] Fase 4: comando `modo` y `sl_modo` con el workflow de `test_SC` 13/10.
+- [x] Fase 5: Losant solo en vivo (último resumen en `/run/losant_ultimo`).
+- [ ] **Después de aplicar:** borrar la cola vieja (ya nadie la manda),
+  dejando el contador del día:
+  ```bash
+  ssh root@<IP_CAMPO> "cd /mnt/usb/losant_pendientes && ls | wc -l && find . -maxdepth 1 -name '[0-9]*.json' -delete && rm -rf .malos && ls -A"
+  ```
+  (tiene que quedar solo `.contadores.json`).
 - [ ] Va **por paquete** (cambian units: entra `starlink-ventana.timer`, se
   deshabilitan `starlink-rele-on/off.timer`). Incluye 4d.
 - [ ] **Antes de aplicar**, con SSH por Starlink: poner el modo permanente.

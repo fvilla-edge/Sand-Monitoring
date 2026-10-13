@@ -347,6 +347,22 @@ Al instalar en campo se borra `/mnt/usb/losant_pendientes`.
 Sin cambios: telemetría del dish al conectar, `en_sin_lecturas_min`,
 estado del equipo y espacio en disco (todos ya son en vivo).
 
+### Resultado Fase 5 (2026-10-13)
+
+- `resumen_modo_evento.py` pisa `/run/losant_ultimo/evento.json` cada minuto
+  (antes: un archivo por minuto en `/mnt/usb/losant_pendientes`; el USB deja
+  de recibir esas escrituras). `.contadores.json` sigue en el USB
+  (`--contadores`).
+- `balance_energia.py` pisa `/run/losant_ultimo/energia.json` cada hora.
+- `publicar_losant.py`: `_enviar_ultimos` reemplaza al cartero; manda cada
+  "último" una vez, con su hora original, mientras hay conexión (stat por
+  archivo en cada vuelta). PC 10/10 (sin archivos, no repite, desconectado
+  no manda, al reconectar solo el último, reintento si falla el publish,
+  ilegible se saltea, mismo time no se re-manda).
+- Lab: instalado (respaldo `/root/respaldo_modos_fase5_20261013`, `.malos`
+  viejo movido ahí; la cola estaba vacía), `evento.json` cada minuto, cola
+  del USB sin archivos nuevos.
+
 ## Fase 6 — Pruebas en la placa de pruebas (`rp-f0fd8c`)
 
 Con el relé del lab **sin el cable a GND**, para que confirme el estado.

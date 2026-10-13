@@ -56,7 +56,7 @@ journalctl -u starlink-reconciliador -u starlink-aplicar-objetivo -n 40 -o short
 
 t "cartero (Losant)"
 journalctl -u panel-solar-informe -n 5 -o short-iso --no-pager | cut -c1-160
-echo "resumenes pendientes en el USB: $(ls /mnt/usb/losant_pendientes 2>/dev/null | wc -l)"
+echo "ultimos resumenes para Losant: $(ls /run/losant_ultimo 2>/dev/null | tr '\n' ' ')"
 
 t "actualizaciones"
 ls -1t /root/actualizacion/RESULTADO_* 2>/dev/null | head -3 | while read -r f; do echo "$(basename "$f"): $(cat "$f")"; done

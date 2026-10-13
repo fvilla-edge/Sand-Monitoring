@@ -51,7 +51,7 @@ class BalanceEnergia:
                  capacidad_util_wh=1150.0, p_base_w=7.5, p_starlink_w=20.0,
                  horas_sl=8 + 20 / 60):
         self.estado_file = estado_file
-        self.dir_pendientes = dir_pendientes   # funcion -> carpeta de la cola del cartero
+        self.dir_pendientes = dir_pendientes   # funcion -> carpeta del ultimo resumen (publicar_losant ULTIMO_DIR)
         self.capacidad_ah = capacidad_ah
         self.capacidad_util_wh = capacidad_util_wh
         self.horas_sl = horas_sl
@@ -174,16 +174,16 @@ class BalanceEnergia:
                 "en_e_bat_wh": round(a["e_bat_wh"], 1),
                 "en_v_min": round(a["v_min"], 2) if a["v_min"] is not None else None,
             })
-            self._encolar(e["hora"] * 1000, data)
+            self._guardar_ultimo(e["hora"] * 1000, data)
         e["acum"] = self._acum_vacio()
 
-    def _encolar(self, tiempo_ms, data):
+    def _guardar_ultimo(self, tiempo_ms, data):
+        """Pisa energia.json con el resumen de la ultima hora (solo en vivo,
+        docs/plan_modos_starlink.md Fase 5; el detalle va a GCS)."""
         carpeta = self.dir_pendientes()
         os.makedirs(carpeta, exist_ok=True)
-        final = os.path.join(carpeta, f"{tiempo_ms}.energia.json")
+        final = os.path.join(carpeta, "energia.json")
         tmp = final + ".tmp"
         with open(tmp, "w") as f:
             json.dump({"time": tiempo_ms, "data": data}, f)
-            f.flush()
-            os.fsync(f.fileno())
         os.replace(tmp, final)

@@ -29,10 +29,11 @@ Modo de Starlink (docs/plan_modos_starlink.md): publica `sl_modo`
 cambiarlo; el workflow de Losant lo compara con el tag `modo_starlink` del
 Device y, si difieren, manda el comando `modo` {"modo": ...}.
 
-Tambien es el "cartero" del reporte del modo evento: manda a Losant, con
-su hora original, los resumenes por minuto que deja
-scripts_campo/resumen_modo_evento.py en /mnt/usb/losant_pendientes/ (de
-noche, sin Starlink, se acumulan y salen al reconectar). El ESP32 es
+Tambien manda, con su hora original, el ultimo resumen del modo evento
+(scripts_campo/resumen_modo_evento.py, cada minuto) y el ultimo resumen
+horario de energia, que quedan en ULTIMO_DIR (RAM): solo en vivo, sin cola
+(docs/plan_modos_starlink.md, Fase 5; el detalle completo va a GCS). Al
+conectar sale el ultimo de cada uno aunque sea de hace horas. El ESP32 es
 opcional: sin el, todo lo demas sigue funcionando.
 
 Uso:
@@ -68,7 +69,7 @@ from config import DEVICES
 from losant_config import ACCESS_KEY, ACCESS_SECRET, DEVICE_ID
 from puerto import resolver_puerto
 from balance_energia import BalanceEnergia, horas_starlink
-from registro_energia import RegistroEnergia, disco_montado, lectura_valida
+from registro_energia import RegistroEnergia, lectura_valida
 from victron_scanner import SerialDecoder
 
 BAUDRATE = 115200
@@ -151,19 +152,13 @@ MODOS_STARLINK = ("ventana", "permanente")
 # remoto antes de que pase.
 DIRECTORIO_CAPTURA = cfg.obtener("captura_defaults.directorio")
 
-# Resumenes por minuto del modo evento, que deja el "anotador"
-# (scripts_campo/resumen_modo_evento.py) haya o no internet: este proceso es
-# el "cartero" que los manda con su hora original y los borra. De noche (sin
-# Starlink) se acumulan y salen al reconectar.
-PENDIENTES_DIR = "/mnt/usb/losant_pendientes"
-# sin disco el anotador deja los resumenes aca (RAM); se mandan igual
-PENDIENTES_DIRS = (PENDIENTES_DIR, "/run/losant_pendientes")
-# Losant limita a 30 mensajes cada 15s por Device: 1 por segundo deja margen
-# para el resto de los informes. Una noche (~900 resumenes) se pone al dia en
-# ~15 min.
-PENDIENTES_INTERVALO_S = 1.0
-# Cada cuanto se vuelve a mirar la carpeta cuando la cola en memoria esta vacia.
-PENDIENTES_RELISTAR_S = 10.0
+# Ultimos resumenes (tmpfs), cada uno pisa al anterior: evento.json lo deja el
+# anotador (scripts_campo/resumen_modo_evento.py) cada minuto, energia.json el
+# balance (balance_energia.py) cada hora. Se mandan una vez cada uno, con su
+# hora original, mientras hay conexion. Sin cola: lo que no sale, se pierde
+# (en Losant; el detalle esta en GCS).
+ULTIMO_DIR = "/run/losant_ultimo"
+ULTIMOS = ("evento.json", "energia.json")
 SERVICIO_MODO_EVENTO = "modo-evento"
 
 # Registro local de energia (registro_energia.py, docs/plan_perfiles_energia.md):
@@ -240,7 +235,7 @@ def _horas_sl(modo):
 _decoder = SerialDecoder(DEVICES)
 _balance = BalanceEnergia(
     _energia("estado_file"),
-    lambda: PENDIENTES_DIRS[0] if disco_montado() else PENDIENTES_DIRS[1],
+    lambda: ULTIMO_DIR,
     capacidad_ah=_energia("capacidad_ah"),
     capacidad_util_wh=_energia("capacidad_util_wh"),
     p_base_w=_energia("p_base_w_inicial"),
@@ -257,9 +252,7 @@ _proceso_captura = None   # Popen de la captura "capturar" en curso, o None
 _estado_equipo = "standby"  # ultimo valor de "device_state" confirmado publicado a Losant
 _ultimo_envio_estado = 0.0  # time.monotonic() del ultimo publish exitoso (cambio o refresco periodico)
 _ultimo_envio_disco = 0.0   # time.monotonic() del ultimo publish exitoso de espacio libre en el USB
-_cola_pendientes = []       # (carpeta, nombre) en PENDIENTES_DIRS por mandar, del mas viejo al mas nuevo
-_ultimo_listado = 0.0       # time.monotonic() del ultimo listado de PENDIENTES_DIRS
-_ultimo_pendiente = 0.0     # time.monotonic() del ultimo resumen mandado
+_ultimos_enviados = {}      # nombre en ULTIMOS -> (mtime_ns, "time") del ultimo mandado
 _modo_evento_cache = (0.0, False)  # (time.monotonic() del chequeo, activo)
 _esp32_avisado = False      # ya se aviso que no hay ESP32 (se vuelve a avisar si aparece y se pierde)
 _ultima_valida = time.monotonic()  # ultima lectura valida (arranque = cuenta desde ahi)
@@ -568,66 +561,42 @@ def _publicar_estado_con_hora(dispositivo, data, tiempo_ms):
     return info.rc == mqtt.MQTT_ERR_SUCCESS
 
 
-def _enviar_pendientes(dispositivo):
-    # Se llama en cada vuelta del loop principal (~1s). Manda de a un resumen
-    # por PENDIENTES_INTERVALO_S, del mas viejo al mas nuevo, con su hora
-    # original (Losant lo ubica en el minuto en que se midio, no en el que
-    # llego). QoS 0 (decision del usuario, 2026-09-25): se borra el archivo
-    # cuando el publish da rc OK, o sea cuando el mensaje salio de la
-    # placa — no hay confirmacion de que llego. Un resumen ilegible se aparta
-    # a .malos/ para no trabar la cola.
-    global _cola_pendientes, _ultimo_listado, _ultimo_pendiente
+def _enviar_ultimos(dispositivo):
+    # Cada vuelta del loop (~1s): un stat por archivo (tmpfs, barato); solo se
+    # lee y se manda si cambio y su "time" no es el ultimo que ya salio. QoS 0
+    # como antes: se da por mandado cuando el publish da rc OK. Un archivo
+    # ilegible se saltea (el proximo resumen lo pisa).
     if not dispositivo.is_connected():
         return
-    ahora = time.monotonic()
-    if ahora - _ultimo_pendiente < PENDIENTES_INTERVALO_S:
-        return
-    if not _cola_pendientes:
-        if ahora - _ultimo_listado < PENDIENTES_RELISTAR_S:
-            return
-        _ultimo_listado = ahora
-        cola = []
-        for carpeta in PENDIENTES_DIRS:
-            try:
-                cola += [(carpeta, n) for n in os.listdir(carpeta) if n.endswith(".json") and n[0].isdigit()]
-            except OSError:
-                pass   # sin USB o sin carpeta todavia
-        _cola_pendientes = sorted(cola, key=lambda c: int(c[1].split(".")[0]))
-        if not _cola_pendientes:
-            return
-    carpeta, nombre = _cola_pendientes[0]
-    ruta = os.path.join(carpeta, nombre)
-    try:
-        with open(ruta) as f:
-            resumen = json.load(f)
-        tiempo, data = int(resumen["time"]), resumen["data"]
-    except FileNotFoundError:
-        _cola_pendientes.pop(0)
-        return
-    except (OSError, ValueError, KeyError, TypeError) as exc:
-        print(f"Pendiente ilegible {nombre} ({exc}), se aparta a .malos/", file=sys.stderr)
+    for nombre in ULTIMOS:
+        ruta = os.path.join(ULTIMO_DIR, nombre)
         try:
-            os.makedirs(os.path.join(carpeta, ".malos"), exist_ok=True)
-            os.replace(ruta, os.path.join(carpeta, ".malos", nombre))
+            mtime = os.stat(ruta).st_mtime_ns
         except OSError:
-            pass
-        _cola_pendientes.pop(0)
-        return
-    _ultimo_pendiente = ahora
-    try:
-        enviado = _publicar_estado_con_hora(dispositivo, data, tiempo)
-    except Exception as exc:
-        print(f"Pendiente {nombre}: no se pudo publicar ({exc})", file=sys.stderr)
-        return
-    if not enviado:
-        return   # sin conexion en el medio: queda en la cola, se reintenta
-    try:
-        os.remove(ruta)
-    except OSError:
-        pass
-    _cola_pendientes.pop(0)
-    if not _cola_pendientes:
-        print(f"Resumenes del modo evento al dia (ultimo {nombre})")
+            continue   # todavia no hay
+        anterior = _ultimos_enviados.get(nombre)
+        if anterior and anterior[0] == mtime:
+            continue
+        try:
+            with open(ruta) as f:
+                resumen = json.load(f)
+            tiempo, data = int(resumen["time"]), resumen["data"]
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            print(f"Ultimo {nombre} ilegible ({exc}), se saltea", file=sys.stderr)
+            _ultimos_enviados[nombre] = (mtime, anterior[1] if anterior else None)
+            continue
+        if anterior and anterior[1] == tiempo:
+            _ultimos_enviados[nombre] = (mtime, tiempo)
+            continue
+        try:
+            enviado = _publicar_estado_con_hora(dispositivo, data, tiempo)
+        except Exception as exc:
+            print(f"Ultimo {nombre}: no se pudo publicar ({exc})", file=sys.stderr)
+            continue
+        if enviado:
+            _ultimos_enviados[nombre] = (mtime, tiempo)
+            if nombre == "energia.json":   # el de evento sale cada minuto: no se loguea
+                print(f"Resumen de energia mandado (hora {time.strftime('%Y-%m-%d %H:%M', time.gmtime(tiempo / 1000))} UTC)")
 
 
 def _al_recibir_comando(dispositivo, comando):
@@ -751,7 +720,7 @@ def main():
     proximo_serial = time.monotonic() + REINTENTO_SERIAL_S
 
     print(f"Informa por MQTT al conectar y cada {INTERVALO_INFORME_S // 60} min mientras "
-          f"siga conectado; resumenes del modo evento desde {PENDIENTES_DIR}... Ctrl+C para salir")
+          f"siga conectado; ultimos resumenes desde {ULTIMO_DIR} (solo en vivo)... Ctrl+C para salir")
     while True:
         ahora = time.monotonic()
         if not device.is_connected() and ahora >= proximo_intento:
@@ -790,7 +759,7 @@ def main():
         _revisar_espacio_disco(device)
         _revisar_lecturas_esp32(device)
         _revisar_sl_modo(device)
-        _enviar_pendientes(device)
+        _enviar_ultimos(device)
         try:
             device.loop(timeout=0.1)
         except Exception as exc:
