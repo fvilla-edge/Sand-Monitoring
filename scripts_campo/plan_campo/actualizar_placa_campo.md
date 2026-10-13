@@ -436,6 +436,37 @@ ssh root@<IP_CAMPO> 'sync; md5sum /root/panel_solar_ble/publicar_losant.py;
 Revertir: `cp -p` del respaldo a `/root/panel_solar_ble/` + restart
 `panel-solar-informe`.
 
+Con el modo ventana (4e) el "off" ya no vuelve en `hora_on`: en ventana
+prende en la próxima ventana (hasta 2 h), en permanente recién con el rescate
+de 24 h.
+
+## 4e. Modos de Starlink ventana / permanente (rama `modos-starlink`, 2026-10-13)
+
+Plan y resultados: `docs/plan_modos_starlink.md`. **Incompleto: faltan las
+Fases 4 (comando `modo` y `sl_modo` en Losant) y 5 (informes solo en vivo).**
+No instalar en campo hasta cerrarlas; esto queda como lista de lo que ya se
+sabe.
+
+- [x] Fases 1-3a probadas en el lab 13/10 (11/11, ver plan).
+- [ ] Va **por paquete** (cambian units: entra `starlink-ventana.timer`, se
+  deshabilitan `starlink-rele-on/off.timer`). Incluye 4d.
+- [ ] **Antes de aplicar**, con SSH por Starlink: poner el modo permanente.
+  La placa de campo todavía no tiene `modo_operacion.sh`:
+  ```bash
+  ssh root@<IP_CAMPO> "printf 'permanente\n' > /root/starlink_remoto/modo_operacion && sync && cat /root/starlink_remoto/modo_operacion"
+  ```
+  `aplicar_actualizacion.sh` aborta si no está en permanente (también lo
+  muestra `SOLO_CHEQUEAR=1`).
+- [ ] **Después de aplicar**, a mano (el paquete no pisa valores existentes
+  del config): `gcs.dias_atras` 7 → 30 en
+  `/root/scripts_campo_comun/config_campo.json`.
+- [ ] En Losant, Device de campo: atributo `sl_modo` (String), tag
+  `modo_starlink` = `permanente` al principio, y el workflow de dos
+  Conditionals (copia del de `test_SC`, con el Device de campo).
+- [ ] Verificar: `systemctl list-timers 'starlink*'` (ventana cada 2 h a los
+  :05 hora local, sin `rele-on/off`), `modo_operacion.sh` = permanente.
+- [ ] Pasar a ventana desde el tag de Losant cuando se decida.
+
 ## 5. Sistema
 
 - [x] **Watchdog de systemd 5 s → 30 s** (`RuntimeWatchdogSec=30s` en

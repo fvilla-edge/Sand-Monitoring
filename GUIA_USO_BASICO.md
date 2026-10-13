@@ -21,9 +21,9 @@ La IP depende de cómo está conectada la placa (router, o RJ45 directo a la PC)
 
 ### 2. Prender el Starlink (si el relé ya está instalado en esta placa)
 
-En el sitio real, el relé se prende y apaga solo por horario (`starlink-rele-on/off.timer`,
-configurado en `config_campo.json`) — no hace falta hacer nada. `prender-starlink` es para
-forzarlo a mano cuando se necesita acceso fuera de ese horario, o en banco/pruebas donde
+En el sitio real, el relé se prende y apaga solo según el modo (ventana cada 2 h o
+permanente, ver `COMANDOS.md` → "Modo de operación") — no hace falta hacer nada.
+`prender-starlink` es para forzarlo a mano cuando se necesita acceso fuera de una ventana, o en banco/pruebas donde
 todavía no hay Starlink real conectado:
 
 ```bash
@@ -169,8 +169,8 @@ shutdown -h now
 | **Varias sesiones cortas en vez de una larga** (carpetas más livianas, más fáciles de transmitir) | `bash /root/scripts_campo_comun/repetir_captura.sh <repeticiones> <minutos_por_repeticion> /root/scripts_campo_comun/relanzar_captura.sh /root/scripts_campo/capturar_stream.py --condicion reposo --directorio /mnt/usb`. Cada repetición es una carpeta independiente con su propio timestamp — ver `COMANDOS.md`. |
 | **Sin pendrive, directo a la PC por red** | Agregar `--destino red --pc_host usuario@IP --pc_ruta /ruta/en/pc` al comando de captura. Los archivos llegan solos a la PC, se saltea el paso 6 completo. |
 | **Prueba rápida de banco (sin guardar nada)** | `probar_dual_stream.py` — captura corta de solo lectura para chequear que los 2 canales están bien mapeados, no toca el USB. Usar antes de confiar en una captura dual nueva. |
-| **Cambiar el horario del Starlink** | Editar `starlink.hora_on`/`hora_off` en `scripts_campo_comun/config_campo.json`, después correr `/root/starlink_remoto/aplicar_horario.sh` en la placa. No tocar los `.timer` a mano. |
-| **Desactivar el horario automático del Starlink** (ej. pruebas de campo) | `systemctl disable --now starlink-rele-on.timer starlink-rele-off.timer starlink-reconciliador.timer` en la placa (los tres — si dejás el reconciliador prendido, revierte solo lo que fijes a mano cada 5 min). `prender-starlink`/`apagar-starlink` siguen funcionando igual. |
+| **Cambiar el modo del Starlink** (ventana / permanente) | Desde Losant (tag `modo_starlink` del Device) o en la placa `/root/starlink_remoto/modo_operacion.sh permanente && /root/starlink_remoto/aplicar_objetivo.sh`. Ver `COMANDOS.md` → "Modo de operación". |
+| **Desactivar el control automático del Starlink** (ej. pruebas de campo) | `systemctl disable --now starlink-ventana.timer starlink-reconciliador.timer` en la placa (los dos — si dejás el reconciliador prendido, revierte solo lo que fijes a mano cada 5 min). `prender-starlink`/`apagar-starlink` siguen funcionando igual. |
 
 ---
 

@@ -162,7 +162,8 @@ Instalación (una vez por placa, qué copiar y qué comandos correr):
 
 El rele ya no responde a "quien lo llamo" sino a una unica decision
 (`decidir_objetivo.sh`, prioridad rescate por manual vencido > manual >
-reloj no confiable > horario — ver `HISTORIAL_STARLINK.md`). Todo lo de
+reloj no confiable > modo permanente/ventana — ver `HISTORIAL_STARLINK.md` y
+`docs/plan_modos_starlink.md`). Todo lo de
 abajo termina llamando a esa misma logica, asi que no hay forma de que dos
 caminos se pisen entre si.
 
@@ -174,18 +175,19 @@ estado-starlink
 #  estado_starlink.sh a pedido, para no saturar la salida en demos con
 #  cliente — descomentar ahi si hace falta ese nivel de detalle)
 
-# prender/apagar a mano — entra en modo MANUAL, no se lo pisa el horario ni el
-# rescate por reloj; se autolimpia solo en cuanto el horario real llegue a
-# coincidir con lo forzado (ej. "apagar-starlink" antes de horario no hace
-# falta revertirlo despues), o "auto-starlink" fuerza la vuelta ya mismo.
-# "apagar-starlink" que NUNCA coincide solo con el horario (ej. apagado en
-# pleno dia) se ignora despues de starlink.rescate_manual_horas (default 24h)
+# prender/apagar a mano — entra en modo MANUAL, no se lo pisa el modo ni el
+# rescate por reloj; se autolimpia solo en cuanto el modo llegue a coincidir
+# con lo forzado (en modo ventana: un "prender" dura hasta la proxima ventana,
+# un "apagar" en medio de una ventana la corta y se borra al cerrarla), o
+# "auto-starlink" fuerza la vuelta ya mismo.
+# "apagar-starlink" que NUNCA coincide solo con el modo (ej. en modo
+# permanente) se ignora despues de starlink.rescate_manual_horas (default 24h)
 # sin renovarse, forzando "on" — evita quedar sin acceso remoto para siempre
 # si de por medio hay un corte de luz largo (ver HISTORIAL_STARLINK.md).
 prender-starlink
 apagar-starlink
 
-# volver a control automatico (horario + rescate por reloj)
+# volver a control automatico (modo + rescate por reloj)
 auto-starlink
 
 # ver cuando dispara cada timer
@@ -202,39 +204,50 @@ está apagando — es lo esperado.
 `{"accion": "off"}` — corre lo mismo que `apagar-starlink`, a los 10 s (para que antes
 salga a Losant el atributo `starlink_comando` = `"off"`, String, crearlo en el Device).
 No existe "on" a proposito: en campo el unico enlace es el propio Starlink, asi que
-apagada ya no llega ningun comando. Vuelve sola como cualquier `apagar-starlink`
-(autolimpieza en `hora_off` => prende al dia siguiente en `hora_on`, o rescate a las
-`rescate_manual_horas`). Cualquier otro payload se ignora (queda en
+apagada ya no llega ningun comando. Vuelve sola como cualquier `apagar-starlink`:
+en modo ventana prende en la proxima ventana (hasta 2 h); en modo permanente recien
+con el rescate a las `rescate_manual_horas` (24 h). Cualquier otro payload se ignora (queda en
 `journalctl -u panel-solar-informe`); lo que hizo el apagado:
 `journalctl -u apagar-starlink-losant`.
 
-### Cambiar el horario (`hora_on`/`hora_off`)
+### Modo de operación: ventana / permanente
 
-El horario NO se edita en los `.timer` directamente — vive en
-`scripts_campo_comun/config_campo.json` → `starlink.hora_on`/`starlink.hora_off`
-(formato `HH:MM`, hora Argentina). Después de cambiarlos, aplicar con:
+Reemplaza al horario `hora_on`/`hora_off` (`docs/plan_modos_starlink.md`):
+
+- **ventana** (defecto): Starlink prende cada 2 h a los :05 (horas pares, hora
+  Argentina) y al arrancar la placa; espera internet hasta 15 min, sube a GCS una
+  vez, espera 2 min por Losant y apaga. Log: `/root/logs_campo/ventanas_starlink.log`.
+- **permanente**: prendida las 24 h, sin vencimiento.
 
 ```bash
-ssh root@<IP_PLACA> "/root/starlink_remoto/aplicar_horario.sh"
+# ver / cambiar el modo (aplicar_objetivo para que el rele cambie ya)
+ssh root@<IP_PLACA> "/root/starlink_remoto/modo_operacion.sh"
+ssh root@<IP_PLACA> "/root/starlink_remoto/modo_operacion.sh permanente && /root/starlink_remoto/aplicar_objetivo.sh"
+
+# abrir una ventana ya (en modo ventana)
+ssh root@<IP_PLACA> "systemctl start --no-block starlink-ventana.service"
+ssh root@<IP_PLACA> "journalctl -u starlink-ventana -f"
 ```
 
-Reescribe el `OnCalendar=` de los dos `.timer` y hace `systemctl daemon-reload` — no
-hace falta reiniciar ni tocar nada más.
+Cambiar el período o el minuto exige tocar `starlink-ventana.timer` (`OnCalendar=`
+es estático) además de `starlink.ventana_cada_h`/`ventana_minuto` del config.
+Antes de aplicar una actualización por paquete, el modo tiene que estar en
+permanente (lo exige `aplicar_actualizacion.sh`).
 
 ### Activar/desactivar la programación automática (ej. pruebas de campo)
 
 Para dejar el rele quieto en un valor fijo durante una prueba, alcanza con
-`prender-starlink`/`apagar-starlink` (modo manual, ver arriba) — ni el
-horario ni el reconciliador de 5 min lo van a tocar mientras el flag manual
+`prender-starlink`/`apagar-starlink` (modo manual, ver arriba) o con el modo
+permanente — ni las ventanas ni el reconciliador de 5 min lo van a tocar mientras el flag manual
 este puesto. Desactivar los timers solo hace falta si ademas queres que la
 placa no reevalue nada:
 
 ```bash
-# desactivar horario + reconciliador sin perder la instalacion
-ssh root@<IP_PLACA> "systemctl disable --now starlink-rele-on.timer starlink-rele-off.timer starlink-reconciliador.timer"
+# desactivar ventanas + reconciliador sin perder la instalacion
+ssh root@<IP_PLACA> "systemctl disable --now starlink-ventana.timer starlink-reconciliador.timer"
 
 # reactivarlos
-ssh root@<IP_PLACA> "systemctl enable --now starlink-rele-on.timer starlink-rele-off.timer starlink-reconciliador.timer"
+ssh root@<IP_PLACA> "systemctl enable --now starlink-ventana.timer starlink-reconciliador.timer"
 
 # confirmar (0 timers listados = todo desactivado)
 ssh root@<IP_PLACA> "systemctl list-timers 'starlink*' --all"
