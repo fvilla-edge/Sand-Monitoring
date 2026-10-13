@@ -24,7 +24,8 @@
     "ventana_espera_internet_min": 15,
     "ventana_espera_losant_s": 120,
     "ventana_extension_update_min": 30,
-    "ventana_duracion_estimada_min": 10
+    "ventana_duracion_estimada_min": 10,
+    "rescate_ventana_horas": 6
   },
   "panel_solar": {
     "informe_intervalo_min": 15,
@@ -78,6 +79,7 @@
     "fallos_consecutivos_file": "/root/starlink_remoto/fallos_consecutivos",
     "reconciliador_pendiente_file": "/root/starlink_remoto/reconciliador_pendiente",
     "ultima_verificacion_rele_file": "/root/starlink_remoto/ultima_verificacion_rele",
-    "modo_operacion_file": "/root/starlink_remoto/modo_operacion"
+    "modo_operacion_file": "/root/starlink_remoto/modo_operacion",
+    "ultima_ventana_file": "/root/starlink_remoto/ultima_ventana"
   }
 }

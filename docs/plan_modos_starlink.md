@@ -363,6 +363,23 @@ estado del equipo y espacio en disco (todos ya son en vivo).
   viejo movido ahí; la cola estaba vacía), `evento.json` cada minuto, cola
   del USB sin archivos nuevos.
 
+### Rescate de ventana (2026-10-13, agregado tras la Fase 5)
+
+Riesgo encontrado: en modo ventana, si el timer o el servicio de la ventana
+deja de correr, `decidir_objetivo.sh` dice "off" para siempre y se pierde el
+acceso. Arreglo: `ventana_starlink.sh` anota la hora de cada apertura en
+`rutas.ultima_ventana_file` (SD); si no hubo ninguna en
+`starlink.rescate_ventana_horas` (6 h = tres ventanas perdidas; sin archivo =
+nunca), la decisión es "on". La próxima ventana que abra lo borra sola. El
+manual "off" sigue ganándole (con su rescate de 24 h). PC 28/28 (16 de la
+Fase 2 + 12 del rescate). Lab en vivo: al pasar a ventana desde Losant sin
+ninguna ventana previa quedó "on" por el rescate; la ventana manual anotó su
+hora y al cerrar quedó "off".
+
+Consecuencia en campo: al pasar a ventana por primera vez la Starlink queda
+prendida hasta la primera ventana (hasta 2 h), que demuestra que el
+mecanismo anda.
+
 ## Fase 6 — Pruebas en la placa de pruebas (`rp-f0fd8c`)
 
 Con el relé del lab **sin el cable a GND**, para que confirme el estado.
@@ -435,3 +452,4 @@ Pruebas que dependen de la hora: adelantar el reloj, no esperar.
   ver "Resultado" en la Fase 0). Sin código en la placa.
 - 2026-10-13: Fases 1, 2 y 3a hechas y probadas en el lab (11/11).
 - 2026-10-13: Fase 3b (ensayo de paquete) y Fase 4 (Losant real) OK en el lab.
+- 2026-10-13: Fase 5 y rescate de ventana en el lab; queda una noche en modo ventana (cable sacado) para revisar.

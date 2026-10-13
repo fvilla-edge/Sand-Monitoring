@@ -238,6 +238,11 @@ si difieren. La placa lo guarda y aplica el objetivo a los 10 s
 `journalctl -u panel-solar-informe`). En modo ventana, un cambio de tag llega recién
 en la próxima ventana (hasta 2 h).
 
+**Rescate de ventana:** si en `starlink.rescate_ventana_horas` (6 h) no se abrió
+ninguna ventana (`/root/starlink_remoto/ultima_ventana`), la placa prende Starlink
+y la deja prendida hasta que una ventana vuelva a abrir (aviso en
+`journalctl -u starlink-reconciliador`).
+
 Cambiar el período o el minuto exige tocar `starlink-ventana.timer` (`OnCalendar=`
 es estático) además de `starlink.ventana_cada_h`/`ventana_minuto` del config.
 Antes de aplicar una actualización por paquete, el modo tiene que estar en

@@ -25,6 +25,12 @@
 #      starlink.ventana_cada_h horas), "off" el resto del tiempo. Una marca
 #      de ventana mas vieja que ventana_cada_h horas se ignora (la ventana
 #      que la creo murio sin borrarla; la siguiente la reescribe).
+#      Rescate de ventana: si no se abrio NINGUNA ventana en
+#      starlink.rescate_ventana_horas (ULTIMA_VENTANA_FILE, lo escribe
+#      ventana_starlink.sh al abrir; sin archivo = nunca), "on". Si el
+#      mecanismo de ventanas se rompe (timer o servicio que no corre), la
+#      Starlink queda prendida en vez de apagada para siempre: se pierde
+#      bateria, no el acceso. La proxima ventana que abra lo borra sola.
 #   Ver docs/plan_modos_starlink.md (reemplaza al horario hora_on/hora_off).
 #
 # Ver HISTORIAL_STARLINK.md, seccion "reloj sin RTC + Persistent=true", para
@@ -64,8 +70,10 @@ VENTANA_FLAG=/run/starlink_ventana   # 1ra linea: epoch de apertura (ventana_sta
 
 # Una sola llamada a cfg.py (un valor por linea): cada python3 cuesta ~0.4s de CPU en la placa
 CFG_VALORES=$(python3 "$CFG" rutas.modo_manual_file starlink.rescate_manual_horas \
-  rutas.modo_operacion_file starlink.modo_defecto starlink.ventana_cada_h)
-{ read -r MODO_MANUAL_FILE; read -r RESCATE_MANUAL_HORAS; read -r MODO_FILE; read -r MODO_DEFECTO; read -r VENTANA_CADA_H; } <<< "$CFG_VALORES"
+  rutas.modo_operacion_file starlink.modo_defecto starlink.ventana_cada_h \
+  rutas.ultima_ventana_file starlink.rescate_ventana_horas)
+{ read -r MODO_MANUAL_FILE; read -r RESCATE_MANUAL_HORAS; read -r MODO_FILE; read -r MODO_DEFECTO; read -r VENTANA_CADA_H;
+  read -r ULTIMA_VENTANA_FILE; read -r RESCATE_VENTANA_HORAS; } <<< "$CFG_VALORES"
 
 NTP_SYNC=$(timedatectl show -p NTPSynchronized --value)
 RTC_FLAG_OK=/run/rtc_ds3231_ok
@@ -86,11 +94,24 @@ ventana_abierta() {
   fi
 }
 
+ventanas_paradas() {   # true si no abrio ninguna ventana en RESCATE_VENTANA_HORAS
+  local ultima
+  ultima=$(sed -n '1p' "$ULTIMA_VENTANA_FILE" 2>/dev/null) || ultima=""
+  [[ "$ultima" =~ ^[0-9]+$ ]] || ultima=0
+  if [ $(( $(date +%s) - ultima )) -ge $(( RESCATE_VENTANA_HORAS * 3600 )) ]; then
+    echo "AVISO: ninguna ventana abierta en ${RESCATE_VENTANA_HORAS}h ($ULTIMA_VENTANA_FILE), se fuerza 'on' (rescate de ventana)" >&2
+    return 0
+  fi
+  return 1
+}
+
 if [ "$RELOJ_CONFIABLE" != "yes" ]; then
   RESCATE_U_MODO=on
 elif [ "$(modo_vigente "$MODO_FILE" "$MODO_DEFECTO")" = "permanente" ]; then
   RESCATE_U_MODO=on
 elif ventana_abierta; then
+  RESCATE_U_MODO=on
+elif ventanas_paradas; then
   RESCATE_U_MODO=on
 else
   RESCATE_U_MODO=off

@@ -38,9 +38,10 @@ SONDEO_S=30
 # Una sola llamada a cfg.py (un valor por linea): cada python3 cuesta ~0.4s de CPU en la placa
 CFG_VALORES=$(python3 "$CFG" rutas.modo_operacion_file starlink.modo_defecto \
   starlink.ventana_espera_internet_min starlink.ventana_espera_losant_s \
-  starlink.ventana_extension_update_min starlink_api.host starlink_api.timeout_s)
+  starlink.ventana_extension_update_min starlink_api.host starlink_api.timeout_s \
+  rutas.ultima_ventana_file)
 { read -r MODO_FILE; read -r MODO_DEFECTO; read -r ESPERA_INTERNET_MIN; read -r ESPERA_LOSANT_S;
-  read -r EXTENSION_UPDATE_MIN; read -r ANTENA_HOST; read -r ANTENA_TIMEOUT_S; } <<< "$CFG_VALORES"
+  read -r EXTENSION_UPDATE_MIN; read -r ANTENA_HOST; read -r ANTENA_TIMEOUT_S; read -r ULTIMA_VENTANA_FILE; } <<< "$CFG_VALORES"
 
 if [ "$(modo_vigente "$MODO_FILE" "$MODO_DEFECTO")" = "permanente" ]; then
   echo "modo permanente: no se abre ventana"
@@ -87,6 +88,10 @@ registrar() {   # registrar <como termino>
 
 T0=$(date +%s)
 echo "$T0" > "$VENTANA_FLAG"
+# Prueba de vida del mecanismo de ventanas (rescate de ventana en
+# decidir_objetivo.sh). En la SD: sobrevive un reinicio.
+echo "$T0" > "$ULTIMA_VENTANA_FILE.tmp" && mv "$ULTIMA_VENTANA_FILE.tmp" "$ULTIMA_VENTANA_FILE" \
+  || echo "ADVERTENCIA: no se pudo escribir $ULTIMA_VENTANA_FILE" >&2
 # Pase lo que pase (error, kill de systemd por timeout), la ventana se cierra
 trap 'cerrar; registrar cortada' EXIT
 echo "ventana abierta"

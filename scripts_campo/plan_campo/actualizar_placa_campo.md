@@ -451,6 +451,9 @@ probadas en el lab; en campo falta medir la duración real de las ventanas
   falla forzada revierte, aplicación OK).
 - [x] Fase 4: comando `modo` y `sl_modo` con el workflow de `test_SC` 13/10.
 - [x] Fase 5: Losant solo en vivo (último resumen en `/run/losant_ultimo`).
+- [x] Rescate de ventana (6 h sin ventanas => "on"). Al pasar a ventana por
+  primera vez queda prendida hasta la primera ventana (hasta 2 h): normal.
+- [ ] Noche de prueba en el lab en modo ventana (13→14/10) revisada.
 - [ ] **Después de aplicar:** borrar la cola vieja (ya nadie la manda),
   dejando el contador del día:
   ```bash
