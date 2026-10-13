@@ -118,6 +118,54 @@ Hay que probarlo con el Device de pruebas `test_SC` antes de cerrar la
 Fase 4. **Quién crea el workflow y el tag: el usuario** (yo no tengo acceso
 a la cuenta).
 
+### Resultado (2026-10-13, workflow "test sc" en `test_SC`) — CERRADA
+
+Workflow que funciona:
+
+```
+Device: State (test_SC) ──> Conditional 1 ──true──> Conditional 2 ──true──> Device: Command
+                                 │ false                 │ false              (modo)
+                              (nada)                  Debug
+```
+
+- **Conditional 1:** `{{data.sl_modo}} == 'ventana' || {{data.sl_modo}} == 'permanente'`
+- **Conditional 2:** `({{deviceTags.modo_starlink.[0]}} == 'ventana' || {{deviceTags.modo_starlink.[0]}} == 'permanente') && {{deviceTags.modo_starlink.[0]}} != {{data.sl_modo}}`
+- **Device: Command:** nombre `modo`, payload `{"modo": "{{deviceTags.modo_starlink.[0]}}"}`.
+
+Lo que se aprendió (no repetir):
+
+1. En el Conditional las plantillas se insertan **con comillas** (como
+   JSON): se escriben `{{data.sl_modo}} == 'x'`, **sin** comillas
+   simples alrededor. Con `'{{...}}'` da false siempre.
+2. El disparador ya trae los tags del Device en `deviceTags`
+   (`modo_starlink` es una lista: `.[0]`). No hace falta Device: Get (con
+   `{{deviceId}}` devolvía null; el id del Device viene en `triggerId`).
+3. El filtro "Allowed Attributes: Only the following… sl_modo" del
+   disparador **no frena** los demás informes de la placa (resúmenes por
+   minuto, estado, espacio). Por eso el Conditional 1 va aparte.
+4. Con una sola expresión larga, los informes **sin** `sl_modo` daban
+   true y mandaban el comando cada minuto. Separada en dos Conditionals,
+   no (4 resúmenes seguidos sin comando).
+5. Un estado escrito por un nodo Device: State de otro workflow (botón de
+   prueba) **sí** vuelve a disparar el Device: State.
+
+Pruebas hechas (journal del lab, `Comando desconocido ignorado:
+nombre='modo' payload={'modo': 'ventana'}`):
+
+| Caso | Resultado |
+|---|---|
+| tag `ventana`, `sl_modo` = `permanente` | comando `modo {"modo": "ventana"}` llega |
+| tag `ventana`, `sl_modo` = `ventana` | nada |
+| tag `Permanente` (mal escrito) | nada |
+| informes de la placa sin `sl_modo` | nada |
+
+Pendiente para campo: el Device: Command apunta fijo a `test_SC`; en el
+Device de campo, otro workflow igual (o `{{triggerId}}` si se usa uno
+solo para varios Devices).
+
+Consecuencia para la placa (Fase 4): publicar `sl_modo` siempre con un
+valor válido (`ventana` | `permanente`); otro valor no dispara nada.
+
 ## Fase 1 — El modo vive en la placa
 
 - Archivo persistente `/root/starlink_remoto/modo_operacion` (`ventana` o
@@ -302,3 +350,5 @@ Pruebas que dependen de la hora: adelantar el reloj, no esperar.
   15 min, ventana al arrancar, sin cola + último al conectar, extensión
   por firmware, manual `on` hasta la ventana, 120 s) y 18 (hora
   original; huecos en Losant aceptados, GCS es la fuente). Sin código.
+- 2026-10-13: Fase 0 cerrada en `test_SC` (workflow con dos Conditionals,
+  ver "Resultado" en la Fase 0). Sin código en la placa.
