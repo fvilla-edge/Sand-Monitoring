@@ -17,11 +17,11 @@
 set -euo pipefail
 
 CFG=/root/scripts_campo_comun/cfg.py
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$DIR/modo_operacion_common.sh"   # modo_valido, modo_vigente
 # Una sola llamada a cfg.py (un valor por linea): cada python3 cuesta ~0.4s de CPU en la placa
 CFG_VALORES=$(python3 "$CFG" rutas.modo_operacion_file starlink.modo_defecto)
 { read -r MODO_FILE; read -r MODO_DEFECTO; } <<< "$CFG_VALORES"
-
-valido() { [ "$1" = "ventana" ] || [ "$1" = "permanente" ]; }
 
 ACCION="${1:-}"
 case "$ACCION" in
@@ -33,15 +33,7 @@ case "$ACCION" in
     echo "$ACCION"
     ;;
   "")
-    MODO=$(sed -n '1p' "$MODO_FILE" 2>/dev/null || true)
-    if valido "$MODO"; then
-      echo "$MODO"
-    elif valido "$MODO_DEFECTO"; then
-      echo "$MODO_DEFECTO"
-    else
-      echo "AVISO: starlink.modo_defecto='$MODO_DEFECTO' no es valido, se usa 'ventana'" >&2
-      echo "ventana"
-    fi
+    modo_vigente "$MODO_FILE" "$MODO_DEFECTO"
     ;;
   *)
     echo "uso: $0 [ventana|permanente]" >&2

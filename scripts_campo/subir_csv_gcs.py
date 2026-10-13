@@ -42,11 +42,20 @@ gcs.registro_sd registra los que ya subieron.
   solo para subir. El token (1h) se firma aca con openssl; la clave va a un
   archivo temporal en /run (tmpfs, solo root) que se borra al terminar.
 
+- Modo ventana (--ventana, lo corre starlink_remoto/ventana_starlink.sh,
+  docs/plan_modos_starlink.md): Starlink prende solo unos minutos cada 2 h,
+  asi que en ese unico intento sube hasta MAX_VENTANA CSV de ventanas (un
+  dia) y todos los de energia, con las mismas pausas y gzip 1.
+- Un solo proceso a la vez (LOCK_FILE): el timer de 5 min sigue existiendo
+  y no se tiene que pisar con la ventana. El timer, si lo encuentra tomado,
+  no hace nada; la ventana espera hasta ESPERA_LOCK_VENTANA_S.
+
 Uso:
-    python3 subir_csv_gcs.py [--max N] [--seco]
+    python3 subir_csv_gcs.py [--max N] [--ventana] [--seco]
 """
 import argparse
 import base64
+import fcntl
 import gzip
 import hashlib
 import json
@@ -83,6 +92,12 @@ PAUSA_ENTRE_S = 30
 # en dos corridas (~10 min).
 MAX_ENERGIA_POR_CORRIDA = 12
 PAUSA_ENERGIA_S = 2
+# Modo ventana: un dia de ventanas (~11 min con la pausa de 30 s) y todo lo
+# de energia que haya.
+MAX_VENTANA = 24
+MAX_ENERGIA_VENTANA = 10 ** 6
+LOCK_FILE = "/run/lock/subir_csv_gcs.lock"
+ESPERA_LOCK_VENTANA_S = 600
 SCOPE = "https://www.googleapis.com/auth/devstorage.read_write"
 
 
@@ -117,6 +132,21 @@ def pedir_token(credenciales):
         "assertion": (firmar + b"." + _b64url(firma)).decode()}).encode()
     with urllib.request.urlopen(cred["token_uri"], datos, timeout=TIMEOUT_S) as r:
         return json.load(r)["access_token"]
+
+
+def tomar_lock(esperar_s):
+    """Archivo abierto con el lock tomado (mantenerlo vivo), o None si no se pudo en esperar_s."""
+    f = open(LOCK_FILE, "w")
+    limite = time.time() + esperar_s
+    while True:
+        try:
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return f
+        except BlockingIOError:
+            if time.time() >= limite:
+                f.close()
+                return None
+            time.sleep(5)
 
 
 def disco_montado():
@@ -204,8 +234,17 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--max", type=int, default=MAX_POR_CORRIDA,
                     help=f"maximo de archivos por corrida (default {MAX_POR_CORRIDA}, reparte la carga tras la noche)")
+    ap.add_argument("--ventana", action="store_true",
+                    help=f"un intento de ventana de Starlink: hasta {MAX_VENTANA} de ventanas y toda la energia")
     ap.add_argument("--seco", action="store_true", help="solo listar lo que subiria, sin conectarse")
     args = ap.parse_args()
+    max_ventanas = MAX_VENTANA if args.ventana else args.max
+    max_energia = MAX_ENERGIA_VENTANA if args.ventana else MAX_ENERGIA_POR_CORRIDA
+
+    lock = tomar_lock(ESPERA_LOCK_VENTANA_S if args.ventana else 0)
+    if lock is None:
+        log("otra subida en curso (lock tomado), no se hace nada")
+        return 0
 
     if not cfg.obtener("gcs.habilitado"):
         log("gcs.habilitado=false, no se sube nada")
@@ -225,10 +264,10 @@ def main():
     if not pendientes and not pend_energia:
         log("nada pendiente")
         return 0
-    log(f"{len(pendientes)} CSV de ventanas pendientes (se suben hasta {args.max}), "
-        f"{len(pend_energia)} de energia (hasta {MAX_ENERGIA_POR_CORRIDA})")
+    log(f"{len(pendientes)} CSV de ventanas pendientes (se suben hasta {max_ventanas}), "
+        f"{len(pend_energia)} de energia (hasta {max_energia})")
     if args.seco:
-        for _, ruta, nombre in pendientes[:args.max] + pend_energia[:MAX_ENERGIA_POR_CORRIDA]:
+        for _, ruta, nombre in pendientes[:max_ventanas] + pend_energia[:max_energia]:
             log(f"  subiria {ruta} como {nombre}.gz")
         return 0
 
@@ -241,8 +280,8 @@ def main():
         log(f"sin token (¿sin internet?): {e} — se reintenta en la proxima corrida")
         return 0
 
-    tandas = ((pendientes[:args.max], base, PAUSA_ENTRE_S),
-              (pend_energia[:MAX_ENERGIA_POR_CORRIDA], base_energia, PAUSA_ENERGIA_S))
+    tandas = ((pendientes[:max_ventanas], base, PAUSA_ENTRE_S),
+              (pend_energia[:max_energia], base_energia, PAUSA_ENERGIA_S))
     n_ok = n_total = 0
     cortado = False
     for lista, prefijo, pausa in tandas:

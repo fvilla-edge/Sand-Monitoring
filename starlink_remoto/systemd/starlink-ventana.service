@@ -1,0 +1,12 @@
+[Unit]
+Description=Una ventana de Starlink: prende, sube lo pendiente a GCS, espera Losant y apaga (modo ventana)
+Requires=starlink-mux-ps10.service
+After=starlink-mux-ps10.service
+
+[Service]
+Type=oneshot
+ExecStart=/root/starlink_remoto/ventana_starlink.sh
+# Espera internet (15 min) + lock de GCS (10) + subida (~15) + Losant (2) +
+# extension por firmware (30), con margen. Si systemd lo corta, el trap del
+# script cierra la ventana igual.
+TimeoutStartSec=100min

@@ -216,6 +216,17 @@ Cambios alrededor:
   Fase 3). En modo permanente el servicio no hace nada.
 - El reconciliador (cada 5 min) sigue igual: lee la misma decisión, así
   que respeta la ventana abierta.
+- **Hecho (2026-10-13), solo la decisión:** `decidir_objetivo.sh` con la
+  prioridad nueva + `modo_operacion_common.sh` (lectura del modo
+  compartida, para no sumar otra llamada a python3 cada 5 min). Una marca
+  de ventana más vieja que `ventana_cada_h` se ignora (ventana muerta sin
+  cerrar). Prueba 26/26 en la PC y en el lab (copia aislada en
+  `/root/prueba_modos_fase2`; el script instalado NO se tocó: con el
+  defecto ventana y sin timer de ventana apagaría la Starlink del lab).
+- **Pasa a la Fase 3** (van juntos o la placa queda sin Starlink): borrar
+  los timers `rele-on/off`, `aplicar_horario.sh`, el timer nuevo, el
+  instalador (`aplicar_actualizacion.sh`: `TIMERS_STARLINK`) y los docs
+  (COMANDOS, GUIA_USO_BASICO, DESPLIEGUE, setup_placa, README).
 - Al arrancar la placa se abre una ventana (decisión 13): después de un
   corte de energía la placa avisa que volvió sin esperar hasta 2 h.
   Costo ~2 Wh por arranque; si la batería está al límite, el pico de la
@@ -256,6 +267,32 @@ Detalles:
   salga la confirmación) => Starlink se apaga hasta la próxima ventana.
 - Cambio a permanente estando en ventana: llega recién en la próxima
   ventana (hasta 2 h de demora). Es una consecuencia del diseño, no un bug.
+
+### Resultado Fase 3a (2026-10-13)
+
+- `starlink_remoto/ventana_starlink.sh` + `starlink-ventana.{timer,service}`
+  (`OnCalendar=*-*-* 00/2:05:00 America/Argentina/Buenos_Aires` +
+  `OnBootSec=3min`, sin `Persistent`) + `subir_csv_gcs.py --ventana`
+  (hasta 24 de ventanas y toda la energía) con lock
+  `/run/lock/subir_csv_gcs.lock` (el timer de 5 min no hace nada si está
+  tomado; la ventana espera hasta 10 min).
+- Firmware: el estado se pregunta con `get_status` por grpcurl; sin antena
+  (lab) no hay extensión. `ESTADO_UPDATE_CMD` solo para pruebas.
+- Log: una línea por ventana en `/root/logs_campo/ventanas_starlink.log`,
+  con `fin=normal` o `fin=cortada` (si el proceso muere, el trap cierra la
+  ventana igual).
+- Instalado a mano en el lab (respaldo `/root/respaldo_modos_fase3_20261013`),
+  timers `rele-on/off` deshabilitados. 11/11 pruebas con el usuario moviendo
+  el cable de feedback (cable a GND = on): permanente→ventana, ventana
+  completa, reconciliador durante la ventana, `systemctl stop` en el medio,
+  manual on/off, marca vieja/basura, permanente durante la ventana, lock de
+  GCS, 24 vs 2 en `--seco` (315 pendientes reales), ventana cortada en el
+  log, reinicio (ventana de arranque a +3 min), timer con hora local
+  (transitorio 14:36 local => 17:36 UTC).
+- Lab sin RTC: al arrancar, antes de NTP, la verificación del boot pide "on"
+  (reloj no confiable). Esperado; en campo hay RTC.
+- Sube primero los CSV más viejos: 12 ventanas × 24 = 288/día contra 24
+  generados, un atraso de días se pone al día en uno o dos.
 
 ## Fase 4 — Losant (placa)
 
@@ -363,3 +400,4 @@ Pruebas que dependen de la hora: adelantar el reloj, no esperar.
   original; huecos en Losant aceptados, GCS es la fuente). Sin código.
 - 2026-10-13: Fase 0 cerrada en `test_SC` (workflow con dos Conditionals,
   ver "Resultado" en la Fase 0). Sin código en la placa.
+- 2026-10-13: Fases 1, 2 y 3a hechas y probadas en el lab (11/11).
