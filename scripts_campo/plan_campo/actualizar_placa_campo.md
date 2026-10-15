@@ -668,9 +668,9 @@ paquete**.
   mono/dual remoto) + `me_canales` real + IN2 asociado al IN1
   (`docs/plan_in2_asociado.md`: `modo_evento.in2_modo`, comando `canales` con
   `"in2"`).
-- Paquete: `paquetes_actualizacion/actualizacion_20261015_180019_6cb84ba.tgz`
-  (commit `6cb84ba`, bitstream del IN2 `20ac88b` = md5 `b34cd26f`, binario
-  sha256 `3883f7d7…`). Si hay commits nuevos, rearmarlo desde la rama con ese
+- Paquete: `paquetes_actualizacion/actualizacion_20261015_190535_864a15c.tgz`
+  (commit `864a15c`, bitstream del IN2 `20ac88b` = md5 `b34cd26f`, binario
+  sha256 `74b88bb2…`). Si hay commits nuevos, rearmarlo desde la rama con ese
   mismo bitstream (`~/bitstreams/in2_20ac88b_red_pitaya.bin`).
 - Probado en el lab (15/10): aplicación (y la reversión sola por la lectura
   del relé), dual/mono por Losant, dual con bitstream viejo, modo clásico,
@@ -716,10 +716,10 @@ paquete**.
 
 Igual que la sección 6 (pasos 4-6):
 ```bash
-bash scripts_campo/actualizacion/enviar_paquete.sh root@<IP_CAMPO> paquetes_actualizacion/actualizacion_20261015_180019_6cb84ba.tgz
-ssh root@<IP_CAMPO> 'SOLO_CHEQUEAR=1 bash /root/actualizacion/20261015_180019_6cb84ba/aplicar_actualizacion.sh /root/actualizacion/20261015_180019_6cb84ba'
-ssh root@<IP_CAMPO> 'bash /root/actualizacion/20261015_180019_6cb84ba/aplicar_actualizacion.sh'
-ssh root@<IP_CAMPO> 'cat /root/actualizacion/RESULTADO_20261015_180019_6cb84ba'
+bash scripts_campo/actualizacion/enviar_paquete.sh root@<IP_CAMPO> paquetes_actualizacion/actualizacion_20261015_190535_864a15c.tgz
+ssh root@<IP_CAMPO> 'SOLO_CHEQUEAR=1 bash /root/actualizacion/20261015_190535_864a15c/aplicar_actualizacion.sh /root/actualizacion/20261015_190535_864a15c'
+ssh root@<IP_CAMPO> 'bash /root/actualizacion/20261015_190535_864a15c/aplicar_actualizacion.sh'
+ssh root@<IP_CAMPO> 'cat /root/actualizacion/RESULTADO_20261015_190535_864a15c'
 ```
 - Si da `revertida` por "la lectura directa del relé da 'off' con Starlink
   prendido": el relé lee al revés o la Starlink no prendió (en el lab pasó
@@ -791,7 +791,7 @@ ssh root@<IP_CAMPO> 'cat /root/actualizacion/RESULTADO_20261015_180019_6cb84ba'
 
 - Modo clásico sin desinstalar: `bash /root/scripts_campo/cambiar_modo.sh clasico`.
 - Todo como estaba: `revertir_actualizacion.sh` del respaldo
-  `/root/respaldos_actualizacion/20261015_180019_6cb84ba/` (sección 6).
+  `/root/respaldos_actualizacion/20261015_190535_864a15c/` (sección 6).
 - Solo el bitstream: `revertir_bitstream.sh` del repo FPGA; con el config en
   dual la captura sigue midiendo el IN1 y `me_canales` pasa a `1`.
 
