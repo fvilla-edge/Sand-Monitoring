@@ -48,6 +48,9 @@ ULTIMO = "/run/losant_ultimo/evento.json"
 DESTINO_ACTUAL = "/run/modo-evento/destino"
 # "canales=N dec=M" de la corrida en curso (lo escribe supervisor_eventos.sh)
 MEDICION_ACTUAL = "/run/modo-evento/medicion"
+# "si"/"no": si la corrida mide de verdad el IN2 (lo escribe capturar_eventos
+# al leer el bitstream; dual con un bitstream sin IN2 mide solo el IN1)
+IN2_ACTUAL = "/run/modo-evento/in2"
 # resultado del ultimo cambio mono/dual (cambiar_canales.sh, comando "canales")
 ESTADO_CAMBIO_CANALES = os.path.join(cfg.obtener("rutas.log_dir"), "cambio_canales_estado")
 # Sin una ventana nueva en este tiempo, se reporta que no esta midiendo
@@ -71,6 +74,16 @@ def medicion_actual():
             return {k: int(v) for k, _, v in (p.partition("=") for p in f.read().split()) if v.isdigit()}
     except OSError:
         return {}
+
+
+def mide_in2():
+    """True/False segun capturar_eventos, o None si todavia no lo escribio
+    (arranque en curso): en ese caso vale lo que dice medicion."""
+    try:
+        with open(IN2_ACTUAL) as f:
+            return {"si": True, "no": False}.get(f.read().strip())
+    except OSError:
+        return None
 
 
 def estado_servicio():
@@ -401,8 +414,9 @@ def resumir(filas, lector, contadores, activo, umbral, ahora, sin_disco=False, f
     if activo:
         med = medicion_actual()
         if "canales" in med:
-            # 1 = mono (solo IN1), 2 = dual (IN1 + IN2 de referencia)
-            data["me_canales"] = med["canales"]
+            # 1 = mono (solo IN1), 2 = dual (IN1 + IN2 de referencia): lo que
+            # se mide, no lo pedido (dual con bitstream sin IN2 informa 1)
+            data["me_canales"] = med["canales"] if mide_in2() is not False else 1
         if "dec" in med:
             # decimacion de la captura: 32 (3.9 MHz) o 64 (1.95 MHz)
             data["me_dec"] = med["dec"]

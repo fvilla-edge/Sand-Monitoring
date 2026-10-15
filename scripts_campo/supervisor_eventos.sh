@@ -27,6 +27,8 @@ MARCA_PARADA_RELE=/run/modo_evento_parada_rele
 DESTINO_ACTUAL=/run/modo-evento/destino
 # canales y decimacion de la corrida en curso: "canales=N dec=M" (lo lee el anotador)
 MEDICION_ACTUAL=/run/modo-evento/medicion
+# "si"/"no": si la corrida mide el IN2 (lo escribe capturar_eventos al ver el bitstream)
+IN2_ACTUAL=/run/modo-evento/in2
 
 # true si /mnt/usb es un disco de verdad (no la carpeta comun de la SD ni un tmpfs)
 disco_montado() {
@@ -88,12 +90,13 @@ arrancar)
     mkdir -p "$(dirname "$DESTINO_ACTUAL")" "$destino"
     echo "$destino$marca" > "$DESTINO_ACTUAL"
     echo "canales=$canales dec=$dec" > "$MEDICION_ACTUAL"
+    rm -f "$IN2_ACTUAL"
     exec /usr/bin/python3 -u /root/scripts_campo/capturar_eventos.py \
         --umbral "$UMBRAL" --umbral2 "${UMBRAL2:-$UMBRAL}" --destino "$destino" --canales "$canales" --dec "$dec" \
         "${extra[@]}"
     ;;
 despues)
-    rm -f "$DESTINO_ACTUAL" "$MEDICION_ACTUAL"
+    rm -f "$DESTINO_ACTUAL" "$MEDICION_ACTUAL" "$IN2_ACTUAL"
     # control_starlink.sh detiene el servicio para leer el rele (a veces todavia
     # en la espera de uptime del boot, que termina en resultado=signal): no es
     # una caida, se anota sin "resultado=" para que no la cuente el anotador

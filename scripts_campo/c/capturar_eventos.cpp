@@ -143,6 +143,8 @@ const uint32_t OFF_WINDOW_COUNT = 0x22C, OFF_SUM_ABS_LO = 0x230, OFF_SUM_ABS_HI 
 const uint32_t OFF_CANAL = 0x20;
 const uint32_t OFF_AREA_ID = 0x26C;
 const uint32_t AREA_ID_IN2 = 0x534D0002;  // "SM" + 2 canales; bitstream sin IN2: lee 0
+// "si" o "no": si esta corrida mide el IN2 (lo lee resumen_modo_evento.py)
+const char* const ARCHIVO_IN2 = "/run/modo-evento/in2";
 
 // Pasabanda de la FPGA (2 biquads, Butterworth 50-400kHz, Q20, 25 bits con
 // signo) por decimacion. Los defaults del bitstream son los de dec32; sin
@@ -851,6 +853,13 @@ int main(int argc, char** argv) {
         log(in2 ? "IN2: area/kurtosis propios en la FPGA (ID 0x%08X), umbral kurtosis>=%.2f, eventos y CSV en <destino>/in2"
                 : "WARNING bitstream sin calculo del IN2 (ID 0x%08X): se mide solo el IN1",
             in2 ? AREA_ID_IN2 : 0, umbral2);
+    // Lo que de verdad se mide (el config puede decir dual con un bitstream sin
+    // IN2): resumen_modo_evento.py lo usa para me_canales. Lo borra el supervisor.
+    mkdir(VigiaEspacio::DIR_BANDERA, 0755);
+    if (FILE* f = fopen(ARCHIVO_IN2, "w")) {
+        fputs(in2 ? "si\n" : "no\n", f);
+        fclose(f);
+    }
     if (!reg.escribir_coefs(*coefs)) {
         log("ERROR no se pudo escribir el pasabanda de la FPGA para dec=%d: el registro no devolvio lo escrito", dec);
         return 1;

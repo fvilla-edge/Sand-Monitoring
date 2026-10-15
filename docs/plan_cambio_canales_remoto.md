@@ -196,3 +196,13 @@ solo `daemon-reload`. Anotar en `scripts_campo/plan_campo/actualizar_placa_campo
   `0x534D0002`), sin reinicios. Con esto quedan hechas todas las pruebas
   del plan (la 5, dos comandos seguidos, ya estaba el 6/10: el segundo se
   rechaza).
+- 2026-10-15: **`me_canales` informa lo que se mide** (pendiente de la
+  prueba 7): `capturar_eventos` escribe `/run/modo-evento/in2` (`si`/`no`)
+  al leer el ID del bitstream; el supervisor lo borra al arrancar y al
+  terminar; el resumen informa `1` si dice `no` (sin el archivo, el arranque
+  en curso, vale lo de `medicion`). No se toca `medicion`: si la captura la
+  pisara con `1`, `cambiar_canales.sh` esperaria 4 min y volveria a mono.
+  PC 6/6 (mono, dual con y sin IN2, sin archivo, basura). Lab, instalado a
+  mano (respaldo `/root/respaldo_me_canales_20261015`): dual con IN2 -> 2;
+  dual con bitstream `7f23f7d` -> 1 (y el archivo se borra al parar);
+  mono -> 1; dual de vuelta -> 2 con los `_in2`. Sin reinicios.
