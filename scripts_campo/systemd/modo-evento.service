@@ -15,7 +15,9 @@
 # se puede correr capturar_stream.py en la misma placa:
 #   systemctl disable --now modo-evento   (y al reves: enable --now)
 #
-# Destino y umbral: editar Environment= (o un drop-in con systemctl edit).
+# Destino, umbral, canales y decimacion: editar Environment= (o un drop-in
+# con systemctl edit). Cambiar = reiniciar el servicio (hueco de ~60s+arranque
+# en el CSV); el server recibe la configuracion de canales al conectar.
 # Instalar:
 #   cp /root/scripts_campo/systemd/modo-evento.service /etc/systemd/system/
 #   systemctl daemon-reload && systemctl enable --now modo-evento
@@ -40,6 +42,14 @@ Environment=DESTINO=/mnt/usb/eventos
 # UMBRAL=3.4 desde 2026-10-05 (antes 5): pedido del usuario tras la reunion; en las
 # placas ya instaladas se aplico con el drop-in modo-evento.service.d/umbral.conf
 Environment=UMBRAL=3.4
+# Mono/dual: modo_evento.canales de config_campo.json (1 o 2), lo cambia
+# cambiar_canales.sh (comando "canales" de Losant) sin daemon-reload.
+# Environment=CANALES=1|2 en un drop-in le gana (solo para pruebas a mano).
+# DEC (32|64) es opcional: sin DEC, mono va a 32 y dual a 64. Dual = IN1 + IN2
+# como sensor independiente (docs/plan_in2_independiente.md). OJO: el umbral y
+# el piso/escala de la PC estan medidos a dec32.
+# UMBRAL2 (opcional): umbral propio del IN2 en dual (sensor independiente,
+# docs/plan_in2_independiente.md). Sin UMBRAL2 se usa el mismo que UMBRAL.
 # directorio de logs de campo: ahi caen los core dumps (core_pattern relativo)
 WorkingDirectory=/root/logs_campo
 LimitCORE=infinity

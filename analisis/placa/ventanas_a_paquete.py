@@ -17,7 +17,10 @@ decenas de ms), asi que solo se usa para anclar cada tramo continuo a la
 hora real (mediana de t_utc_ms - wc*50ms). Un tramo nuevo empieza cuando
 window_count retrocede o cuando su avance no cuadra con el reloj por mas de
 1s (reinicio de la captura o del bitstream: el contador de la FPGA no es
-continuo entre corridas). t_centro_s es relativo al inicio del paquete.
+continuo entre corridas), o cuando cambia la decimacion (columna `dec` del
+CSV desde 2026-10-06; sin ella, dec32). Cada segmento dice su `dec`: la
+escala del area no es la misma a dec32 y a dec64. t_centro_s es relativo al
+inicio del paquete.
 
 Las ventanas con estado=saltada (el sondeo no llego a leerlas, no hay dato)
 NO van en las listas: quedan como hueco en t_centro_s y se cuentan en
@@ -62,6 +65,9 @@ def leer_filas(rutas):
                         "ok": r["estado"] == "ok",
                         "area": float(r["area"]) if r["area"] else None,
                         "kurt": float(r["kurtosis"]) if r["kurtosis"] else None,
+                        # sin columna dec (CSV viejo) = dec32; una fila de 7 columnas bajo
+                        # un encabezado de 6 (hora en que se actualizo la placa) cae en r[None]
+                        "dec": int(r.get("dec") or (r.get(None) or ["32"])[0] or 32),
                     }
                 except (TypeError, ValueError):
                     continue
@@ -80,7 +86,7 @@ def partir_en_tramos(filas):
             p = actual[-1]
             dwc = r["wc"] - p["wc"]
             dt = (r["t_ms"] - p["t_ms"]) / 1000
-            if dwc <= 0 or abs(dwc * VENTANA_S - dt) > SALTO_RELOJ_S:
+            if dwc <= 0 or abs(dwc * VENTANA_S - dt) > SALTO_RELOJ_S or r["dec"] != p["dec"]:
                 tramos.append(actual)
                 actual = []
         actual.append(r)
@@ -107,6 +113,7 @@ def armar_paquete(filas, nombre, fs_hz=FS_HZ):
             "inicio_utc": _iso(ancla),
             "window_count_inicial": t[0]["wc"],
             "ventanas": t[-1]["wc"] - t[0]["wc"] + 1,
+            "dec": t[0]["dec"],
         })
         for r in t:
             if not r["ok"]:

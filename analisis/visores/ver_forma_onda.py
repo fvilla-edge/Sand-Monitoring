@@ -50,6 +50,7 @@ timeline_lote.py).
 Uso: doble-click en abrir_forma_onda.sh (mismo directorio), o:
   .venv/bin/python3 analisis/visores/ver_forma_onda.py
 """
+import json
 import sys
 import tkinter as tk
 from pathlib import Path
@@ -284,8 +285,12 @@ class VisorFormaOnda:
 
     def _agregar_ruta(self, ruta: Path):
         if ruta.is_dir():
-            nuevos = sorted(ruta.glob("campo_*.bin"))
+            # capturas clasicas + eventos del modo evento (el _ch2.bin va con su evento)
+            nuevos = sorted(ruta.glob("campo_*.bin")) + sorted(
+                f for f in ruta.glob("evento_*.bin") if not f.name.endswith("_ch2.bin"))
         elif ruta.is_file():
+            if ruta.name.endswith("_ch2.bin"):
+                ruta = ruta.with_name(ruta.name[:-len("_ch2.bin")] + ".bin")
             nuevos = [ruta]
         else:
             messagebox.showwarning("No encontrado", str(ruta))
@@ -340,8 +345,23 @@ class VisorFormaOnda:
         finally:
             self.root.config(cursor="")
 
+    def _cargar_evento(self, ruta: Path):
+        """Evento del modo evento: .bin (IN1) + _ch2.bin (IN2, solo en dual),
+        int16 crudos sin filtrar, con su .json (fs, dec, area y kurtosis que
+        calculo la FPGA). Mismo formato de salida que _cargar."""
+        ev = json.loads(ruta.with_suffix(".json").read_text())
+        ch0 = np.fromfile(ruta, dtype="<i2")
+        ruta2 = ruta.with_name(ruta.stem + "_ch2.bin")
+        ch1 = np.fromfile(ruta2, dtype="<i2") if ruta2.exists() else None
+        info = {"evento": ev, "decimacion": ev.get("dec", 32), "condicion": "evento",
+                "fecha_inicio": ev.get("timestamp_iso", "")}
+        return (ch0, ch1, float(ev["fs_hz"]), None, info)
+
     def _cargar(self, ruta: Path):
         if ruta in self.canales_cache:
+            return self.canales_cache[ruta]
+        if ruta.name.startswith("evento_"):
+            self.canales_cache[ruta] = self._cargar_evento(ruta)
             return self.canales_cache[ruta]
         info = _cargar_info(ruta)
         ch0, ch1, meta = _leer_canales_bin(ruta)
@@ -523,6 +543,14 @@ class VisorFormaOnda:
         dec = info.get("decimacion")
         cond = info.get("condicion")
         fecha = info.get("fecha_inicio", "")
+        ev = info.get("evento")
+        if ev is not None:
+            self.info_label.config(
+                text=(f"{ruta.name}\nevento ({'IN1 + IN2' if ch1 is not None else 'solo IN1'})\n"
+                      f"kurtosis: {ev['kurtosis']:.3f}\narea: {ev['area']:.4f}\n"
+                      f"decimacion: {dec}\nfs: {fs/1e6:.4f} MHz\n{fecha}")
+            )
+            return
         self.info_label.config(
             text=(f"{ruta.name}\ncondicion: {cond}\ndecimacion: {dec}\n"
                   f"fs: {fs/1e6:.4f} MHz\ninicio: {fecha}\n"

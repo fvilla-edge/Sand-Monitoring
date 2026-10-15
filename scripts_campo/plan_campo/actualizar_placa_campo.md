@@ -172,6 +172,49 @@ bitstream del 29/9 (`dfabb64`).
       (`ventanas_umbral_1min`, `me_eventos_hoy` en Losant) toma el umbral nuevo
       solo. Volumen esperado con los CSV de campo 29/9-5/10: ~2.7× eventos
       (51/h contra 19/h, ~0.6 GB/día en el disco; peor hora ~1350 eventos, ~720 MB).
+- [ ] **Dos canales + decimación configurable** (rama `dos-canales`,
+      `docs/plan_dos_canales.md`, 2026-10-06; **solo en la placa de pruebas**).
+      Va todo junto: `c/capturar_eventos.cpp` (compilar en la placa),
+      `capturar_eventos.py`, `supervisor_eventos.sh`, `resumen_modo_evento.py`
+      y `systemd/modo-evento.service` (unit nueva: `daemon-reload` con la
+      captura parada). Con la unit nueva y sin drop-in la placa sigue en mono
+      dec32 como hoy. Cambios que se notan aunque siga en mono:
+      - el CSV de ventanas suma una 7.ª columna `dec` (32/64); en la PC
+        `organizar_csv_campo.py` y `ventanas_a_paquete.py` ya la entienden
+        (los CSV viejos de 6 columnas = dec32);
+      - el `.json` de cada evento suma `dec` y `canales`;
+      - el arranque tarda ~1 s más (verifica la ventana de la FPGA);
+      - Losant recibe `me_canales` y `me_dec`: **crear los atributos (Number)
+        en el Device de campo y en `test_SC`**.
+      Pasar a dual (antes: confirmar físicamente qué hay en el IN2 de campo y
+      su jumper): drop-in `canales.conf` con `Environment=CANALES=2` (DEC
+      queda en 64 solo), `daemon-reload` con la captura parada, `start`.
+      Verificar: `cat /run/modo-evento/medicion` = `canales=2 dec=64` y en el
+      journal `IN2: muestras=100%`. Volver a mono: borrar `canales.conf`.
+      OJO dual: el umbral 3.4 y la escala FPGA/software de la PC están medidos
+      a dec32 (a dec64 el área de reposo da ~0.575 en vez de ~0.514).
+      **Reemplazado por el IN2 como sensor independiente** (rama `in2-sensor`,
+      `docs/plan_in2_independiente.md`, en curso): requiere además el
+      bitstream nuevo (fpga_pitaya `20ac88b`+); con el bitstream viejo el
+      software nuevo mide solo el IN1 aunque esté en dual. El IN1 ya no
+      guarda `_ch2.bin`; el IN2 tiene eventos y CSV en `<destino>/in2/`,
+      que suben a GCS con sufijo `_in2`; Losant recibe `kurt_max_1min_in2`
+      y `area_max_1min_in2` (**crear los atributos, Number, en el Device de
+      campo y en `test_SC`**). Va en la etapa 9 del plan: primero el
+      bitstream solo con el software actual en mono.
+      **Cambio mono/dual desde Losant** (`docs/plan_cambio_canales_remoto.md`,
+      2026-10-06, probado en `test_SC`): comando `canales` con
+      `{"canales": 1|2}`. Archivos: `cambiar_canales.sh` (nuevo),
+      `supervisor_eventos.sh`, unit (ya **sin** `Environment=CANALES`: el modo
+      sale de `config_campo.json` `modo_evento.canales`, que agrega la fusión
+      con valor 1), `cfg.py` (`--poner` atómico), `resumen_modo_evento.py`
+      (`me_cambio`), `panel_solar_ble/publicar_losant.py` (cartero: reiniciar
+      `panel-solar-informe`), `fusionar_config.py` (fsync). **Crear el
+      atributo `me_cambio` (String) en el Device de campo.** Si en campo
+      queda algún drop-in `canales.conf`, borrarlo (le gana al config).
+      Incluye el parche del SIGSEGV de arranque del vendor (`connect()` en un
+      hilo propio; en lab 0/20 caídas contra 3/10 sin parche): es la caída
+      que se vio en campo el 5/10 al aplicar el umbral 3.4.
 
 ## 3. Control de Starlink (`starlink_remoto/`)
 

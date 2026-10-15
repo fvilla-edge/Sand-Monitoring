@@ -34,7 +34,16 @@ def main():
     with open(tmp, "w") as f:
         json.dump(local, f, indent=2, ensure_ascii=False)
         f.write("\n")
+        # sin fsync, un cuelgue justo despues puede dejar el archivo en ceros
+        # (visto con un drop-in el 2026-10-06)
+        f.flush()
+        os.fsync(f.fileno())
     os.replace(tmp, ruta_local)
+    fd = os.open(os.path.dirname(os.path.abspath(ruta_local)), os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
     print("claves agregadas: " + (", ".join(agregadas) if agregadas else "ninguna"))
 
 

@@ -46,6 +46,10 @@ ULTIMO = "/run/losant_ultimo/evento.json"
 # Destino real de la corrida en curso (supervisor_eventos.sh arrancar):
 # "<carpeta>" o "<carpeta> sin_disco"
 DESTINO_ACTUAL = "/run/modo-evento/destino"
+# "canales=N dec=M" de la corrida en curso (lo escribe supervisor_eventos.sh)
+MEDICION_ACTUAL = "/run/modo-evento/medicion"
+# resultado del ultimo cambio mono/dual (cambiar_canales.sh, comando "canales")
+ESTADO_CAMBIO_CANALES = os.path.join(cfg.obtener("rutas.log_dir"), "cambio_canales_estado")
 # Sin una ventana nueva en este tiempo, se reporta que no esta midiendo
 SIN_DATOS_MAX_S = 30
 LOG_REINICIOS = os.path.join(cfg.obtener("rutas.log_dir"), "modo_evento_reinicios.log")
@@ -58,6 +62,15 @@ _LIBC = ctypes.CDLL(None, use_errno=True)
 
 def log(msg):
     print(f"[{datetime.now(timezone.utc):%H:%M:%S}] {msg}", flush=True)
+
+
+def medicion_actual():
+    """{"canales": N, "dec": M} de la corrida en curso, o {} si no hay."""
+    try:
+        with open(MEDICION_ACTUAL) as f:
+            return {k: int(v) for k, _, v in (p.partition("=") for p in f.read().split()) if v.isdigit()}
+    except OSError:
+        return {}
 
 
 def estado_servicio():
@@ -145,7 +158,8 @@ class LectorCSV:
     def _parsear(lineas):
         for linea in lineas:
             partes = linea.split(",")
-            if len(partes) != 6 or partes[0] == "window_count":
+            # 7 columnas desde 2026-10-06 (dec al final); 6 en CSV viejos
+            if len(partes) not in (6, 7) or partes[0] == "window_count":
                 continue
             try:
                 wc, t_ms = int(partes[0]), int(partes[1])
@@ -332,7 +346,7 @@ def estado_medicion(activo, sin_disco, n_filas, seg_sin_datos):
     return "midiendo_sin_disco" if sin_disco else "midiendo"
 
 
-def resumir(filas, lector, contadores, activo, umbral, ahora, sin_disco=False):
+def resumir(filas, lector, contadores, activo, umbral, ahora, sin_disco=False, filas_in2=None):
     ok = [f for f in filas if f[4] == "ok" and f[3] is not None]
     kurts = [f[3] for f in ok]
     areas = [f[2] for f in ok if f[2] is not None]
@@ -384,6 +398,32 @@ def resumir(filas, lector, contadores, activo, umbral, ahora, sin_disco=False):
     # true si capturar_eventos pauso la señal cruda de los eventos por poco
     # espacio en el USB (el registro de ventanas sigue igual)
     data["me_cruda_pausada"] = os.path.exists(BANDERA_CRUDA_PAUSADA)
+    if activo:
+        med = medicion_actual()
+        if "canales" in med:
+            # 1 = mono (solo IN1), 2 = dual (IN1 + IN2 de referencia)
+            data["me_canales"] = med["canales"]
+        if "dec" in med:
+            # decimacion de la captura: 32 (3.9 MHz) o 64 (1.95 MHz)
+            data["me_dec"] = med["dec"]
+    try:
+        with open(ESTADO_CAMBIO_CANALES) as f:
+            # resultado del ultimo cambio mono/dual pedido por Losant, p.ej.
+            # "ok 2 2026-10-06T20:15:03Z" o "error: ... (volvio a 1) ..."
+            data["me_cambio"] = f.read().strip()[:200]
+    except OSError:
+        pass
+    # IN2 como sensor independiente (dual con el bitstream que lo calcula,
+    # docs/plan_in2_independiente.md): solo maximos del ultimo minuto, el detalle
+    # queda en su CSV (<destino>/in2)
+    ok2 = [f for f in (filas_in2 or []) if f[4] == "ok" and f[3] is not None]
+    if ok2:
+        # kurtosis mas alta del IN2 en el ultimo minuto
+        data["kurt_max_1min_in2"] = round(max(f[3] for f in ok2), 3)
+        areas2 = [f[2] for f in ok2 if f[2] is not None]
+        if areas2:
+            # area mas alta del IN2 en el ultimo minuto
+            data["area_max_1min_in2"] = round(max(areas2), 4)
     reinicios = reinicios_hoy(dia)
     if reinicios is not None:
         # veces que se cayo la medicion en el dia (UTC) y el supervisor la relanzo
@@ -411,6 +451,7 @@ def main():
     args = ap.parse_args()
 
     lector = LectorCSV()
+    lector_in2 = LectorCSV()
     contadores = Contadores(os.path.join(args.contadores, ".contadores.json"))
     log(f"Anotador del modo evento: un resumen cada {INTERVALO_S}s en {ULTIMO} (solo el ultimo)")
     proximo = time.monotonic()
@@ -418,7 +459,14 @@ def main():
         ahora = datetime.now(timezone.utc)
         activo, destino, umbral, sin_disco = estado_servicio()
         filas = lector.filas_nuevas(destino, ahora) if destino else []
-        resumen = resumir(filas, lector, contadores, activo, umbral, ahora, sin_disco)
+        # CSV del IN2 solo si la corrida actual es dual y lo esta escribiendo
+        # (con el bitstream viejo o en mono no hay carpeta in2, o es de antes)
+        destino_in2 = os.path.join(destino, "in2") if destino else None
+        if activo and medicion_actual().get("canales") == 2 and destino_in2 and os.path.isdir(destino_in2):
+            filas_in2 = lector_in2.filas_nuevas(destino_in2, ahora)
+        else:
+            filas_in2 = []
+        resumen = resumir(filas, lector, contadores, activo, umbral, ahora, sin_disco, filas_in2)
         guardar(resumen)
         log(f"resumen: {resumen['data']}")
         # monotonic: un salto de reloj por NTP (sin RTC) no adelanta ni frena el ciclo
