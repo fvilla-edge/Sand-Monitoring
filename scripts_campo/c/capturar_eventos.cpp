@@ -59,7 +59,7 @@
 //     TOLERANCIA_DERIVA (ej. stream congelado sin fpgaLost, visto al bajar
 //     eth0), se recalibra y se loguea.
 //
-// Uso: capturar_eventos [--umbral 3.4] [--destino DIR] [--dec 32|64] [--canales 1]
+// Uso: capturar_eventos [--umbral 3.4] [--destino DIR] [--dec 32|64] [--canales 1] [--in2-modo independiente]
 //                       [--estado-s 10] [--duracion-s 0] [--host IP] [--margen-ms 10] [--sin-registro]
 //                       [--minimo-libre-mb 2048]
 //   --canales 2: enciende tambien el IN2. Con un bitstream que calcula el IN2
@@ -68,6 +68,12 @@
 //           propios, umbral propio (--umbral2, default = --umbral), eventos y
 //           CSV propios en <destino>/in2 con la misma estructura que los del
 //           IN1. Con el bitstream viejo se mide solo el IN1 (y se avisa).
+//   --in2-modo independiente|asociado (con --canales 2; docs/plan_in2_asociado.md):
+//           independiente (default) = lo de arriba. asociado = el IN2 graba su
+//           cruda solo cuando graba el IN1, la misma ventana y con el mismo
+//           nombre (en <destino>/in2); su CSV y su kurtosis siguen igual pero
+//           no disparan. Con el bitstream viejo graba la cruda igual, sin
+//           area/kurtosis del IN2 (null) ni CSV.
 //   --dec: 32 (default) o 64. Al arrancar escribe en la FPGA la ventana del
 //           acumulador (50ms = fs*0.05 muestras) y los coeficientes del
 //           pasabanda para esa fs, y los verifica (docs/plan_dos_canales.md,
@@ -389,7 +395,8 @@ struct Evento {
     int64_t ventana;         // muestras de la ventana oficial
     bool con_hueco;
     int canales, dec;
-    const char* canal = "IN1";  // sensor que disparo y cuya señal se guarda (IN2 en <destino>/in2)
+    const char* canal = "IN1";  // sensor cuya señal se guarda (IN2 en <destino>/in2)
+    const char* disparo = "IN1";  // sensor que disparo la grabacion (IN1 en el IN2 asociado)
     std::string base, iso;   // nombre y hora de deteccion
 };
 
@@ -430,6 +437,14 @@ bool escribir_bin(const std::string& ruta, const std::vector<int16_t>& x) {
     return ok;
 }
 
+// numero para el JSON, o null si no hay (area/kurtosis del IN2 asociado con el bitstream viejo)
+std::string num_json(double v, const char* fmt) {
+    if (std::isnan(v)) return "null";
+    char t[32];
+    snprintf(t, sizeof t, fmt, v);
+    return t;
+}
+
 bool guardar_evento(const std::string& destino, const Evento& e) {
     if (!destino_ok(destino)) return false;
     // Disco lleno: fwrite/fprintf fallan sin avisar y quedaba un archivo vacio o
@@ -446,12 +461,12 @@ bool guardar_evento(const std::string& destino, const Evento& e) {
                     "  \"ventana_s\": %.2f,\n  \"ventana_muestras\": %lld,\n  \"margen_muestras\": %lld,\n"
                     "  \"inicio_ventana_en_archivo\": %lld,\n  \"muestras\": %zu,\n  \"window_count\": %u,\n"
                     "  \"indice_inicio\": %lld,\n"
-                    "  \"area\": %.9g,\n  \"kurtosis\": %.6g,\n  \"con_hueco\": %s,\n"
-                    "  \"canales\": %d,\n  \"canal\": \"%s\",\n"
+                    "  \"area\": %s,\n  \"kurtosis\": %s,\n  \"con_hueco\": %s,\n"
+                    "  \"canales\": %d,\n  \"canal\": \"%s\",\n  \"disparo\": \"%s\",\n"
                     "  \"timestamp_iso\": \"%s\"\n}\n",
                     e.fs, e.dec, VENTANA_S, (long long)e.ventana, (long long)e.margen, (long long)e.margen, e.x.size(),
-                    e.wc, (long long)e.indice_inicio, e.area, e.kurt, e.con_hueco ? "true" : "false", e.canales, e.canal,
-                    e.iso.c_str()) > 0;
+                    e.wc, (long long)e.indice_inicio, num_json(e.area, "%.9g").c_str(), num_json(e.kurt, "%.6g").c_str(),
+                    e.con_hueco ? "true" : "false", e.canales, e.canal, e.disparo, e.iso.c_str()) > 0;
             if (fclose(f) != 0) ok = false;
         }
     }
@@ -787,6 +802,7 @@ int64_t ahora_utc_ms() {
 int main(int argc, char** argv) {
     double umbral = 3.4;  // 2026-10-05, antes 5.0
     double umbral2 = -1;  // IN2; sin --umbral2 = el mismo que el IN1
+    bool in2_asociado = false;  // --in2-modo asociado: el IN2 graba cuando graba el IN1
     std::string destino = "/root/eventos";
     int dec = 32;
     int canales = 1;
@@ -813,6 +829,11 @@ int main(int argc, char** argv) {
         else if (a == "--destino") destino = sig();
         else if (a == "--dec") dec = atoi(sig());
         else if (a == "--canales") canales = atoi(sig());
+        else if (a == "--in2-modo") {
+            std::string m = sig();
+            if (m == "asociado") in2_asociado = true;
+            else if (m != "independiente") { fprintf(stderr, "--in2-modo debe ser independiente o asociado\n"); return 2; }
+        }
         else if (a == "--estado-s") estado_s = atoi(sig());
         else if (a == "--margen-ms") margen_ms = atof(sig());
         else if (a == "--duracion-s") duracion_s = atoi(sig());
@@ -853,6 +874,12 @@ int main(int argc, char** argv) {
         log(in2 ? "IN2: area/kurtosis propios en la FPGA (ID 0x%08X), umbral kurtosis>=%.2f, eventos y CSV en <destino>/in2"
                 : "WARNING bitstream sin calculo del IN2 (ID 0x%08X): se mide solo el IN1",
             in2 ? AREA_ID_IN2 : 0, umbral2);
+    // El IN2 graba cruda si es independiente (con el bitstream del IN2) o si
+    // esta asociado al IN1 (con cualquier bitstream: la cruda viene en el stream)
+    const bool graba_in2 = canales == 2 && (in2 || in2_asociado);
+    if (canales == 2 && in2_asociado)
+        log("IN2: modo asociado (graba su cruda cuando graba el IN1, mismo nombre en <destino>/in2)%s",
+            in2 ? "" : ", sin area/kurtosis ni CSV del IN2 (bitstream viejo)");
     // Lo que de verdad se mide (el config puede decir dual con un bitstream sin
     // IN2): resumen_modo_evento.py lo usa para me_canales. Lo borra el supervisor.
     mkdir(VigiaEspacio::DIR_BANDERA, 0755);
@@ -887,10 +914,10 @@ int main(int argc, char** argv) {
     const std::string destino2 = destino + "/in2";
     std::unique_ptr<RegistroVentanas> registro2;
     std::unique_ptr<Escritor> escritor2;
-    if (in2) {
+    if (graba_in2) {
         mkdir(destino2.c_str(), 0755);
         escritor2.reset(new Escritor(destino2));
-        if (con_registro) registro2.reset(new RegistroVentanas(destino2, dec));
+        if (in2 && con_registro) registro2.reset(new RegistroVentanas(destino2, dec));
     }
     Stats st;
 
@@ -1036,14 +1063,16 @@ int main(int argc, char** argv) {
     double kurt_max2_periodo = 0, area_max2_periodo = 0;
     uint64_t in2_otra_ventana = 0;
 
-    struct Pendiente { uint32_t wc; double area, kurt; int64_t t_ms; };
+    // base/iso: nombre del evento, fijado al detectar (el IN2 asociado usa el del IN1)
+    struct Pendiente { uint32_t wc; double area, kurt; int64_t t_ms; std::string base, iso; };
     std::deque<Pendiente> pendientes, pendientes2;  // cruzaron el umbral, su señal todavia no llego
 
     // Saca del buffer del canal la señal de las ventanas que cruzaron su umbral
     // y la encola para escribir. Mismo indice de muestra en los dos canales
     // (llegan en el mismo paquete), asi que idx_ini sirve para los dos.
     auto procesar_pendientes = [&](std::deque<Pendiente>& pend, BufferCircular& b, Escritor& esc, const char* canal,
-                                   uint64_t& ev, uint64_t& ev_perdidos, uint64_t& no_guard, uint64_t& sin_senal) {
+                                   const char* disparo, uint64_t& ev, uint64_t& ev_perdidos, uint64_t& no_guard,
+                                   uint64_t& sin_senal) {
         std::vector<int16_t> ventana;
         while (!pend.empty()) {
             auto& p = pend.front();
@@ -1055,7 +1084,10 @@ int main(int argc, char** argv) {
             if (r == BufferCircular::OK && espacio.pausada()) {
                 no_guard++;  // sin log por evento: va resumido en la linea de ESTADO
             } else if (r == BufferCircular::OK) {
-                Evento e = nuevo_evento(p.wc);
+                Evento e;
+                e.wc = p.wc;
+                e.base = p.base;
+                e.iso = p.iso;
                 e.x = std::move(ventana);
                 e.fs = fs;
                 e.area = p.area;
@@ -1067,11 +1099,12 @@ int main(int argc, char** argv) {
                 e.canales = canales;
                 e.dec = dec;
                 e.canal = canal;
+                e.disparo = disparo;
                 std::string nombre = e.base;
                 if (esc.encolar(std::move(e))) {
                     ev++;
-                    log("[EVENTO %s] %s  area=%.4f kurtosis=%.2f%s", canal, nombre.c_str(), p.area, p.kurt,
-                        con_hueco ? "  (CON HUECO de muestras)" : "");
+                    log("[EVENTO %s] %s  area=%.4f kurtosis=%.2f%s%s", canal, nombre.c_str(), p.area, p.kurt,
+                        con_hueco ? "  (CON HUECO de muestras)" : "", strcmp(disparo, canal) != 0 ? "  (asociado al IN1)" : "");
                 } else {
                     ev_perdidos++;
                     log("WARNING %s: cola de escritura llena (%zu) — evento wc=%u descartado", canal, Escritor::MAX_COLA,
@@ -1162,14 +1195,21 @@ int main(int argc, char** argv) {
                 registro->agregar({wc, t_utc, area, kurt, false, lost_ahora - lost_registro});
                 lost_registro = lost_ahora;
             }
+            // area/kurtosis del IN2 en esta ventana (NAN si no hay: bitstream viejo u otra ventana)
+            double area2_v = NAN, kurt2_v = NAN;
             if (in2) {
                 double sa2, s22, s42, area2 = 0, kurt2 = 0;
                 bool ok2 = reg.leer(sa2, s22, s42, 1) == wc;
                 if (ok2) {
                     area_kurtosis(sa2, s22, s42, (double)N, fs, area2, kurt2);
+                    area2_v = area2;
+                    kurt2_v = kurt2;
                     kurt_max2_periodo = std::max(kurt_max2_periodo, kurt2);
                     area_max2_periodo = std::max(area_max2_periodo, area2);
-                    if (kurt2 >= umbral2) pendientes2.push_back({wc, area2, kurt2, ahora_ms()});
+                    if (!in2_asociado && kurt2 >= umbral2) {
+                        Evento nom = nuevo_evento(wc);
+                        pendientes2.push_back({wc, area2, kurt2, ahora_ms(), nom.base, nom.iso});
+                    }
                 } else {
                     in2_otra_ventana++;  // el canal 1 ya cerro la siguiente: esta ventana del IN2 queda saltada
                 }
@@ -1179,14 +1219,19 @@ int main(int argc, char** argv) {
                     if (ok2) lost2_registro = lost2_ahora;
                 }
             }
-            if (kurt >= umbral) pendientes.push_back({wc, area, kurt, ahora_ms()});
+            if (kurt >= umbral) {
+                Evento nom = nuevo_evento(wc);
+                int64_t t_det = ahora_ms();
+                pendientes.push_back({wc, area, kurt, t_det, nom.base, nom.iso});
+                if (graba_in2 && in2_asociado) pendientes2.push_back({wc, area2_v, kurt2_v, t_det, nom.base, nom.iso});
+            }
         }
 
-        procesar_pendientes(pendientes, buf, escritor, "IN1", eventos, eventos_perdidos, no_guardados,
+        procesar_pendientes(pendientes, buf, escritor, "IN1", "IN1", eventos, eventos_perdidos, no_guardados,
                             sin_senal_periodo);
-        if (in2)
-            procesar_pendientes(pendientes2, *buf2, *escritor2, "IN2", eventos2, eventos_perdidos2, no_guardados2,
-                                sin_senal_periodo2);
+        if (graba_in2)
+            procesar_pendientes(pendientes2, *buf2, *escritor2, "IN2", in2_asociado ? "IN1" : "IN2", eventos2,
+                                eventos_perdidos2, no_guardados2, sin_senal_periodo2);
 
         int64_t t = ahora_ms();
         espacio.revisar(t);
@@ -1213,6 +1258,9 @@ int main(int argc, char** argv) {
                              " kurt_max=%.2f area_max=%.4f eventos=%llu sin_senal=%llu otra_ventana=%llu",
                              kurt_max2_periodo, area_max2_periodo, (unsigned long long)eventos2,
                              (unsigned long long)sin_senal_periodo2, (unsigned long long)in2_otra_ventana);
+                else if (graba_in2 && n > 0 && n < (int)sizeof txt_in2)
+                    snprintf(txt_in2 + n, sizeof txt_in2 - n, " eventos=%llu sin_senal=%llu",
+                             (unsigned long long)eventos2, (unsigned long long)sin_senal_periodo2);
                 sin_senal_periodo2 = 0;
                 muestras2_ult = m2;
                 lost2_ult = l2;
