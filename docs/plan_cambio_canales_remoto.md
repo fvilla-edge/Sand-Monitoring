@@ -154,3 +154,45 @@ solo `daemon-reload`. Anotar en `scripts_campo/plan_campo/actualizar_placa_campo
   vendor visto en julio con Python; distinto del de `connect()` que ya se
   parcheó. 1 SEGV en 24 arranques desde el boot. Que coincida con eth0
   abajo es una sola muestra.
+- 2026-10-15: **dual con el bitstream viejo (prueba 7), OK**, en el lab con
+  el paquete integrado (rama `ensayo-integracion-20261015`, IN2 + modos
+  Starlink + float). Mono por comando, bitstream `7f23f7d` a mano (parar
+  captura, copiar, `sync`, arrancar), `{"canales": 2}` desde `test_SC`:
+  `ok 2 (bitstream sin IN2: mide solo IN1)` en 29 s, log de la captura
+  "bitstream sin calculo del IN2 (ID 0x00000000)", dec 64 al 100 %, sin
+  campos `_in2` en el resumen y el CSV del IN2 sin filas nuevas. Con el
+  bitstream del IN2 de vuelta (ID `0x534D0002`) los `_in2` vuelven al
+  segundo minuto.
+  - Pendiente chico (Losant puede confundir): con el bitstream viejo
+    `me_canales` dice `2` aunque se mida solo el IN1; y si el bitstream se
+    cambia sin pasar por `cambiar_canales.sh` (a mano o
+    `revertir_bitstream.sh`), `me_cambio` queda con el mensaje viejo.
+    Propuesta: que `me_canales` informe lo que realmente se mide.
+  - Ojo: el primer resumen después de pasar a dual no trae los `_in2` (el
+    lector arranca al final del CSV); vienen desde el segundo minuto.
+- 2026-10-15: **`cfg.py --poner` y valores inválidos (prueba 1), OK**, lab
+  con el paquete integrado.
+  - Valores inválidos, sistema real: clave inexistente (hoja o rama) ->
+    `No existe la clave`, rc 1, config igual (md5); `cambiar_canales.sh`
+    con `3`, `dos` o sin argumento -> uso, rc 1; desde `test_SC`
+    `{"canales": 3}`, `{"canales": "dos"}` y `{}` -> "payload invalido",
+    sin cambio. Valor inválido escrito en el config (`"tres"`) -> el
+    supervisor avisa "canales invalido ('tres'), se mide en mono" y mide
+    en mono; `cambiar_canales.sh 2` lo arregla (`ok 2` en 28 s) y el config
+    queda idéntico al de antes.
+  - Escritura atómica, copia aislada (`/root/prueba_cfg_atomico.sh`, no
+    toca el config real): proceso matado antes del rename y en el fsync ->
+    queda el config viejo; el `.tmp` que sobra se pisa en la siguiente
+    escritura. Config inmutable (`chattr +i`; como root los permisos no
+    frenan) -> `PermissionError`, rc 1, queda el viejo (y el `.tmp`).
+    100 escrituras matadas al azar entre 383 y 702 ms (una completa tarda
+    639 ms en la placa) -> el config siempre fue JSON válido. 7/7.
+- 2026-10-15: **cambio con modo clásico (prueba 2, ese caso), OK**, lab con
+  el paquete integrado. `cambiar_modo.sh clasico` (6 s) y después
+  `cambiar_canales.sh 1`: `error: modo clasico (modo-evento deshabilitado),
+  sin cambio` en el acto, config igual (md5, sigue en `2`), modo-evento sin
+  arrancar. En Losant: `me_activo = false` y `me_cambio` con el error.
+  Vuelta con `cambiar_modo.sh evento` (29 s): dual con el IN2 (ID
+  `0x534D0002`), sin reinicios. Con esto quedan hechas todas las pruebas
+  del plan (la 5, dos comandos seguidos, ya estaba el 6/10: el segundo se
+  rechaza).
