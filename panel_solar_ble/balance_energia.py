@@ -8,7 +8,10 @@ un resumen en la cola del cartero (publicar_losant.py lo manda a Losant con
 su hora original, igual que los del modo evento).
 
 - SOC: cada minuto soc_ah += i_bat / 60 (i_bat es la corriente NETA de la
-  bateria), limitado a 0..capacidad_ah. Entrar en float = 100 %. En una
+  bateria), limitado a 0..capacidad_ah. Float SOSTENIDO = 100 %: el MPPT
+  dice "float" FLOAT_MINUTOS minutos seguidos con v_bat_min >= FLOAT_V_MIN
+  y i_bat >= FLOAT_I_MIN. Solo "float" no alcanza: en campo (8/10 18:38 UTC)
+  lo reporto 4 minutos descargando, con la bateria casi vacia. En una
   LiFePO4 la tension casi no se mueve entre ~20 y ~90 %, por eso se cuenta.
 - Al arrancar se usa el ultimo SOC guardado: si la placa estuvo apagada
   porque se corto la salida LOAD, la bateria solo pudo cargarse, asi que es
@@ -26,6 +29,9 @@ from datetime import datetime, timedelta, timezone
 
 DIAS_CONFIABLE = 7
 TAU_PROMEDIO_MIN = 7 * 24 * 60      # media movil de ~7 dias
+FLOAT_MINUTOS = 10                  # minutos seguidos para creerle al float
+FLOAT_V_MIN = 13.3                  # V: float LFP del MPPT 13,5; vacia ~12,7
+FLOAT_I_MIN = -0.1                  # A: en float el panel cubre las cargas
 LOCAL = timezone(timedelta(hours=-3))
 VERSION_ESTADO = 1
 
@@ -57,6 +63,7 @@ class BalanceEnergia:
             "version": VERSION_ESTADO,
             "soc_ah": capacidad_ah / 2,
             "ultimo_float": None,          # epoch del ultimo minuto en float
+            "float_racha": 0,              # minutos seguidos que cumplen el float
             "hora": None,                  # epoch del inicio de la hora que se acumula
             "acum": self._acum_vacio(),
             "dia_local": None,
@@ -115,7 +122,12 @@ class BalanceEnergia:
             e["dia_local"], e["balance_dia_wh"] = dia, 0.0
 
         # SOC
-        if fila.get("estado_carga") == "float":
+        if (fila.get("estado_carga") == "float" and v_min >= FLOAT_V_MIN
+                and i_bat >= FLOAT_I_MIN):
+            e["float_racha"] = e.get("float_racha", 0) + 1   # estados viejos sin la clave
+        else:
+            e["float_racha"] = 0
+        if e["float_racha"] >= FLOAT_MINUTOS:
             e["soc_ah"], e["ultimo_float"] = self.capacidad_ah, t
         else:
             e["soc_ah"] = min(self.capacidad_ah, max(0.0, e["soc_ah"] + i_bat / 60))

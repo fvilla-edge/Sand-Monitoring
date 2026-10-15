@@ -409,6 +409,32 @@ ssh root@<IP_CAMPO> 'R=/root/respaldo_registro_energia_<fecha>;
 (`registro_energia.py` y `balance_energia.py` pueden quedar: el publicador
 viejo no los importa.)
 
+### 4c-bis. Arreglo del float falso (sobre `campo-2026-10-08`)
+
+El 8/10 18:38-18:41 UTC el MPPT dijo "float" descargando y el SOC quedó en
+100 % confiable (falso). `balance_energia.py` ahora solo calibra con float
+**sostenido**: 10 min seguidos con `v_bat_min >= 13,3` e `i_bat >= -0,1`.
+Un solo archivo; el estado viejo (sin `float_racha`) se carga igual. Hay que
+**resetear el SOC** en campo: el 100 % guardado es falso.
+
+```bash
+# 1. respaldo + copia (verificar md5 contra la PC)
+ssh root@<IP_CAMPO> 'R=/root/respaldo_registro_energia_$(date +%Y%m%d); mkdir -p $R &&
+  cp -p /root/panel_solar_ble/balance_energia.py /root/energia_estado.json $R/ && ls -l $R'
+scp panel_solar_ble/balance_energia.py root@<IP_CAMPO>:/root/panel_solar_ble/
+ssh root@<IP_CAMPO> 'md5sum /root/panel_solar_ble/balance_energia.py'
+# 2. parar el publicador (escribe el estado cada minuto), resetear SOC, arrancar
+ssh root@<IP_CAMPO> 'systemctl stop panel-solar-informe && python3 -c "
+import json; f=\"/root/energia_estado.json\"; e=json.load(open(f))
+e.update(soc_ah=50.0, ultimo_float=None, float_racha=0)
+json.dump(e, open(f, \"w\")); print(e)" && sync && systemctl start panel-solar-informe;
+  sleep 75; systemctl is-active panel-solar-informe; systemctl show -p NRestarts --value panel-solar-informe;
+  python3 -c "import json; e=json.load(open(\"/root/energia_estado.json\")); print(e[\"soc_ah\"], e[\"ultimo_float\"], e[\"float_racha\"])"'
+```
+Esperado: `active`, `0`, SOC ~50 Ah, `ultimo_float` `None`. En Losant, desde
+el siguiente resumen horario, `en_soc_confiable = false`. El SOC queda en
+50 % no confiable hasta el primer float sostenido.
+
 ## 5. Sistema
 
 - [x] **Watchdog de systemd 5 s → 30 s** (`RuntimeWatchdogSec=30s` en
