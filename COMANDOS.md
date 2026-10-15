@@ -107,7 +107,53 @@ en `docs/modo_evento.md`.
 
 ```bash
 make -C /root/scripts_campo/c      # compilar el nucleo C++ en la placa (una vez)
-python3 /root/scripts_campo/capturar_eventos.py --umbral 5 --destino /root/eventos
+python3 /root/scripts_campo/capturar_eventos.py --umbral 3.4 --destino /root/eventos   # a mano; en la placa lo corre modo-evento.service
+```
+
+### Mono / dual y modo del IN2 (modo evento instalado)
+
+En la placa lo maneja `modo-evento.service`; el modo sale de `config_campo.json`
+(`modo_evento.canales` y `modo_evento.in2_modo`). No editar el config a mano:
+cambiarlo con el comando de Losant o con `cambiar_canales.sh`, que escriben la clave
+de forma segura, reinician la captura, verifican que mida y, si no mide en 4 min,
+vuelven solos al modo anterior.
+
+| Modo | Qué mide | Losant (comando `canales`) | SSH |
+|---|---|---|---|
+| Mono | solo IN1, dec 32 | `{"canales": 1}` | `cambiar_canales.sh 1` |
+| Dual independiente | IN1 + IN2 (dec 64); el IN2 graba su cruda por **su** kurtosis | `{"canales": 2, "in2": "independiente"}` | `cambiar_canales.sh 2 independiente` |
+| Dual asociado | IN1 + IN2; el IN2 graba su cruda **solo cuando graba el IN1** (mismo tramo, mismo nombre en `in2/`) | `{"canales": 2, "in2": "asociado"}` | `cambiar_canales.sh 2 asociado` |
+
+- `{"canales": 2}` sin `"in2"` deja el modo del IN2 como estaba. `"in2"` con
+  `"canales": 1` se rechaza (el modo del IN2 queda guardado para el próximo dual).
+- El dual pide el bitstream del IN2. Con el bitstream viejo: independiente mide solo
+  el IN1; asociado graba la cruda del IN2 igual, sin su área/kurtosis ni su CSV.
+- Tarda ~30 s. Alrededor de 1 de cada 10 arranques la captura se cae dentro de la
+  librería del vendor (`startStreaming`) y systemd la relanza a los 60 s: el cambio
+  tarda ~1,5 min pero termina igual.
+- Detalle: `docs/plan_cambio_canales_remoto.md`, `docs/plan_in2_independiente.md`,
+  `docs/plan_in2_asociado.md`.
+
+```bash
+# en la placa (se desacopla solo: un corte de SSH no lo frena)
+bash /root/scripts_campo/cambiar_canales.sh 2 asociado
+journalctl -u cambiar-canales -f                       # seguirlo
+cat /root/logs_campo/cambio_canales_estado             # resultado (= me_cambio en Losant)
+cat /run/modo-evento/medicion                          # lo que mide ahora: canales=2 dec=64 in2=asociado
+```
+
+Resultado (`cambio_canales_estado`, en Losant `me_cambio`): `ok 2 asociado`,
+`ok 1 (ya estaba)`, `ok 2 (bitstream sin IN2: mide solo IN1)`,
+`error: modo clasico (modo-evento deshabilitado), sin cambio`,
+`error: no midio con 2 asociado (volvio a 1)`, etc. En Losant también: `me_canales`
+(lo que de verdad se mide: 1 si el dual no puede medir el IN2), `me_dec`,
+`me_in2_modo` (en dual) y `kurt_max_1min_in2` / `area_max_1min_in2` (desde el
+segundo minuto en dual con el bitstream del IN2).
+
+Modo evento ↔ modo clásico (vuelta atrás, captura a pedido como antes):
+```bash
+bash /root/scripts_campo/cambiar_modo.sh clasico   # deshabilita modo-evento, bitstream del vendor
+bash /root/scripts_campo/cambiar_modo.sh evento    # vuelve al modo evento con el modo de canales del config
 ```
 
 ## Análisis (corren en la PC)
