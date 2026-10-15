@@ -430,8 +430,14 @@ Revisado el 15/10 a las 12:16 UTC, solo lectura.
   tope), md5 ok, quedan 7; duró 743 s. Cada CSV (~3,15 MB -> ~0,96 MB con
   gzip 1) sube en 0,5-0,6 s: **la ventana se va casi entera en las pausas de
   30 s entre archivos** (23 x 30 s = 11,5 min con la Starlink prendida).
-  Captura sin reinicios. Pendiente: la de las 15:05 sube el resto. Los CSV de
-  energía no se probaron (el lab no los genera).
+  Captura sin reinicios. Los CSV de energía no se probaron (el lab no los
+  genera).
+- Pausa de 5 s en la ventana (`PAUSA_VENTANA_S`, 15/10 15:05, otra carpeta y
+  otro registro de prueba para volver a tener 24 pendientes): 24/24 md5 ok en
+  169 s (contra 743 s con 30 s). Muestras perdidas durante la subida ~27 200
+  en 3 min, contra ~48 000 en 13 min con 30 s; 0 ventanas saltadas (1 con
+  30 s). Fondo sin ventana: media 1458/min, muy irregular (minutos sueltos de
+  hasta 50 000). Una corrida de cada lado: no empeora; se queda en 5 s.
 - Tag por API REST (15/10): `comandos_losant/modo_starlink.py` (lee el Device,
   cambia solo `modo_starlink`, manda la lista entera de tags y verifica). En
   `test_SC`, ventana => permanente a las 13:33: el tag `prueba = 1` sobrevivió,
