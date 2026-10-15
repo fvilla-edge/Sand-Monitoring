@@ -45,7 +45,8 @@ gcs.registro_sd registra los que ya subieron.
 - Modo ventana (--ventana, lo corre starlink_remoto/ventana_starlink.sh,
   docs/plan_modos_starlink.md): Starlink prende solo unos minutos cada 2 h,
   asi que en ese unico intento sube hasta MAX_VENTANA CSV de ventanas (un
-  dia) y todos los de energia, con las mismas pausas y gzip 1.
+  dia) y todos los de energia, con gzip 1 y pausa corta (PAUSA_VENTANA_S):
+  con la Starlink prendida, la espera entre archivos cuesta energia.
 - Un solo proceso a la vez (LOCK_FILE): el timer de 5 min sigue existiendo
   y no se tiene que pisar con la ventana. El timer, si lo encuentra tomado,
   no hace nada; la ventana espera hasta ESPERA_LOCK_VENTANA_S.
@@ -92,9 +93,11 @@ PAUSA_ENTRE_S = 30
 # en dos corridas (~10 min).
 MAX_ENERGIA_POR_CORRIDA = 12
 PAUSA_ENERGIA_S = 2
-# Modo ventana: un dia de ventanas (~11 min con la pausa de 30 s) y todo lo
-# de energia que haya.
+# Modo ventana: un dia de ventanas y todo lo de energia que haya. Con 30 s de
+# pausa la ventana duraba ~12 min y subia 0,6 s por archivo (lab 15/10): la
+# Starlink prendida esperando. 5 s => ~2 min para 24.
 MAX_VENTANA = 24
+PAUSA_VENTANA_S = 5
 MAX_ENERGIA_VENTANA = 10 ** 6
 LOCK_FILE = "/run/lock/subir_csv_gcs.lock"
 ESPERA_LOCK_VENTANA_S = 600
@@ -280,7 +283,8 @@ def main():
         log(f"sin token (¿sin internet?): {e} — se reintenta en la proxima corrida")
         return 0
 
-    tandas = ((pendientes[:max_ventanas], base, PAUSA_ENTRE_S),
+    pausa_ventanas = PAUSA_VENTANA_S if args.ventana else PAUSA_ENTRE_S
+    tandas = ((pendientes[:max_ventanas], base, pausa_ventanas),
               (pend_energia[:max_energia], base_energia, PAUSA_ENERGIA_S))
     n_ok = n_total = 0
     cortado = False

@@ -408,6 +408,37 @@ Pruebas que dependen de la hora: adelantar el reloj, no esperar.
     simulando el estado (no forzar una actualización real).
 11. Manual `on` en ventana: se borra solo al abrir la próxima ventana.
 
+### Resultado: corrida larga en el lab (13/10 21:05 → 15/10 11:05 UTC)
+
+Modo ventana, cable sacado (relé en "off"), tag de `test_SC` = ventana.
+Revisado el 15/10 a las 12:16 UTC, solo lectura.
+
+- 20/20 ventanas a horario (hh:05:00-11 UTC, horas pares), todas
+  `fin=normal`, duración 137-147 s, internet a los 6-15 s (por la LAN del
+  lab, no por la Starlink: no sirve para la tabla de energía).
+- En cada apertura, la advertencia de feedback en "off" (esperada, por el
+  cable sacado); los 20 cierres terminan en "OK ... off".
+- `fallos_consecutivos` = 0; el reconciliador no aplicó el rescate de
+  ventana ninguna vez.
+- Sin reinicios: un solo boot desde el 13/10 17:22 UTC (la prueba 10).
+  `NRestarts` = 0 en modo-evento, resumen-modo-evento y
+  panel-solar-informe.
+- `sl_modo` = ventana republicado cada 15 min; `/run/losant_ultimo/evento.json`
+  al día.
+- Subida a GCS en ventana (15/10, GCS habilitado en el lab con prefijo
+  `pruebas/`, atraso recortado a 30 CSV): la de las 13:05 subió 24/24 (el
+  tope), md5 ok, quedan 7; duró 743 s. Cada CSV (~3,15 MB -> ~0,96 MB con
+  gzip 1) sube en 0,5-0,6 s: **la ventana se va casi entera en las pausas de
+  30 s entre archivos** (23 x 30 s = 11,5 min con la Starlink prendida).
+  Captura sin reinicios. Pendiente: la de las 15:05 sube el resto. Los CSV de
+  energía no se probaron (el lab no los genera).
+- Tag por API REST (15/10): `comandos_losant/modo_starlink.py` (lee el Device,
+  cambia solo `modo_starlink`, manda la lista entera de tags y verifica). En
+  `test_SC`, ventana => permanente a las 13:33: el tag `prueba = 1` sobrevivió,
+  con el `sl_modo` de las 13:41:40 el workflow mandó `modo` y la placa quedó en
+  permanente a las 13:41:42. De vuelta a ventana: aplicado con el `sl_modo` de
+  las 13:56:43. Retraso = hasta el próximo `sl_modo` (15 min con conexión).
+
 ## Fase 7 — Campo
 
 - Cuando el usuario lo decida, con su entrada en

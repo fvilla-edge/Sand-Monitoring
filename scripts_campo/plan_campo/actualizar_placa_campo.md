@@ -453,7 +453,12 @@ probadas en el lab; en campo falta medir la duración real de las ventanas
 - [x] Fase 5: Losant solo en vivo (último resumen en `/run/losant_ultimo`).
 - [x] Rescate de ventana (6 h sin ventanas => "on"). Al pasar a ventana por
   primera vez queda prendida hasta la primera ventana (hasta 2 h): normal.
-- [ ] Noche de prueba en el lab en modo ventana (13→14/10) revisada.
+- [x] Corrida larga en el lab en modo ventana (13/10 21:05 → 15/10 11:05 UTC):
+  20/20 ventanas OK, sin rescate ni reinicios (ver plan, Fase 6). La subida
+  real a GCS en la ventana no se probó (GCS deshabilitado en el lab).
+- [ ] `subir_csv_gcs.py` con `PAUSA_VENTANA_S = 5` (15/10): en la ventana la
+  pausa entre CSV baja de 30 s a 5 s (con 30 s la ventana de 24 duraba ~12 min).
+  Va en el paquete de modos-starlink: rearmar el paquete con este cambio.
 - [ ] **Después de aplicar:** borrar la cola vieja (ya nadie la manda),
   dejando el contador del día:
   ```bash

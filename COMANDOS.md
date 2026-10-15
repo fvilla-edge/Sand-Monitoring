@@ -238,6 +238,18 @@ si difieren. La placa lo guarda y aplica el objetivo a los 10 s
 `journalctl -u panel-solar-informe`). En modo ventana, un cambio de tag llega recién
 en la próxima ventana (hasta 2 h).
 
+**Cambiar el tag desde la PC** (API REST, sin entrar a Losant), desde la raíz del repo:
+```bash
+python3 comandos_losant/modo_starlink.py <DEVICE_ID> --ver              # modo actual y si está conectada
+python3 comandos_losant/modo_starlink.py <DEVICE_ID> permanente --seco  # qué mandaría, sin cambiar nada
+python3 comandos_losant/modo_starlink.py <DEVICE_ID> permanente         # o ventana
+```
+Cambia solo `modo_starlink` (los demás tags del Device quedan) y verifica. La placa lo
+aplica con su próximo `sl_modo` (hasta 15 min conectada; en ventana, la próxima
+ventana). Token: `losant_api_token.txt` en la raíz del repo, el txt que descarga Losant
+(Application Token con scope `device.get` + `device.patch`), fuera de git, nunca a la
+placa. `test_SC` = `6a9713dc3a600bd2d61f13de`.
+
 **Rescate de ventana:** si en `starlink.rescate_ventana_horas` (6 h) no se abrió
 ninguna ventana (`/root/starlink_remoto/ultima_ventana`), la placa prende Starlink
 y la deja prendida hasta que una ventana vuelva a abrir (aviso en
