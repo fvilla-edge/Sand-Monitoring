@@ -1,0 +1,15 @@
+[Unit]
+Description=Abre una ventana de Starlink cada 2 h (horas pares a los :05) y al arrancar (modo ventana)
+
+[Timer]
+# Cada 2 h alineado al reloj (docs/plan_modos_starlink.md). OnCalendar es
+# estatico: si cambian starlink.ventana_cada_h/ventana_minuto en el config,
+# hay que cambiarlo aca tambien. Sin Persistent: una ventana perdida no se
+# recupera, la siguiente sube lo pendiente.
+OnCalendar=*-*-* 00/2:05:00 America/Argentina/Buenos_Aires
+# Ventana al arrancar (decision 13): la placa avisa que volvio sin esperar 2 h
+OnBootSec=3min
+Unit=starlink-ventana.service
+
+[Install]
+WantedBy=timers.target

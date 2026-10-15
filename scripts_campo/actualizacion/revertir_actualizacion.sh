@@ -20,10 +20,10 @@ log "detengo modo evento, anotador y cartero"
 systemctl stop modo-evento resumen-modo-evento panel-solar-informe 2>/dev/null
 pkill -x streaming-serve 2>/dev/null
 
-# units que no existian antes: deshabilitarlas mientras su archivo existe
-# (si no, queda el enlace colgando en *.wants)
+# units que no existian antes: pararlas y deshabilitarlas mientras su archivo
+# existe (si no, queda el enlace colgando en *.wants, o un timer corriendo)
 while read -r u estado; do
-    [ "$estado" = "not-found" ] && systemctl disable "$u" 2>/dev/null
+    [ "$estado" = "not-found" ] && systemctl disable --now "$u" 2>/dev/null
 done < "$RESP/units_habilitadas.txt"
 
 log "restauro $(wc -l < "$RESP/existentes.txt") archivos"
@@ -38,7 +38,12 @@ rmdir /opt/stream_app 2>/dev/null   # solo si quedo vacia (la creo la actualizac
 systemctl daemon-reload
 while read -r u estado; do
     case "$estado" in
-    enabled) systemctl enable "$u" 2>/dev/null || { log "ERROR habilitando $u"; error=1; } ;;
+    # un timer habilitado ademas tiene que quedar corriendo (p.ej. el horario
+    # viejo de Starlink, que la actualizacion deshabilito con --now)
+    enabled) case "$u" in
+             *.timer) systemctl enable --now "$u" 2>/dev/null || { log "ERROR habilitando $u"; error=1; } ;;
+             *) systemctl enable "$u" 2>/dev/null || { log "ERROR habilitando $u"; error=1; } ;;
+             esac ;;
     disabled) systemctl disable "$u" 2>/dev/null ;;
     esac
     # not-found: la unit no existia antes, ya se borro con los archivos nuevos

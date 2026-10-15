@@ -1,7 +1,7 @@
 # resumen-modo-evento.service — "anotador" del reporte a Losant del modo
-# evento (scripts_campo/resumen_modo_evento.py): un resumen por minuto en
-# /mnt/usb/losant_pendientes/, haya o no internet. Lo manda a Losant el
-# "cartero" dentro de panel-solar-informe.service (publicar_losant.py).
+# evento (scripts_campo/resumen_modo_evento.py): cada minuto pisa el ultimo
+# resumen en /run/losant_ultimo/evento.json. Lo manda a Losant, solo en vivo,
+# panel-solar-informe.service (publicar_losant.py).
 #
 # Independiente de modo-evento.service a proposito: si la captura se cae,
 # el resumen sigue saliendo (con me_activo=false), que es justo lo que hay
@@ -14,7 +14,7 @@
 #   cp /root/scripts_campo/systemd/resumen-modo-evento.service /etc/systemd/system/
 #   systemctl daemon-reload && systemctl enable --now resumen-modo-evento
 [Unit]
-Description=Resumen por minuto del modo evento para Losant (anotador, buffer en /mnt/usb)
+Description=Resumen por minuto del modo evento para Losant (anotador, solo el ultimo en /run)
 StartLimitIntervalSec=0
 
 [Service]

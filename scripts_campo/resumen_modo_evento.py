@@ -3,13 +3,13 @@
 resumen_modo_evento.py — "anotador" del reporte a Losant del modo evento.
 
 Cada minuto resume las filas nuevas del CSV de ventanas que escribe
-capturar_eventos (docs/modo_evento.md) y deja el resumen como un archivo
-chico en /mnt/usb/losant_pendientes/<t_ms>.json (sin disco: en
-/run/losant_pendientes, RAM), haya o no internet. El
-"cartero" (panel_solar_ble/publicar_losant.py, la unica conexion MQTT al
-Device) los manda a Losant con su hora original cuando hay conexion y los
-borra. Asi el buffer nocturno (sin Starlink) no es un caso aparte: de
-noche simplemente se acumulan archivos.
+capturar_eventos (docs/modo_evento.md) y deja SOLO el ultimo resumen en
+ULTIMO (RAM), pisando el anterior. panel_solar_ble/publicar_losant.py (la
+unica conexion MQTT al Device) lo manda a Losant con su hora original
+mientras hay conexion. Sin conexion no se guarda nada mas: Losant es solo en
+vivo y el detalle completo va a GCS en los CSV horarios
+(docs/plan_modos_starlink.md, Fase 5). Antes era una cola por minuto en
+/mnt/usb/losant_pendientes.
 
 No sabe nada de MQTT ni del ESP32, y no toca capturar_eventos: solo lee el
 CSV y el log de reinicios del supervisor.
@@ -22,7 +22,7 @@ con perdidas de muestras):
     el nombre del CSV sale de la hora UTC.
 
 Uso:
-    python3 resumen_modo_evento.py [--pendientes /mnt/usb/losant_pendientes]
+    python3 resumen_modo_evento.py [--contadores /mnt/usb/losant_pendientes]
 """
 import argparse
 import ctypes
@@ -40,13 +40,9 @@ import cfg  # noqa: E402 (import tardio, necesita el sys.path de arriba)
 
 SERVICIO = "modo-evento"
 INTERVALO_S = 60
-# Sin disco los resumenes van a esta carpeta en RAM (tmpfs, nunca a la SD):
-# el cartero la lee igual que la del disco, asi Losant se entera de que la
-# placa mide sin disco o no mide. Se pierde con un reinicio.
-PENDIENTES_SIN_DISCO = "/run/losant_pendientes"
-# Si ni eso se puede escribir, quedan en memoria del proceso: 1440 = un dia
-# de minutos. Pasado eso se descartan los mas viejos.
-MAX_EN_RAM = 1440
+# Ultimo resumen (tmpfs: ni USB ni SD, se pierde con un reinicio). Lo lee
+# publicar_losant.py (ULTIMO_DIR alla).
+ULTIMO = "/run/losant_ultimo/evento.json"
 # Destino real de la corrida en curso (supervisor_eventos.sh arrancar):
 # "<carpeta>" o "<carpeta> sin_disco"
 DESTINO_ACTUAL = "/run/modo-evento/destino"
@@ -396,44 +392,34 @@ def resumir(filas, lector, contadores, activo, umbral, ahora, sin_disco=False):
     return {"time": t_ms, "data": data}
 
 
-def guardar(pendientes_dir, en_ram, resumen):
-    """Deja el resumen en el USB (archivo atomico por minuto). Sin disco lo
-    deja en PENDIENTES_SIN_DISCO (RAM): nunca escribe en la SD."""
-    en_ram.append(resumen)
-    del en_ram[:-MAX_EN_RAM]
-    if not disco_montado():
-        pendientes_dir = PENDIENTES_SIN_DISCO
+def guardar(resumen):
+    """Pisa ULTIMO con el resumen (escritura atomica)."""
     try:
-        os.makedirs(pendientes_dir, exist_ok=True)
-        while en_ram:
-            r = en_ram[0]
-            final = os.path.join(pendientes_dir, f"{r['time']}.json")
-            tmp = final + ".tmp"
-            with open(tmp, "w") as f:
-                json.dump(r, f, separators=(",", ":"))
-            os.replace(tmp, final)
-            en_ram.pop(0)
+        os.makedirs(os.path.dirname(ULTIMO), exist_ok=True)
+        tmp = ULTIMO + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(resumen, f, separators=(",", ":"))
+        os.replace(tmp, ULTIMO)
     except OSError as exc:
-        log(f"no se pudo guardar en {pendientes_dir} ({exc}), queda en RAM ({len(en_ram)})")
+        log(f"no se pudo guardar {ULTIMO} ({exc})")
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--pendientes", default="/mnt/usb/losant_pendientes",
-                    help="carpeta de resumenes a mandar (default /mnt/usb/losant_pendientes)")
+    ap.add_argument("--contadores", default="/mnt/usb/losant_pendientes",
+                    help="carpeta del contador de eventos del dia (.contadores.json, persiste reinicios)")
     args = ap.parse_args()
 
     lector = LectorCSV()
-    contadores = Contadores(os.path.join(args.pendientes, ".contadores.json"))
-    en_ram = []
-    log(f"Anotador del modo evento: un resumen cada {INTERVALO_S}s en {args.pendientes}")
+    contadores = Contadores(os.path.join(args.contadores, ".contadores.json"))
+    log(f"Anotador del modo evento: un resumen cada {INTERVALO_S}s en {ULTIMO} (solo el ultimo)")
     proximo = time.monotonic()
     while True:
         ahora = datetime.now(timezone.utc)
         activo, destino, umbral, sin_disco = estado_servicio()
         filas = lector.filas_nuevas(destino, ahora) if destino else []
         resumen = resumir(filas, lector, contadores, activo, umbral, ahora, sin_disco)
-        guardar(args.pendientes, en_ram, resumen)
+        guardar(resumen)
         log(f"resumen: {resumen['data']}")
         # monotonic: un salto de reloj por NTP (sin RTC) no adelanta ni frena el ciclo
         proximo += INTERVALO_S

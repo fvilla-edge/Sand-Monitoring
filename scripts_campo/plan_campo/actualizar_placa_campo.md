@@ -435,6 +435,81 @@ Esperado: `active`, `0`, SOC ~50 Ah, `ultimo_float` `None`. En Losant, desde
 el siguiente resumen horario, `en_soc_confiable = false`. El SOC queda en
 50 % no confiable hasta el primer float sostenido.
 
+## 4d. Comando de Losant para apagar Starlink (rama `comando-starlink`, 2026-10-08)
+
+- [ ] Comando `starlink` con payload `{"accion": "off"}` = `apagar-starlink`
+  (a los 10 s, unidad `apagar-starlink-losant`); avisa antes con el atributo
+  `starlink_comando` = `"off"`. Solo "off": apagada, Losant ya no llega.
+  Vuelve sola al día siguiente en `hora_on` (ver COMANDOS.md). Probado en el
+  lab 8/10 desde `test_SC` (off ejecutado, `{"accion":"on"}` ignorado).
+
+Instalación (solo `publicar_losant.py`, desde un commit que ya tenga
+registro-energia; md5 = el de la rama):
+1. Crear en el Device de campo el atributo **`starlink_comando`** (String).
+2. Respaldo + copia + restart:
+```bash
+ssh root@<IP_CAMPO> 'mkdir -p /root/respaldo_comando_starlink_<fecha> &&
+  cp -p /root/panel_solar_ble/publicar_losant.py /root/respaldo_comando_starlink_<fecha>/'
+scp panel_solar_ble/publicar_losant.py root@<IP_CAMPO>:/root/panel_solar_ble/
+ssh root@<IP_CAMPO> 'sync; md5sum /root/panel_solar_ble/publicar_losant.py;
+  systemctl restart panel-solar-informe; sleep 10; systemctl is-active panel-solar-informe'
+```
+3. NO probar el "off" en campo dentro del horario salvo que se quiera dejar
+   el sitio sin Starlink hasta el día siguiente. Para verificar sin cortar:
+   mandar `{"accion": "on"}` y ver `Comando 'starlink' ignorado` en
+   `journalctl -u panel-solar-informe`.
+
+Revertir: `cp -p` del respaldo a `/root/panel_solar_ble/` + restart
+`panel-solar-informe`.
+
+Con el modo ventana (4e) el "off" ya no vuelve en `hora_on`: en ventana
+prende en la próxima ventana (hasta 2 h), en permanente recién con el rescate
+de 24 h.
+
+## 4e. Modos de Starlink ventana / permanente (rama `modos-starlink`, 2026-10-13)
+
+Plan y resultados: `docs/plan_modos_starlink.md`. Fases 0-5 hechas y
+probadas en el lab; en campo falta medir la duración real de las ventanas
+(Fase 6, punto 1) y que no haya pérdidas nuevas por las conmutaciones.
+
+- [x] Fases 1-3a probadas en el lab 13/10 (11/11, ver plan).
+- [x] Fase 3b: ensayo del paquete en el lab 13/10 (sin permanente aborta,
+  falla forzada revierte, aplicación OK).
+- [x] Fase 4: comando `modo` y `sl_modo` con el workflow de `test_SC` 13/10.
+- [x] Fase 5: Losant solo en vivo (último resumen en `/run/losant_ultimo`).
+- [x] Rescate de ventana (6 h sin ventanas => "on"). Al pasar a ventana por
+  primera vez queda prendida hasta la primera ventana (hasta 2 h): normal.
+- [x] Corrida larga en el lab en modo ventana (13/10 21:05 → 15/10 11:05 UTC):
+  20/20 ventanas OK, sin rescate ni reinicios (ver plan, Fase 6). La subida
+  real a GCS en la ventana no se probó (GCS deshabilitado en el lab).
+- [ ] `subir_csv_gcs.py` con `PAUSA_VENTANA_S = 5` (15/10): en la ventana la
+  pausa entre CSV baja de 30 s a 5 s (con 30 s la ventana de 24 duraba ~12 min).
+  Va en el paquete de modos-starlink: rearmar el paquete con este cambio.
+- [ ] **Después de aplicar:** borrar la cola vieja (ya nadie la manda),
+  dejando el contador del día:
+  ```bash
+  ssh root@<IP_CAMPO> "cd /mnt/usb/losant_pendientes && ls | wc -l && find . -maxdepth 1 -name '[0-9]*.json' -delete && rm -rf .malos && ls -A"
+  ```
+  (tiene que quedar solo `.contadores.json`).
+- [ ] Va **por paquete** (cambian units: entra `starlink-ventana.timer`, se
+  deshabilitan `starlink-rele-on/off.timer`). Incluye 4d.
+- [ ] **Antes de aplicar**, con SSH por Starlink: poner el modo permanente.
+  La placa de campo todavía no tiene `modo_operacion.sh`:
+  ```bash
+  ssh root@<IP_CAMPO> "printf 'permanente\n' > /root/starlink_remoto/modo_operacion && sync && cat /root/starlink_remoto/modo_operacion"
+  ```
+  `aplicar_actualizacion.sh` aborta si no está en permanente (también lo
+  muestra `SOLO_CHEQUEAR=1`).
+- [ ] **Después de aplicar**, a mano (el paquete no pisa valores existentes
+  del config): `gcs.dias_atras` 7 → 30 en
+  `/root/scripts_campo_comun/config_campo.json`.
+- [ ] En Losant, Device de campo: atributo `sl_modo` (String), tag
+  `modo_starlink` = `permanente` al principio, y el workflow de dos
+  Conditionals (copia del de `test_SC`, con el Device de campo).
+- [ ] Verificar: `systemctl list-timers 'starlink*'` (ventana cada 2 h a los
+  :05 hora local, sin `rele-on/off`), `modo_operacion.sh` = permanente.
+- [ ] Pasar a ventana desde el tag de Losant cuando se decida.
+
 ## 5. Sistema
 
 - [x] **Watchdog de systemd 5 s → 30 s** (`RuntimeWatchdogSec=30s` en

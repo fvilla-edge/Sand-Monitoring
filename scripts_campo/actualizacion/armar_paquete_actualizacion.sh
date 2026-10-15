@@ -88,7 +88,7 @@ chmod 0755 "$A/root/scripts_campo/c/capturar_eventos"
 cp -p "$REPO/scripts_campo/actualizacion/"{aplicar_actualizacion.sh,revertir_actualizacion.sh,fusionar_config.py} "$PKG/"
 
 # Que se habilita y que se reinicia al aplicar
-printf '%s\n' modo-evento.service resumen-modo-evento.service > "$PKG/habilitar.txt"
+printf '%s\n' modo-evento.service resumen-modo-evento.service starlink-ventana.timer > "$PKG/habilitar.txt"
 
 # Manifiesto: rutas relativas a archivos/ (= rutas absolutas en la placa sin la / inicial)
 (cd "$A" && find . -type f -printf '%P\0' | sort -z | xargs -0 sha256sum) > "$PKG/MANIFIESTO"

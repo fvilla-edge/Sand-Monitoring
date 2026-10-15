@@ -24,10 +24,16 @@ Va al mismo Device de Losant que el panel solar (a propósito, ver
 servicio separado, no se puede tener dos conexiones MQTT distintas con
 el mismo Device ID al mismo tiempo.
 
-Tambien es el "cartero" del reporte del modo evento: manda a Losant, con
-su hora original, los resumenes por minuto que deja
-scripts_campo/resumen_modo_evento.py en /mnt/usb/losant_pendientes/ (de
-noche, sin Starlink, se acumulan y salen al reconectar). El ESP32 es
+Modo de Starlink (docs/plan_modos_starlink.md): publica `sl_modo`
+("ventana" | "permanente") al conectar, cada informe_intervalo_min y al
+cambiarlo; el workflow de Losant lo compara con el tag `modo_starlink` del
+Device y, si difieren, manda el comando `modo` {"modo": ...}.
+
+Tambien manda, con su hora original, el ultimo resumen del modo evento
+(scripts_campo/resumen_modo_evento.py, cada minuto) y el ultimo resumen
+horario de energia, que quedan en ULTIMO_DIR (RAM): solo en vivo, sin cola
+(docs/plan_modos_starlink.md, Fase 5; el detalle completo va a GCS). Al
+conectar sale el ultimo de cada uno aunque sea de hace horas. El ESP32 es
 opcional: sin el, todo lo demas sigue funcionando.
 
 Uso:
@@ -63,7 +69,7 @@ from config import DEVICES
 from losant_config import ACCESS_KEY, ACCESS_SECRET, DEVICE_ID
 from puerto import resolver_puerto
 from balance_energia import BalanceEnergia, horas_starlink
-from registro_energia import RegistroEnergia, disco_montado, lectura_valida
+from registro_energia import RegistroEnergia, lectura_valida
 from victron_scanner import SerialDecoder
 
 BAUDRATE = 115200
@@ -118,6 +124,26 @@ SCRIPT_REPETIR_CAPTURA = "/root/scripts_campo_comun/repetir_captura.sh"
 SCRIPT_RELANZAR_CAPTURA = "/root/scripts_campo_comun/relanzar_captura.sh"
 SCRIPT_CAPTURAR_STREAM = "/root/scripts_campo/capturar_stream.py"
 
+# Comando "starlink" recibido por MQTT: solo {"accion": "off"}, lo mismo que
+# el alias "apagar-starlink" por SSH. No hay "on": en campo el unico enlace es
+# la propia Starlink, asi que una vez apagada Losant ya no llega a la placa;
+# vuelve sola en la proxima ventana (modo ventana: el manual "off" se
+# autolimpia al cerrarla) o por el rescate de starlink.rescate_manual_horas
+# (modo permanente).
+SCRIPT_STARLINK_MANUAL = "/root/starlink_remoto/starlink_manual.sh"
+# Segundos que espera la unidad antes de cortar, para que el aviso
+# "starlink_comando" alcance a salir por MQTT antes de perder el enlace.
+ESPERA_APAGADO_S = 10
+
+# Modo de Starlink (ventana | permanente): modo_operacion.sh lo guarda/lee,
+# aplicar_objetivo.sh mueve el rele segun el modo. Tras un comando "modo" el
+# objetivo se aplica a los ESPERA_APAGADO_S, por la misma razon que el "off":
+# pasar a ventana fuera de una ventana apaga Starlink, y antes tiene que
+# salir sl_modo.
+SCRIPT_MODO_OPERACION = "/root/starlink_remoto/modo_operacion.sh"
+SCRIPT_APLICAR_OBJETIVO = "/root/starlink_remoto/aplicar_objetivo.sh"
+MODOS_STARLINK = ("ventana", "permanente")
+
 # USB donde caen las capturas (mismo default que usa capturar_stream.py para
 # --directorio, ver config_campo.json: captura_defaults.directorio). Se
 # reporta su espacio libre a Losant porque capturar_stream.py ya corta una
@@ -126,19 +152,13 @@ SCRIPT_CAPTURAR_STREAM = "/root/scripts_campo/capturar_stream.py"
 # remoto antes de que pase.
 DIRECTORIO_CAPTURA = cfg.obtener("captura_defaults.directorio")
 
-# Resumenes por minuto del modo evento, que deja el "anotador"
-# (scripts_campo/resumen_modo_evento.py) haya o no internet: este proceso es
-# el "cartero" que los manda con su hora original y los borra. De noche (sin
-# Starlink) se acumulan y salen al reconectar.
-PENDIENTES_DIR = "/mnt/usb/losant_pendientes"
-# sin disco el anotador deja los resumenes aca (RAM); se mandan igual
-PENDIENTES_DIRS = (PENDIENTES_DIR, "/run/losant_pendientes")
-# Losant limita a 30 mensajes cada 15s por Device: 1 por segundo deja margen
-# para el resto de los informes. Una noche (~900 resumenes) se pone al dia en
-# ~15 min.
-PENDIENTES_INTERVALO_S = 1.0
-# Cada cuanto se vuelve a mirar la carpeta cuando la cola en memoria esta vacia.
-PENDIENTES_RELISTAR_S = 10.0
+# Ultimos resumenes (tmpfs), cada uno pisa al anterior: evento.json lo deja el
+# anotador (scripts_campo/resumen_modo_evento.py) cada minuto, energia.json el
+# balance (balance_energia.py) cada hora. Se mandan una vez cada uno, con su
+# hora original, mientras hay conexion. Sin cola: lo que no sale, se pierde
+# (en Losant; el detalle esta en GCS).
+ULTIMO_DIR = "/run/losant_ultimo"
+ULTIMOS = ("evento.json", "energia.json")
 SERVICIO_MODO_EVENTO = "modo-evento"
 
 # Registro local de energia (registro_energia.py, docs/plan_perfiles_energia.md):
@@ -190,15 +210,37 @@ DEFAULTS_CAPTURA = {
     "decimacion": 32,
 }
 
+def _leer_modo_starlink():
+    """Modo vigente segun modo_operacion.sh, o None si no se pudo leer."""
+    try:
+        r = subprocess.run([SCRIPT_MODO_OPERACION], capture_output=True, text=True, timeout=15)
+        modo = r.stdout.strip()
+        return modo if modo in MODOS_STARLINK else None
+    except Exception as exc:
+        print(f"Modo Starlink: no se pudo leer ({exc})", file=sys.stderr)
+        return None
+
+
+def _horas_sl(modo):
+    """Horas por dia con Starlink para el balance de energia (autonomias)."""
+    try:
+        defecto = cfg.obtener("starlink.modo_defecto")
+        cada_h = cfg.obtener("starlink.ventana_cada_h")
+        duracion = cfg.obtener("starlink.ventana_duracion_estimada_min")
+    except KeyError:
+        defecto, cada_h, duracion = "ventana", 2, 10
+    return horas_starlink(modo or defecto, cada_h, duracion)
+
+
 _decoder = SerialDecoder(DEVICES)
 _balance = BalanceEnergia(
     _energia("estado_file"),
-    lambda: PENDIENTES_DIRS[0] if disco_montado() else PENDIENTES_DIRS[1],
+    lambda: ULTIMO_DIR,
     capacidad_ah=_energia("capacidad_ah"),
     capacidad_util_wh=_energia("capacidad_util_wh"),
     p_base_w=_energia("p_base_w_inicial"),
     p_starlink_w=_energia("p_starlink_w_inicial"),
-    horas_sl=horas_starlink(cfg.obtener("starlink.hora_on"), cfg.obtener("starlink.hora_off")),
+    horas_sl=_horas_sl(_leer_modo_starlink()),
 )
 _registro = RegistroEnergia(DIR_ENERGIA_USB, DIR_ENERGIA_SD, STATE_FILE_STARLINK,
                             al_escribir=_balance.minuto)
@@ -210,14 +252,13 @@ _proceso_captura = None   # Popen de la captura "capturar" en curso, o None
 _estado_equipo = "standby"  # ultimo valor de "device_state" confirmado publicado a Losant
 _ultimo_envio_estado = 0.0  # time.monotonic() del ultimo publish exitoso (cambio o refresco periodico)
 _ultimo_envio_disco = 0.0   # time.monotonic() del ultimo publish exitoso de espacio libre en el USB
-_cola_pendientes = []       # (carpeta, nombre) en PENDIENTES_DIRS por mandar, del mas viejo al mas nuevo
-_ultimo_listado = 0.0       # time.monotonic() del ultimo listado de PENDIENTES_DIRS
-_ultimo_pendiente = 0.0     # time.monotonic() del ultimo resumen mandado
+_ultimos_enviados = {}      # nombre en ULTIMOS -> (mtime_ns, "time") del ultimo mandado
 _modo_evento_cache = (0.0, False)  # (time.monotonic() del chequeo, activo)
 _esp32_avisado = False      # ya se aviso que no hay ESP32 (se vuelve a avisar si aparece y se pierde)
 _ultima_valida = time.monotonic()  # ultima lectura valida (arranque = cuenta desde ahi)
 _sin_lecturas_avisado = False      # ya se aviso la racha actual sin lecturas validas
 _ultimo_envio_lecturas = 0.0       # time.monotonic() del ultimo publish de en_sin_lecturas_min
+_ultimo_envio_sl_modo = 0.0        # time.monotonic() del ultimo publish de sl_modo
 
 
 def _crear_dispositivo():
@@ -322,6 +363,39 @@ def _capturar(payload):
     _proceso_captura = subprocess.Popen(argv)
 
 
+def _apagar_starlink(dispositivo, payload):
+    accion = payload.get("accion") if isinstance(payload, dict) else None
+    if not isinstance(accion, str) or accion.strip().lower() != "off":
+        print(f"Comando 'starlink' ignorado: payload invalido {payload!r} "
+              '(se espera {"accion": "off"})')
+        return
+    # Aviso antes de cortar: despues del corte es lo unico que va a quedar en
+    # Losant (la placa se desconecta en cuanto el rele baja).
+    if not _publicar_estado_con_hora(dispositivo, {"starlink_comando": "off"},
+                                     int(time.time() * 1000)):
+        print("Comando 'starlink': no salio el aviso a Losant, se apaga igual")
+    # Unidad transitoria (no hijo de este proceso): un restart de
+    # panel-solar-informe en el medio no corta el apagado a la mitad. Si ya
+    # hay uno en curso, systemd-run rechaza el segundo por el nombre de unidad.
+    argv = [
+        "systemd-run", "--unit=apagar-starlink-losant", "--collect", "--quiet",
+        "bash", "-c",
+        f"sleep {ESPERA_APAGADO_S}; exec {SCRIPT_STARLINK_MANUAL} off",
+    ]
+    print(f"Apagando Starlink por comando de Losant en {ESPERA_APAGADO_S} s: {argv}")
+    # systemd-run vuelve enseguida (la espera corre dentro de la unidad);
+    # timeout por las dudas, para no colgar el reporte
+    try:
+        r = subprocess.run(argv, capture_output=True, text=True, timeout=30)
+        salida = (r.stdout + r.stderr).strip()
+        if r.returncode != 0:
+            print(f"Comando 'starlink': systemd-run fallo (rc={r.returncode}) {salida}")
+        elif salida:
+            print(salida)
+    except Exception as exc:
+        print(f"Comando 'starlink': no se pudo lanzar el apagado ({exc})")
+
+
 def _hay_captura_externa():
     """True si hay un capturar_stream.py corriendo que este servicio no lanzo
     el mismo (ej. relanzado a mano por SSH, o via repetir_captura.sh) —
@@ -353,6 +427,64 @@ def _modo_evento_activo(forzar=False):
         activo = False
     _modo_evento_cache = (ahora, activo)
     return activo
+
+
+def _publicar_sl_modo(dispositivo):
+    """Publica sl_modo solo (sin otros atributos: lo que mira el workflow) y
+    actualiza las horas de Starlink del balance de energia."""
+    global _ultimo_envio_sl_modo
+    modo = _leer_modo_starlink()
+    if modo is None:
+        return
+    _balance.horas_sl = _horas_sl(modo)
+    try:
+        dispositivo.send_state({"sl_modo": modo})
+        _ultimo_envio_sl_modo = time.monotonic()
+        print(f"Modo Starlink publicado: {modo}")
+    except Exception as exc:
+        print(f"Modo Starlink: no se pudo publicar ({exc})", file=sys.stderr)
+
+
+def _revisar_sl_modo(dispositivo):
+    # Cada vuelta del loop (~1s): re-publica cada INTERVALO_INFORME_S mientras
+    # siga conectado (un cambio de tag con la placa en permanente se aplica
+    # recien con la proxima publicacion). Al conectar lo publica _al_conectar.
+    if dispositivo.is_connected() and time.monotonic() - _ultimo_envio_sl_modo >= INTERVALO_INFORME_S:
+        _publicar_sl_modo(dispositivo)
+
+
+def _cambiar_modo_starlink(dispositivo, payload):
+    modo = payload.get("modo") if isinstance(payload, dict) else None
+    if modo not in MODOS_STARLINK:
+        print(f"Comando 'modo' ignorado: payload invalido {payload!r} "
+              '(se espera {"modo": "ventana"} o {"modo": "permanente"})')
+        return
+    try:
+        r = subprocess.run([SCRIPT_MODO_OPERACION, modo], capture_output=True, text=True, timeout=15)
+    except Exception as exc:
+        print(f"Comando 'modo': no se pudo guardar el modo ({exc})")
+        return
+    if r.returncode != 0:
+        print(f"Comando 'modo': modo_operacion.sh fallo (rc={r.returncode}) {(r.stdout + r.stderr).strip()}")
+        return
+    print(f"Modo Starlink cambiado a '{modo}' por comando de Losant")
+    _publicar_sl_modo(dispositivo)
+    # Unidad transitoria, igual que el "off": sobrevive a un restart de este
+    # proceso y no se apilan dos (systemd-run rechaza el nombre repetido).
+    argv = [
+        "systemd-run", "--unit=modo-starlink-losant", "--collect", "--quiet",
+        "bash", "-c",
+        f"sleep {ESPERA_APAGADO_S}; exec {SCRIPT_APLICAR_OBJETIVO}",
+    ]
+    try:
+        r = subprocess.run(argv, capture_output=True, text=True, timeout=30)
+        salida = (r.stdout + r.stderr).strip()
+        if r.returncode != 0:
+            print(f"Comando 'modo': systemd-run fallo (rc={r.returncode}) {salida}")
+        elif salida:
+            print(salida)
+    except Exception as exc:
+        print(f"Comando 'modo': no se pudo aplicar el objetivo ({exc})")
 
 
 def _revisar_estado_captura(dispositivo):
@@ -429,66 +561,42 @@ def _publicar_estado_con_hora(dispositivo, data, tiempo_ms):
     return info.rc == mqtt.MQTT_ERR_SUCCESS
 
 
-def _enviar_pendientes(dispositivo):
-    # Se llama en cada vuelta del loop principal (~1s). Manda de a un resumen
-    # por PENDIENTES_INTERVALO_S, del mas viejo al mas nuevo, con su hora
-    # original (Losant lo ubica en el minuto en que se midio, no en el que
-    # llego). QoS 0 (decision del usuario, 2026-09-25): se borra el archivo
-    # cuando el publish da rc OK, o sea cuando el mensaje salio de la
-    # placa — no hay confirmacion de que llego. Un resumen ilegible se aparta
-    # a .malos/ para no trabar la cola.
-    global _cola_pendientes, _ultimo_listado, _ultimo_pendiente
+def _enviar_ultimos(dispositivo):
+    # Cada vuelta del loop (~1s): un stat por archivo (tmpfs, barato); solo se
+    # lee y se manda si cambio y su "time" no es el ultimo que ya salio. QoS 0
+    # como antes: se da por mandado cuando el publish da rc OK. Un archivo
+    # ilegible se saltea (el proximo resumen lo pisa).
     if not dispositivo.is_connected():
         return
-    ahora = time.monotonic()
-    if ahora - _ultimo_pendiente < PENDIENTES_INTERVALO_S:
-        return
-    if not _cola_pendientes:
-        if ahora - _ultimo_listado < PENDIENTES_RELISTAR_S:
-            return
-        _ultimo_listado = ahora
-        cola = []
-        for carpeta in PENDIENTES_DIRS:
-            try:
-                cola += [(carpeta, n) for n in os.listdir(carpeta) if n.endswith(".json") and n[0].isdigit()]
-            except OSError:
-                pass   # sin USB o sin carpeta todavia
-        _cola_pendientes = sorted(cola, key=lambda c: int(c[1].split(".")[0]))
-        if not _cola_pendientes:
-            return
-    carpeta, nombre = _cola_pendientes[0]
-    ruta = os.path.join(carpeta, nombre)
-    try:
-        with open(ruta) as f:
-            resumen = json.load(f)
-        tiempo, data = int(resumen["time"]), resumen["data"]
-    except FileNotFoundError:
-        _cola_pendientes.pop(0)
-        return
-    except (OSError, ValueError, KeyError, TypeError) as exc:
-        print(f"Pendiente ilegible {nombre} ({exc}), se aparta a .malos/", file=sys.stderr)
+    for nombre in ULTIMOS:
+        ruta = os.path.join(ULTIMO_DIR, nombre)
         try:
-            os.makedirs(os.path.join(carpeta, ".malos"), exist_ok=True)
-            os.replace(ruta, os.path.join(carpeta, ".malos", nombre))
+            mtime = os.stat(ruta).st_mtime_ns
         except OSError:
-            pass
-        _cola_pendientes.pop(0)
-        return
-    _ultimo_pendiente = ahora
-    try:
-        enviado = _publicar_estado_con_hora(dispositivo, data, tiempo)
-    except Exception as exc:
-        print(f"Pendiente {nombre}: no se pudo publicar ({exc})", file=sys.stderr)
-        return
-    if not enviado:
-        return   # sin conexion en el medio: queda en la cola, se reintenta
-    try:
-        os.remove(ruta)
-    except OSError:
-        pass
-    _cola_pendientes.pop(0)
-    if not _cola_pendientes:
-        print(f"Resumenes del modo evento al dia (ultimo {nombre})")
+            continue   # todavia no hay
+        anterior = _ultimos_enviados.get(nombre)
+        if anterior and anterior[0] == mtime:
+            continue
+        try:
+            with open(ruta) as f:
+                resumen = json.load(f)
+            tiempo, data = int(resumen["time"]), resumen["data"]
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            print(f"Ultimo {nombre} ilegible ({exc}), se saltea", file=sys.stderr)
+            _ultimos_enviados[nombre] = (mtime, anterior[1] if anterior else None)
+            continue
+        if anterior and anterior[1] == tiempo:
+            _ultimos_enviados[nombre] = (mtime, tiempo)
+            continue
+        try:
+            enviado = _publicar_estado_con_hora(dispositivo, data, tiempo)
+        except Exception as exc:
+            print(f"Ultimo {nombre}: no se pudo publicar ({exc})", file=sys.stderr)
+            continue
+        if enviado:
+            _ultimos_enviados[nombre] = (mtime, tiempo)
+            if nombre == "energia.json":   # el de evento sale cada minuto: no se loguea
+                print(f"Resumen de energia mandado (hora {time.strftime('%Y-%m-%d %H:%M', time.gmtime(tiempo / 1000))} UTC)")
 
 
 def _al_recibir_comando(dispositivo, comando):
@@ -496,12 +604,19 @@ def _al_recibir_comando(dispositivo, comando):
     payload = comando.get("payload") or {}
     if nombre == "capturar":
         _capturar(payload)
+    elif nombre == "starlink":
+        _apagar_starlink(dispositivo, payload)
+    elif nombre == "modo":
+        _cambiar_modo_starlink(dispositivo, payload)
     else:
         print(f"Comando desconocido ignorado: nombre={nombre!r} payload={payload}")
 
 
 def _al_conectar(dispositivo):
     print("Conectado a Losant.")
+    # Primero: en modo ventana la conexion dura un par de minutos y el
+    # workflow necesita sl_modo para mandar (si hace falta) el comando "modo"
+    _publicar_sl_modo(dispositivo)
     if _ultima_lectura:
         for address, (rssi, data) in list(_ultima_lectura.items()):
             _publicar_informe(dispositivo, address, rssi, data)
@@ -605,7 +720,7 @@ def main():
     proximo_serial = time.monotonic() + REINTENTO_SERIAL_S
 
     print(f"Informa por MQTT al conectar y cada {INTERVALO_INFORME_S // 60} min mientras "
-          f"siga conectado; resumenes del modo evento desde {PENDIENTES_DIR}... Ctrl+C para salir")
+          f"siga conectado; ultimos resumenes desde {ULTIMO_DIR} (solo en vivo)... Ctrl+C para salir")
     while True:
         ahora = time.monotonic()
         if not device.is_connected() and ahora >= proximo_intento:
@@ -643,7 +758,8 @@ def main():
         _revisar_estado_captura(device)
         _revisar_espacio_disco(device)
         _revisar_lecturas_esp32(device)
-        _enviar_pendientes(device)
+        _revisar_sl_modo(device)
+        _enviar_ultimos(device)
         try:
             device.loop(timeout=0.1)
         except Exception as exc:

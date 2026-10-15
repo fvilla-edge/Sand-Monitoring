@@ -55,9 +55,10 @@ Sand Monitoring/
 ├── indicador_estado/       # LED de estado (PS_MIO11) — parpadeo distinto en captura/transmision/standby
 ├── starlink_remoto/        # Control del rele que energiza el kit Starlink (PS_MIO10)
 │   ├── control_starlink.sh    # Prender/apagar, idempotente por feedback de HW
-│   ├── decidir_objetivo.sh    # Unica logica de decision (rescate > manual > reloj no confiable > horario); reloj confiable = NTP sincronizado o RTC DS3231 restaurado en este boot
+│   ├── decidir_objetivo.sh    # Unica logica de decision (rescate > manual > reloj no confiable > modo permanente/ventana); reloj confiable = NTP sincronizado o RTC DS3231 restaurado en este boot
 │   ├── aplicar_objetivo.sh    # Aplica lo que decide decidir_objetivo.sh (reconciliador de 5 min)
-│   ├── aplicar_horario.sh     # Aplica hora_on/hora_off de config_campo.json a los timers
+│   ├── ventana_starlink.sh    # Una ventana del modo ventana (cada 2 h): prende, sube a GCS, apaga
+│   ├── modo_operacion.sh      # Ver/cambiar el modo de Starlink (ventana | permanente)
 │   ├── starlink_manual.sh     # Entrar/salir de modo manual
 │   ├── estado_starlink.sh     # Lectura pasiva del ultimo estado conocido
 │   ├── asegurar_mux_ps10.sh   # Fuerza el mux de PS_MIO10 al boot
@@ -118,7 +119,7 @@ por hora con el area y la kurtosis de TODAS las ventanas de 50 ms
 Es liviano para bajarlo por Starlink y alcanza para ver la linea de tiempo del dia.
 Detalle del modo en `docs/modo_evento.md`.
 
-Desde la carpeta del proyecto, con Starlink prendido (horario `hora_on`-`hora_off`).
+Desde la carpeta del proyecto, con Starlink prendido (modo permanente, o durante una ventana).
 `<IP_CAMPO>` es la IP publica actual de la placa de campo.
 
 1. Ver que horas hay en la placa (la hora en curso todavia se esta escribiendo;

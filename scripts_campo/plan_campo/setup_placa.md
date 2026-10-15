@@ -298,15 +298,16 @@ de seguir).
 ```bash
 cd starlink_remoto
 
-# scripts + configuracion de mux compartida + boot + horario + decision/aplicacion + estado
-scp control_starlink.sh mux_ps10_common.sh asegurar_mux_ps10.sh aplicar_horario.sh \
+# scripts + configuracion de mux compartida + boot + modo/ventana + decision/aplicacion + estado
+scp control_starlink.sh mux_ps10_common.sh asegurar_mux_ps10.sh \
+    modo_operacion.sh modo_operacion_common.sh ventana_starlink.sh \
     decidir_objetivo.sh aplicar_objetivo.sh starlink_manual.sh estado_starlink.sh \
     root@<IP_PLACA>:/root/starlink_remoto/
 
 # unidades systemd
 scp systemd/starlink-mux-ps10.service systemd/starlink-aplicar-objetivo.service \
     systemd/starlink-reconciliador.service \
-    systemd/starlink-rele-on.timer systemd/starlink-rele-off.timer \
+    systemd/starlink-ventana.service systemd/starlink-ventana.timer \
     systemd/starlink-reconciliador.timer \
     root@<IP_PLACA>:/etc/systemd/system/
 
@@ -314,9 +315,9 @@ ssh root@<IP_PLACA> "
   chmod +x /root/starlink_remoto/*.sh
   systemctl daemon-reload
   systemctl enable --now starlink-mux-ps10.service
-  systemctl enable --now starlink-rele-on.timer starlink-rele-off.timer
+  /root/starlink_remoto/modo_operacion.sh permanente   # mientras se instala; despues ventana desde Losant
+  systemctl enable --now starlink-ventana.timer
   systemctl enable --now starlink-reconciliador.timer
-  /root/starlink_remoto/aplicar_horario.sh
 "
 
 # alias para prender/apagar/consultar a mano por SSH (opcional, comodidad)
@@ -324,12 +325,12 @@ scp aliases.sh root@<IP_PLACA>:/root/starlink_remoto/
 ssh root@<IP_PLACA> "grep -q 'prender-starlink' /root/.bashrc || cat /root/starlink_remoto/aliases.sh >> /root/.bashrc"
 ```
 
-El `aplicar_horario.sh` del final no es opcional: los `.timer` de este repo tienen `hora_on`/`hora_off`
-hardcodeados en su `OnCalendar=` (los valores por defecto de `config_campo.json`). Si el JSON se editó
-antes de este paso, sin ese comando la placa queda armada con el horario viejo hasta que alguien lo
-corra a mano — sin ningún aviso.
+El modo queda en permanente para no cortar el acceso mientras se termina el armado; al
+terminar se pasa a ventana desde Losant (tag `modo_starlink`) o con
+`modo_operacion.sh ventana`. El `OnCalendar=` de `starlink-ventana.timer` es estático
+(cada 2 h a los :05): si se cambia `starlink.ventana_cada_h`/`ventana_minuto`, editarlo tambien.
 
-Uso día a día (prender/apagar a mano, cambiar horario, etc.): ver `COMANDOS.md` →
+Uso día a día (prender/apagar a mano, cambiar el modo, etc.): ver `COMANDOS.md` →
 "Starlink / control remoto del relé".
 
 ## 5b. RTC DS3231 (si esta placa lo tiene cableado)

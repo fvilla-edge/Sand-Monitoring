@@ -11,6 +11,15 @@
 # Se desacopla solo en la unidad transitoria "actualizacion": un corte de SSH
 # o de Starlink no la interrumpe, y no puede haber dos a la vez.
 #
+# Starlink: hay que poner el modo permanente ANTES de aplicar (la Starlink
+# es el unico acceso y tiene que quedar prendida durante y despues):
+#   /root/starlink_remoto/modo_operacion.sh permanente
+# o, en una placa que todavia no tiene ese script (primera vez):
+#   printf 'permanente\n' > /root/starlink_remoto/modo_operacion && sync
+# Al terminar se vuelve a ventana desde Losant (docs/plan_modos_starlink.md).
+# Los timers del horario viejo (UNITS_VIEJAS) quedan deshabilitados; revertir
+# los vuelve a habilitar.
+#
 # Uso:   bash /root/actualizacion/<id>/aplicar_actualizacion.sh
 # Ver:   journalctl -u actualizacion -f
 # Ensayo de falla (solo pruebas): FALLA_EN=instalar|lectura_rele|verificar bash ... aplicar_actualizacion.sh
@@ -18,6 +27,10 @@
 # aunque su propio aplicar sea mas viejo):
 #   SOLO_CHEQUEAR=1 bash aplicar_actualizacion.sh /root/actualizacion/<id>
 set -u
+
+MODO_OPERACION_FILE=/root/starlink_remoto/modo_operacion
+modo_permanente() { [ "$(sed -n '1p' "$MODO_OPERACION_FILE" 2>/dev/null)" = "permanente" ]; }
+ventana_en_curso() { [ "$(systemctl show -p ActiveState --value starlink-ventana.service 2>/dev/null)" = "activating" ]; }
 
 PKG=$(readlink -f "${1:-$(dirname "$(readlink -f "$0")")}")
 ID=$(basename "$PKG")
@@ -32,6 +45,8 @@ if [ -n "${SOLO_CHEQUEAR:-}" ]; then
     chk "/mnt/usb montado" "mountpoint -q /mnt/usb"
     chk "sin capturar_stream.py corriendo" "! pgrep -f 'python3.*capturar_stream\\.py'"
     chk "sin otra actualizacion en curso" "! systemctl is-active --quiet actualizacion"
+    chk "Starlink en modo permanente ($MODO_OPERACION_FILE)" "modo_permanente"
+    chk "sin ventana de Starlink en curso" "! ventana_en_curso"
     [ "$ok" -eq 1 ] && echo "== todo OK para aplicar" || echo "== HAY CHEQUEOS QUE FALLAN: no aplicar asi"
     [ "$ok" -eq 1 ]; exit $?
 fi
@@ -52,7 +67,9 @@ LOG_DIR=/root/logs_campo
 LOG="$LOG_DIR/actualizacion_$ID.log"
 RESP="/root/respaldos_actualizacion/$ID"
 RESULTADO="/root/actualizacion/RESULTADO_$ID"
-TIMERS_STARLINK="starlink-reconciliador.timer starlink-rele-on.timer starlink-rele-off.timer"
+TIMERS_STARLINK="starlink-reconciliador.timer starlink-ventana.timer starlink-rele-on.timer starlink-rele-off.timer"
+# Horario 08:55/17:15, reemplazado por el modo ventana: se deshabilitan
+UNITS_VIEJAS="starlink-rele-on.timer starlink-rele-off.timer"
 mkdir -p "$LOG_DIR"
 INSTALANDO=0
 TIMERS_PAUSADOS=""
@@ -100,7 +117,9 @@ libre_mb=$(df -m --output=avail / | tail -1 | tr -d ' ')
 [ "$libre_mb" -gt 300 ] || fallar "poco espacio en la SD (${libre_mb}MB)"
 mountpoint -q /mnt/usb || fallar "/mnt/usb no esta montado (el modo evento lo necesita)"
 pgrep -f 'python3.*capturar_stream\.py' >/dev/null && fallar "hay un capturar_stream.py corriendo; esperar a que termine"
-log "chequeos previos OK (SD libre ${libre_mb}MB, USB montado, sin captura)"
+modo_permanente || fallar "Starlink no esta en modo permanente: poner $MODO_OPERACION_FILE en 'permanente' antes (ver cabecera)"
+ventana_en_curso && fallar "hay una ventana de Starlink en curso; esperar a que cierre"
+log "chequeos previos OK (SD libre ${libre_mb}MB, USB montado, sin captura, Starlink permanente)"
 
 # ---- 2. pausa del control de Starlink (que no conmute ni lea el rele en el medio) ----
 for t in $TIMERS_STARLINK; do
@@ -119,7 +138,7 @@ while read -r _ rel; do
     if [ -e "/$rel" ]; then echo "$rel" >> "$RESP/existentes.txt"; else echo "$rel" >> "$RESP/creados.txt"; fi
 done < "$PKG/MANIFIESTO"
 tar -C / -czf "$RESP/respaldo.tgz" -T "$RESP/existentes.txt" || fallar "no se pudo armar el respaldo"
-for u in $(ls "$PKG/archivos/etc/systemd/system"); do
+for u in $(ls "$PKG/archivos/etc/systemd/system") $UNITS_VIEJAS; do
     echo "$u $(systemctl is-enabled "$u" 2>/dev/null || echo not-found)"
 done > "$RESP/units_habilitadas.txt"
 for s in modo-evento resumen-modo-evento panel-solar-informe; do
@@ -140,6 +159,12 @@ python3 "$PKG/fusionar_config.py" /root/scripts_campo_comun/config_campo.json \
     || fallar "fallo la fusion de config_campo.json"
 systemctl daemon-reload
 for u in $(cat "$PKG/habilitar.txt"); do systemctl enable "$u" >> "$LOG" 2>&1 || fallar "no se pudo habilitar $u"; done
+for u in $UNITS_VIEJAS; do
+    if systemctl cat "$u" >/dev/null 2>&1; then
+        systemctl disable --now "$u" >> "$LOG" 2>&1 || fallar "no se pudo deshabilitar $u"
+    fi
+    TIMERS_PAUSADOS=$(echo " $TIMERS_PAUSADOS " | sed "s/ $u / /")   # que reanudar no lo vuelva a arrancar
+done
 [ "${FALLA_EN:-}" = "instalar" ] && fallar "falla forzada (FALLA_EN=instalar, ensayo)"
 sync
 log "archivos instalados y units habilitadas"
@@ -172,6 +197,8 @@ else
     log "sin lectura directa del rele (el bitstream no trae el ID): control por el camino de siempre (v0.94)"
 fi
 reanudar_starlink
+# Arranca ya (dispara la ventana de arranque al toque: en permanente no hace nada)
+systemctl start starlink-ventana.timer || fallar "no arranco starlink-ventana.timer"
 log "modo evento arrancado, control de Starlink reanudado"
 
 # ---- 6. verificacion ----
@@ -190,6 +217,11 @@ if systemctl cat starlink-reconciliador.service >/dev/null 2>&1; then
     for _ in $(seq 1 30); do systemctl is-active --quiet modo-evento && break; sleep 5; done
     systemctl is-active --quiet modo-evento || fallar "modo-evento no volvio despues del reconciliador"
 fi
+systemctl is-active --quiet starlink-ventana.timer || fallar "starlink-ventana.timer no quedo activo"
+for u in $UNITS_VIEJAS; do
+    systemctl is-active --quiet "$u" && fallar "$u sigue activo (horario viejo)"
+done
+modo_permanente || fallar "el modo de Starlink dejo de ser permanente durante la actualizacion"
 [ "$(cat /tmp/loaded_fpga.inf 2>/dev/null)" = "stream_app_propio" ] \
     || fallar "bitstream cargado: '$(cat /tmp/loaded_fpga.inf 2>/dev/null)', esperaba stream_app_propio"
 [ "${FALLA_EN:-}" = "verificar" ] && fallar "falla forzada (FALLA_EN=verificar, ensayo)"
