@@ -656,6 +656,136 @@ estado de cada placa quedan fuera de git (`paquetes_actualizacion/`,
 ESP32, RTC, fail2ban y el Device de campo de Losant. Tampoco un enlace
 Starlink real durante la transferencia (el ensayo fue por LAN).
 
+## 7. Paquete integrado `integracion-campo` en la empresa (2026-10-15)
+
+La placa de campo vuelve a la empresa: se instala y se prueba todo junto con
+la placa a mano (LAN, sin depender de Starlink). Reemplaza la instalación por
+separado de 4c-bis, 4d y 4e y la etapa 9 del IN2: todo va en **un solo
+paquete**.
+
+- Rama `integracion-campo` = `main` + `registro-energia` (arreglo del float)
+  + `modos-starlink` (incluye 4d) + `in2-sensor` (IN2 independiente, cambio
+  mono/dual remoto) + `me_canales` real.
+- Paquete: `paquetes_actualizacion/actualizacion_20261015_180019_6cb84ba.tgz`
+  (commit `6cb84ba`, bitstream del IN2 `20ac88b` = md5 `b34cd26f`, binario
+  sha256 `3883f7d7…`). Si hay commits nuevos, rearmarlo desde la rama con ese
+  mismo bitstream (`~/bitstreams/in2_20ac88b_red_pitaya.bin`).
+- Probado en el lab (15/10): aplicación (y la reversión sola por la lectura
+  del relé), dual/mono por Losant, dual con bitstream viejo, modo clásico,
+  `cfg.py --poner`, `me_canales`, ventanas y GCS en ventana. **No probado:**
+  energía con el paquete integrado (el lab no tiene ESP32), Starlink real,
+  relé real.
+- **Cambio respecto de la etapa 9 del plan del IN2** (bitstream solo con el
+  software viejo en mono, después el software, después dual): ese
+  escalonamiento era para cuando el único acceso era Starlink. Con la placa
+  en la empresa va todo junto (**decidido 2026-10-15**): si algo falla, la
+  vuelta atrás automática y el acceso local alcanzan.
+
+### 7.1 Antes de tocar la placa
+
+- [ ] **Confirmar físicamente qué hay en el IN2 de campo y su jumper** (lo
+      pide el plan del IN2 antes de pasar a dual).
+- [ ] Inventario (solo lectura) y compararlo con el último: la placa tiene
+      cambios puntuales del 8/10 (4c por `scp`, tag `campo-2026-10-08`):
+  ```bash
+  ssh root@<IP_CAMPO> 'bash -s' < scripts_campo_comun/inventario_placa.sh \
+      > datos_campo/inventarios/inventario_rp-f0fbda_<fecha>.txt
+  ```
+- [ ] Losant, Device de campo — atributos nuevos (si no, Losant los
+      descarta): `sl_modo` (String), `starlink_comando` (String),
+      `me_canales` y `me_dec` (Number), `me_cambio` (String),
+      `kurt_max_1min_in2` y `area_max_1min_in2` (Number). Verificar que
+      estén los `en_*` (se crearon el 8/10).
+- [ ] Losant: tag `modo_starlink` = `permanente` en el Device de campo y el
+      workflow de dos Conditionals (copia del de `test_SC`, con el Device de
+      campo; plan de modos, Fase 0).
+- [ ] `comandos_losant/modo_starlink.py`: anotar el ID del Device de campo; si
+      está en otra aplicación de Losant que `test_SC`, la herramienta tiene el
+      ID de aplicación fijo y hace falta otro token (scope `device.get` +
+      `device.patch`) de esa aplicación.
+- [ ] Modo permanente en la placa (`aplicar_actualizacion.sh` aborta sin él;
+      la placa de campo todavía no tiene `modo_operacion.sh`):
+  ```bash
+  ssh root@<IP_CAMPO> "printf 'permanente\n' > /root/starlink_remoto/modo_operacion && sync && cat /root/starlink_remoto/modo_operacion"
+  ```
+
+### 7.2 Instalar
+
+Igual que la sección 6 (pasos 4-6):
+```bash
+bash scripts_campo/actualizacion/enviar_paquete.sh root@<IP_CAMPO> paquetes_actualizacion/actualizacion_20261015_180019_6cb84ba.tgz
+ssh root@<IP_CAMPO> 'SOLO_CHEQUEAR=1 bash /root/actualizacion/20261015_180019_6cb84ba/aplicar_actualizacion.sh /root/actualizacion/20261015_180019_6cb84ba'
+ssh root@<IP_CAMPO> 'bash /root/actualizacion/20261015_180019_6cb84ba/aplicar_actualizacion.sh'
+ssh root@<IP_CAMPO> 'cat /root/actualizacion/RESULTADO_20261015_180019_6cb84ba'
+```
+- Si da `revertida` por "la lectura directa del relé da 'off' con Starlink
+  prendido": el relé lee al revés o la Starlink no prendió (en el lab pasó
+  con el cable de feedback sacado). Revisar el relé antes de reintentar; un
+  ID ya usado no se vuelve a aplicar: copiar la carpeta como `<id>_b`.
+- La captura arranca en **mono** (`modo_evento.canales` lo agrega la fusión
+  en `1`).
+
+### 7.3 Ajustes después de aplicar (el paquete no pisa valores del config)
+
+- [ ] `gcs.dias_atras` 7 → 30:
+  ```bash
+  ssh root@<IP_CAMPO> 'python3 /root/scripts_campo_comun/cfg.py --poner gcs.dias_atras 30 && python3 /root/scripts_campo_comun/cfg.py gcs.dias_atras'
+  ```
+- [ ] Resetear el SOC (el 100 % guardado el 8/10 es falso; 4c-bis, solo el
+      paso 2 — el archivo ya lo trae el paquete):
+  ```bash
+  ssh root@<IP_CAMPO> 'systemctl stop panel-solar-informe && python3 -c "
+  import json; f=\"/root/energia_estado.json\"; e=json.load(open(f))
+  e.update(soc_ah=50.0, ultimo_float=None, float_racha=0)
+  json.dump(e, open(f, \"w\")); print(e)" && sync && systemctl start panel-solar-informe'
+  ```
+- [ ] Borrar la cola vieja de Losant dejando el contador (4e):
+  ```bash
+  ssh root@<IP_CAMPO> "cd /mnt/usb/losant_pendientes && ls | wc -l && find . -maxdepth 1 -name '[0-9]*.json' -delete && rm -rf .malos && ls -A"
+  ```
+- [ ] Si quedó algún drop-in `canales.conf` en `modo-evento.service.d`,
+      borrarlo (le gana al config).
+- [ ] Verificar: `bash -s < scripts_campo_comun/estado_placa.sh`;
+      `systemctl list-timers 'starlink*'` (ventana a los :05 de horas pares
+      locales, sin `rele-on/off`); en Losant `sl_modo = permanente`,
+      `me_canales = 1`, `me_dec = 32`, resúmenes cada minuto.
+
+### 7.4 Pruebas en la empresa (lo que el lab no pudo)
+
+- [ ] **Energía con el paquete integrado:** filas por minuto en
+      `/mnt/usb/energia/`, resumen horario `en_*` en Losant a la hora
+      siguiente, `en_soc_confiable = false` hasta un float sostenido.
+- [ ] **Dual con el sensor del IN2:** comando `canales` `{"canales": 2}` →
+      `ok 2`, `me_canales = 2`, `kurt_max_1min_in2` desde el segundo minuto,
+      CSV en `/mnt/usb/eventos/in2/`. Volver a mono y a dual una vez.
+- [ ] **Ventana con Starlink real** (antena con cielo despejado): tag →
+      `ventana`; mirar `/root/logs_campo/ventanas_starlink.log` (internet_s,
+      duración, `gcs="subidos N/N"`), que suban `ventanas_*`, `*_in2` y
+      `energia_*` a `campo/…`, y que el relé apague y confirme. Fase 6 del
+      plan de modos: anotar duración y consumo.
+- [ ] **Comandos con el relé real:** `starlink` `{"accion": "on"}` →
+      ignorado; tag permanente ↔ ventana ida y vuelta.
+- [ ] Si se puede, IN2 con arena tirada a mano (como en julio) para ver que
+      el IN2 reacciona.
+
+### 7.5 Primeros días en el sitio (no se prueba en la empresa)
+
+- Balance de energía real con ventanas cada 2 h (estimado ~250 Wh/día contra
+  ~400 antes, nunca medido): `en_*` diarios y tensión mínima nocturna.
+- Primer float real: que calibre el SOC (umbrales 13,3 V / 10 min son una
+  suposición, ajustarlos con ese dato).
+- IN2 con la arena del pozo: umbral del IN2 (hoy = el del IN1, 3,40) con
+  datos de campo.
+- Pérdidas de muestras por las 12 conmutaciones diarias del relé.
+
+### 7.6 Volver atrás
+
+- Modo clásico sin desinstalar: `bash /root/scripts_campo/cambiar_modo.sh clasico`.
+- Todo como estaba: `revertir_actualizacion.sh` del respaldo
+  `/root/respaldos_actualizacion/20261015_180019_6cb84ba/` (sección 6).
+- Solo el bitstream: `revertir_bitstream.sh` del repo FPGA; con el config en
+  dual la captura sigue midiendo el IN1 y `me_canales` pasa a `1`.
+
 ## Después (no bloquea)
 
 - Opción 2 del relé (lectura de los DIO en el bitstream propio, relé leído

@@ -130,6 +130,10 @@ vez en el hardware.
   en campo); recién después el software nuevo; recién después dual.
 - Antes de dual: confirmar físicamente qué hay en el IN2 de campo y su
   jumper. El umbral del IN2 se calibra con datos de campo.
+- **Cambio (2026-10-15):** la placa de campo vuelve a la empresa y se instala
+  todo junto en un paquete (bitstream + software + dual), sin escalonar: el
+  escalonamiento era para cuando el único acceso era Starlink. Procedimiento
+  en `scripts_campo/plan_campo/actualizar_placa_campo.md`, sección 7.
 
 ## Riesgos conocidos
 
