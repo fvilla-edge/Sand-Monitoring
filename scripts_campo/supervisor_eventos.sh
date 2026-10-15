@@ -25,7 +25,7 @@ mkdir -p "$LOG_DIR"
 MARCA_PARADA_RELE=/run/modo_evento_parada_rele
 # destino real de la corrida en curso: "<carpeta>" o "<carpeta> sin_disco"
 DESTINO_ACTUAL=/run/modo-evento/destino
-# canales y decimacion de la corrida en curso: "canales=N dec=M" (lo lee el anotador)
+# canales y decimacion de la corrida en curso: "canales=N dec=M" (en dual + " in2=<modo>"; lo lee el anotador)
 MEDICION_ACTUAL=/run/modo-evento/medicion
 # "si"/"no": si la corrida mide el IN2 (lo escribe capturar_eventos al ver el bitstream)
 IN2_ACTUAL=/run/modo-evento/in2
@@ -85,14 +85,27 @@ arrancar)
     1|2) ;;
     *) echo "[supervisor] canales invalido ('$canales'), se mide en mono"; canales=1 ;;
     esac
+    # modo del IN2 en dual (docs/plan_in2_asociado.md); llamada aparte: si la
+    # clave falta (config viejo) no tiene que arrastrar a canales
+    in2_modo=$(python3 "$CFG" modo_evento.in2_modo 2>/dev/null)
+    case "$in2_modo" in
+    independiente|asociado) ;;
+    "") in2_modo=independiente ;;
+    *) echo "[supervisor] in2_modo invalido ('$in2_modo'), se usa independiente"; in2_modo=independiente ;;
+    esac
     dec="${DEC:-}"
     [ -n "$dec" ] || { [ "$canales" = 2 ] && dec=64 || dec=32; }
     mkdir -p "$(dirname "$DESTINO_ACTUAL")" "$destino"
     echo "$destino$marca" > "$DESTINO_ACTUAL"
-    echo "canales=$canales dec=$dec" > "$MEDICION_ACTUAL"
+    if [ "$canales" = 2 ]; then
+        echo "canales=$canales dec=$dec in2=$in2_modo" > "$MEDICION_ACTUAL"
+    else
+        echo "canales=$canales dec=$dec" > "$MEDICION_ACTUAL"
+    fi
     rm -f "$IN2_ACTUAL"
     exec /usr/bin/python3 -u /root/scripts_campo/capturar_eventos.py \
         --umbral "$UMBRAL" --umbral2 "${UMBRAL2:-$UMBRAL}" --destino "$destino" --canales "$canales" --dec "$dec" \
+        --in2-modo "$in2_modo" \
         "${extra[@]}"
     ;;
 despues)

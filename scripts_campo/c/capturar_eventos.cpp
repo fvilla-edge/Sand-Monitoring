@@ -149,7 +149,7 @@ const uint32_t OFF_WINDOW_COUNT = 0x22C, OFF_SUM_ABS_LO = 0x230, OFF_SUM_ABS_HI 
 const uint32_t OFF_CANAL = 0x20;
 const uint32_t OFF_AREA_ID = 0x26C;
 const uint32_t AREA_ID_IN2 = 0x534D0002;  // "SM" + 2 canales; bitstream sin IN2: lee 0
-// "si" o "no": si esta corrida mide el IN2 (lo lee resumen_modo_evento.py)
+// "si" o "no": si esta corrida mide el IN2 (independiente con su bitstream, o asociado; lo lee resumen_modo_evento.py)
 const char* const ARCHIVO_IN2 = "/run/modo-evento/in2";
 
 // Pasabanda de la FPGA (2 biquads, Butterworth 50-400kHz, Q20, 25 bits con
@@ -880,11 +880,12 @@ int main(int argc, char** argv) {
     if (canales == 2 && in2_asociado)
         log("IN2: modo asociado (graba su cruda cuando graba el IN1, mismo nombre en <destino>/in2)%s",
             in2 ? "" : ", sin area/kurtosis ni CSV del IN2 (bitstream viejo)");
-    // Lo que de verdad se mide (el config puede decir dual con un bitstream sin
-    // IN2): resumen_modo_evento.py lo usa para me_canales. Lo borra el supervisor.
+    // Si de verdad se mide el IN2 (el config puede decir dual con un bitstream
+    // sin IN2; asociado graba su cruda igual): resumen_modo_evento.py lo usa
+    // para me_canales. Lo borra el supervisor.
     mkdir(VigiaEspacio::DIR_BANDERA, 0755);
     if (FILE* f = fopen(ARCHIVO_IN2, "w")) {
-        fputs(in2 ? "si\n" : "no\n", f);
+        fputs(graba_in2 ? "si\n" : "no\n", f);
         fclose(f);
     }
     if (!reg.escribir_coefs(*coefs)) {

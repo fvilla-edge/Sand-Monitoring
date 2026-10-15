@@ -605,10 +605,14 @@ def _enviar_ultimos(dispositivo):
 
 def _cambiar_canales(payload):
     canales = payload.get("canales") if isinstance(payload, dict) else None
-    if canales not in (1, 2, "1", "2"):
-        print(f"Comando 'canales' ignorado: payload invalido {payload!r} (se espera {{\"canales\": 1|2}})")
+    # modo del IN2 (docs/plan_in2_asociado.md): opcional y solo con 2
+    in2 = payload.get("in2") if isinstance(payload, dict) else None
+    if canales not in (1, 2, "1", "2") or (in2 is not None and (str(canales) != "2"
+                                                                or in2 not in ("independiente", "asociado"))):
+        print(f"Comando 'canales' ignorado: payload invalido {payload!r} "
+              f"(se espera {{\"canales\": 1|2}} o {{\"canales\": 2, \"in2\": \"independiente\"|\"asociado\"}})")
         return
-    argv = ["bash", SCRIPT_CAMBIAR_CANALES, str(canales)]
+    argv = ["bash", SCRIPT_CAMBIAR_CANALES, str(canales)] + ([in2] if in2 else [])
     print(f"Lanzando cambio de canales: {argv}")
     # el script vuelve enseguida (se relanza solo como unidad transitoria);
     # timeout por las dudas, para no colgar el reporte

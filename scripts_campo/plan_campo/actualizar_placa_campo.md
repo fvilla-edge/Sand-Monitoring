@@ -665,7 +665,9 @@ paquete**.
 
 - Rama `integracion-campo` = `main` + `registro-energia` (arreglo del float)
   + `modos-starlink` (incluye 4d) + `in2-sensor` (IN2 independiente, cambio
-  mono/dual remoto) + `me_canales` real.
+  mono/dual remoto) + `me_canales` real + IN2 asociado al IN1
+  (`docs/plan_in2_asociado.md`: `modo_evento.in2_modo`, comando `canales` con
+  `"in2"`).
 - Paquete: `paquetes_actualizacion/actualizacion_20261015_180019_6cb84ba.tgz`
   (commit `6cb84ba`, bitstream del IN2 `20ac88b` = md5 `b34cd26f`, binario
   sha256 `3883f7d7…`). Si hay commits nuevos, rearmarlo desde la rama con ese
@@ -694,7 +696,8 @@ paquete**.
 - [ ] Losant, Device de campo — atributos nuevos (si no, Losant los
       descarta): `sl_modo` (String), `starlink_comando` (String),
       `me_canales` y `me_dec` (Number), `me_cambio` (String),
-      `kurt_max_1min_in2` y `area_max_1min_in2` (Number). Verificar que
+      `kurt_max_1min_in2` y `area_max_1min_in2` (Number), `me_in2_modo`
+      (String). Verificar que
       estén los `en_*` (se crearon el 8/10).
 - [ ] Losant: tag `modo_starlink` = `permanente` en el Device de campo y el
       workflow de dos Conditionals (copia del de `test_SC`, con el Device de
@@ -758,6 +761,12 @@ ssh root@<IP_CAMPO> 'cat /root/actualizacion/RESULTADO_20261015_180019_6cb84ba'
 - [ ] **Dual con el sensor del IN2:** comando `canales` `{"canales": 2}` →
       `ok 2`, `me_canales = 2`, `kurt_max_1min_in2` desde el segundo minuto,
       CSV en `/mnt/usb/eventos/in2/`. Volver a mono y a dual una vez.
+- [ ] **IN2 asociado con los dos sensores:** `{"canales": 2, "in2":
+      "asociado"}` → `ok 2 asociado`, `me_in2_modo = asociado`. Con señal en
+      el IN1 (golpe/arena), cada `evento_*` de `/mnt/usb/eventos/` tiene su par
+      con el **mismo nombre** en `in2/` (`"disparo": "IN1"` en el JSON); con
+      señal **solo en el IN2**, no se graba nada. Volver a `"independiente"`
+      (o dejar el modo que se decida para el sitio).
 - [ ] **Ventana con Starlink real** (antena con cielo despejado): tag →
       `ventana`; mirar `/root/logs_campo/ventanas_starlink.log` (internet_s,
       duración, `gcs="subidos N/N"`), que suban `ventanas_*`, `*_in2` y

@@ -54,7 +54,8 @@
   },
   "modo_evento": {
     "minimo_libre_mb": 2048,
-    "canales": 1
+    "canales": 1,
+    "in2_modo": "independiente"
   },
   "gcs": {
     "habilitado": true,

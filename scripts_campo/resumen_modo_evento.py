@@ -46,7 +46,7 @@ ULTIMO = "/run/losant_ultimo/evento.json"
 # Destino real de la corrida en curso (supervisor_eventos.sh arrancar):
 # "<carpeta>" o "<carpeta> sin_disco"
 DESTINO_ACTUAL = "/run/modo-evento/destino"
-# "canales=N dec=M" de la corrida en curso (lo escribe supervisor_eventos.sh)
+# "canales=N dec=M" (en dual + " in2=<modo>") de la corrida en curso (lo escribe supervisor_eventos.sh)
 MEDICION_ACTUAL = "/run/modo-evento/medicion"
 # "si"/"no": si la corrida mide de verdad el IN2 (lo escribe capturar_eventos
 # al leer el bitstream; dual con un bitstream sin IN2 mide solo el IN1)
@@ -68,10 +68,10 @@ def log(msg):
 
 
 def medicion_actual():
-    """{"canales": N, "dec": M} de la corrida en curso, o {} si no hay."""
+    """{"canales": N, "dec": M[, "in2": modo]} de la corrida en curso, o {} si no hay."""
     try:
         with open(MEDICION_ACTUAL) as f:
-            return {k: int(v) for k, _, v in (p.partition("=") for p in f.read().split()) if v.isdigit()}
+            return {k: int(v) if v.isdigit() else v for k, _, v in (p.partition("=") for p in f.read().split()) if v}
     except OSError:
         return {}
 
@@ -417,6 +417,10 @@ def resumir(filas, lector, contadores, activo, umbral, ahora, sin_disco=False, f
             # 1 = mono (solo IN1), 2 = dual (IN1 + IN2 de referencia): lo que
             # se mide, no lo pedido (dual con bitstream sin IN2 informa 1)
             data["me_canales"] = med["canales"] if mide_in2() is not False else 1
+            if data["me_canales"] == 2 and "in2" in med:
+                # en dual: "independiente" (el IN2 graba por su kurtosis) o
+                # "asociado" (graba cuando graba el IN1)
+                data["me_in2_modo"] = med["in2"]
         if "dec" in med:
             # decimacion de la captura: 32 (3.9 MHz) o 64 (1.95 MHz)
             data["me_dec"] = med["dec"]

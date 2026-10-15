@@ -99,3 +99,28 @@ Decisiones del usuario (2026-10-15):
     activar el loopback), no un pulso.
   - Cambio de paso: el nombre del evento ahora se fija al detectar (antes al
     extraer la señal, unos ms después), también en el IN1.
+- 2026-10-15: **etapa 2 hecha y probada**. Config `modo_evento.in2_modo`;
+  supervisor (llamada aparte para no arrastrar a `canales` si falta la
+  clave) pasa `--in2-modo` y escribe `in2=<modo>` en `medicion`;
+  `capturar_eventos.py --in2-modo`; `cambiar_canales.sh 1|2
+  [independiente|asociado]` (rechaza args de más y el modo con `1`; vuelve a
+  las dos claves anteriores si falla); comando `canales` con `"in2"`
+  opcional; `me_in2_modo` en el resumen; el archivo `in2` dice `si` también
+  en asociado con el bitstream viejo (graba la cruda del IN2).
+  - PC: resumen 10/10, comando 10/10 (válidos e inválidos), args del script.
+  - Lab (instalado a mano, respaldo `/root/respaldo_in2_asociado_20261015`,
+    clave agregada con `fusionar_config.py`): independiente → `me_in2_modo =
+    independiente`; `2 asociado` → `ok 2 asociado` en 30 s, log "modo
+    asociado", Losant `me_in2_modo = asociado` y `_in2`; `2` con asociado →
+    `ok 2 asociado (ya estaba)`; `1` → `ok 1` (config conserva asociado);
+    `2` → `ok 2 asociado`; `2 independiente` → `ok 2 independiente`.
+  - Dos caídas del vendor al arrancar (`startStreaming` →
+    `requestStopStreamingCommon`, SEGV y `length_error`/ABRT): hoy 3 de 26
+    arranques, una antes de este cambio. Cada cambio de modo reinicia la
+    captura: ~1 de cada 10 tarda 60 s más (systemd la relanza);
+    `cambiar_canales.sh` lo tolera (espera hasta 4 min).
+- 2026-10-15: **etapa 3 (Losant) OK** desde `test_SC` (atributo
+  `me_in2_modo` String creado): `{"canales": 2, "in2": "asociado"}` → `ok 2
+  asociado` en 30 s y `me_in2_modo = asociado` en Losant;
+  `{"canales": 1, "in2": "asociado"}` → ignorado (payload inválido);
+  `{"canales": 2, "in2": "independiente"}` → `ok 2 independiente`.
