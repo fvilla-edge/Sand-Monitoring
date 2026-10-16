@@ -63,7 +63,12 @@ Conclusión: **es idempotente**, no hace falta código en la placa para esto.
 Sin tag o con un valor mal escrito: el workflow no hace nada (igual que
 `modo_starlink`). O sea: sin tags la placa sigue con lo que tenga su config.
 
-### Workflow (lo arma el usuario; se puede sumar al "test sc" o uno aparte)
+### Workflow (lo arma el usuario; DECIDIDO 2026-10-16: dentro del "test sc")
+
+Ramas nuevas que salen del **mismo** disparador Device: State del "test sc",
+en paralelo a las de `modo_starlink`. Sumar `me_canales` y `me_in2_modo` a
+"Allowed Attributes" del disparador (lección 3 de `plan_modos_starlink.md`:
+el filtro no frena otros informes, pero así queda explícito).
 
 ```
 Device: State ──> Cond A ──true──> Cond B (quiere mono) ──true──> Command canales {"canales": 1}
@@ -91,9 +96,10 @@ JSON) debería andar así, pero es lo primero que hay que confirmar. Si
 
 **Nada que codear** según lo verificado arriba. Solo documentación:
 
-- Comentario de `ventana_espera_losant_s` (config y `ventana_starlink.sh`):
-  ahora sirve también para el comando `canales`.
-- `COMANDOS.md`: que en ventana se use el tag, no el comando a mano.
+- Comentario de `ventana_espera_losant_s` (`ventana_starlink.sh` y su
+  descripción en `plan_modos_starlink.md`; el config es JSON, sin
+  comentarios): ahora sirve también para el comando `canales`. HECHO 2026-10-16.
+- `COMANDOS.md`: que en ventana se use el tag, no el comando a mano. HECHO 2026-10-16.
 
 ## Pasos
 
@@ -121,8 +127,46 @@ JSON) debería andar así, pero es lo primero que hay que confirmar. Si
    `scripts_campo/plan_campo/actualizar_placa_campo.md` (tags + workflow a
    crear en el Device de campo).
 
-## Para decidir el usuario
+## Decidido (2026-10-16)
 
-- Tags `canales` / `in2_modo` (nombres) — ¿van esos?
-- ¿Workflow aparte o dentro del "test sc"? (Aparte es más fácil de probar y
-  de apagar sin tocar `modo_starlink`.)
+- Tags `canales` / `in2_modo` (esos nombres).
+- Dentro del workflow "test sc" (son de prueba; no tener varios workflows).
+
+## Bitácora de pruebas (lab `rp-f0fd8c`, `test_SC`, placa conectada)
+
+- 2026-10-16: nodos agregados al "test sc". Ojo: hasta apretar **Save** el
+  workflow no corre (primer intento sin comando por eso).
+- 2026-10-16 12:46 UTC — tags `2` / `asociado`, lab dual independiente:
+  **1** comando `canales` `2 asociado` (12:46:03), `ok 2 asociado` 12:46:35;
+  resumen `me_in2_modo` asociado; 0 comandos más hasta 12:51 (4 resúmenes).
+  Confirma que el tag texto `'2'` contra `me_canales` número `2` funciona.
+- 2026-10-16 12:53 UTC — tag `canales` `1` (in2_modo asociado), lab dual
+  asociado: **1** comando `canales` `1` (12:53:03), `ok 1` 12:53:34; resumen
+  `me_canales` 1, `me_dec` 32, sin `me_in2_modo` ni `_in2`; 0 comandos más
+  hasta 12:57. El config conserva `in2_modo` asociado (no se usa en mono).
+- 2026-10-16 13:03 UTC — tags `2` / `independiente`, lab mono: **1** comando
+  `canales` `2 independiente` (13:03:04), `ok 2 independiente` 13:03:36;
+  `me_in2_modo` independiente, `_in2` de vuelta; 0 comandos más hasta 13:07.
+  La ventana de 13:05 (abrió 1,5 min después del cambio) cerró `fin=normal`,
+  subidos 4/4, 139 s.
+- 2026-10-16 ~13:10 UTC — tag `canales` `Dos` (verificado por API), lab dual
+  independiente, conectado, resúmenes cada minuto: 0 comandos en 3,5 min.
+- 2026-10-16 ~13:17 UTC — sin tags `canales`/`in2_modo` (borrados con "−";
+  Losant no acepta valor vacío), verificado por API: 0 comandos en 3,5 min.
+  **Tabla del paso 2 completa: 7/7.**
+- Hallazgo: en el lab la placa está conectada a Losant también **entre**
+  ventanas (internet por LAN), así que el paso 3 tal cual no reproduce
+  "tag cambiado con la placa desconectada".
+- 2026-10-16 13:21-13:24 UTC — **paso 3 en lab, desconexión simulada**
+  (`systemctl stop panel-solar-informe` fuera de ventana; Losant
+  `connected: 0`): tag `in2_modo` → `asociado` con la placa desconectada,
+  0 cambios en 1 min. `systemctl start` 13:23:04 → `Conectado a Losant`
+  13:23:08 → **1** comando `2 asociado` 13:23:19 → `ok 2 asociado`
+  13:23:50 (**42 s** desde que conecta, contra 120 s de espera de la
+  ventana). Falta la ventana real con Starlink: anotada en
+  `actualizar_placa_campo.md` 7.4.
+- 2026-10-16 13:32 UTC — tag `in2_modo` → `independiente` por la **API REST**
+  (PATCH de la lista completa de tags, mismo método que
+  `comandos_losant/modo_starlink.py`): comando 13:33:03, `ok 2 independiente`
+  13:33:36. Cambiar el tag por API también dispara el workflow. Lab queda
+  dual independiente.

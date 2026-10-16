@@ -124,6 +124,18 @@ vuelven solos al modo anterior.
 | Dual independiente | IN1 + IN2 (dec 64); el IN2 graba su cruda por **su** kurtosis | `{"canales": 2, "in2": "independiente"}` | `cambiar_canales.sh 2 independiente` |
 | Dual asociado | IN1 + IN2; el IN2 graba su cruda **solo cuando graba el IN1** (mismo tramo, mismo nombre en `in2/`) | `{"canales": 2, "in2": "asociado"}` | `cambiar_canales.sh 2 asociado` |
 
+**En modo ventana usar los tags del Device, no el comando a mano**
+(`docs/plan_canales_por_tag.md`): Losant no guarda comandos, y uno mandado con
+la placa desconectada (entre ventanas) se pierde sin error. Tags `canales` (`1` |
+`2`) e `in2_modo` (`independiente` | `asociado`, solo con `canales` = `2`): el
+workflow los compara con `me_canales`/`me_in2_modo` y manda el comando `canales`
+solo si difieren, apenas la placa conecta (en el lab, `ok` a los ~40 s de
+conectar; la ventana espera 2 min). Sin tags o con un valor mal escrito no hace
+nada. Cambiar el tag a mano en el Device; el comando a mano sirve con la placa
+conectada (modo permanente o durante una ventana). Ojo: con los tags puestos, un
+comando a mano que no coincida con ellos lo deshace el workflow al minuto
+siguiente.
+
 - `{"canales": 2}` sin `"in2"` deja el modo del IN2 como estaba. `"in2"` con
   `"canales": 1` se rechaza (el modo del IN2 queda guardado para el próximo dual).
 - El dual pide el bitstream del IN2. Con el bitstream viejo: independiente mide solo

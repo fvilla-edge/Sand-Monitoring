@@ -9,7 +9,9 @@
 # 3. Espera internet hasta starlink.ventana_espera_internet_min.
 # 4. Un intento de subida a GCS (subir_csv_gcs.py --ventana).
 # 5. Deja starlink.ventana_espera_losant_s desde que hubo internet para que
-#    llegue un comando "modo" de Losant (panel-solar-informe).
+#    llegue un comando "modo" o "canales" de Losant (panel-solar-informe;
+#    los manda el workflow segun los tags del Device). Un cambio de canales
+#    tarda ~30 s y sigue solo aunque la ventana cierre.
 # 6. Si la antena esta actualizando firmware (softwareUpdateState distinto
 #    de IDLE), espera hasta starlink.ventana_extension_update_min mas.
 # 7. Cierra la ventana: borra VENTANA_FLAG y aplica el objetivo (=> "off",

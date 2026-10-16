@@ -771,7 +771,21 @@ ssh root@<IP_CAMPO> 'cat /root/actualizacion/RESULTADO_20261015_190535_864a15c'
       `ventana`; mirar `/root/logs_campo/ventanas_starlink.log` (internet_s,
       duración, `gcs="subidos N/N"`), que suban `ventanas_*`, `*_in2` y
       `energia_*` a `campo/…`, y que el relé apague y confirme. Fase 6 del
-      plan de modos: anotar duración y consumo.
+      plan de modos: anotar duración y consumo. Con el cable del relé
+      puesto, en `journalctl -u starlink-ventana` **no** debe aparecer
+      `ADVERTENCIA: aplicar_objetivo.sh fallo al abrir la ventana` (en el lab
+      sale en cada ventana porque el cable está sacado).
+- [ ] **Mono/dual por tag en ventana real** (`docs/plan_canales_por_tag.md`;
+      lab 7/7 con placa conectada y reconexión simulada 2026-10-16). Antes:
+      en el Device de campo crear tags `canales` / `in2_modo` y los nodos del
+      workflow (Cond A/B/C + 2 Command `canales`, **Save**). Con Starlink
+      apagada (entre ventanas) cambiar el tag y en la ventana siguiente ver:
+      un solo comando `canales` en `journalctl -u panel-solar-informe`,
+      `RESULTADO: ok …` en `/root/logs_campo/cambiar_canales.log` **antes**
+      de que cierre la ventana (en el lab, 42 s desde que conecta; la ventana
+      espera 120 s), `fin=normal` en `ventanas_starlink.log`, relé apagado y
+      el cambio visible en Losant (`me_canales`/`me_in2_modo`) en la ventana
+      siguiente. Repetir una vez para cada sentido (mono → dual, dual → mono).
 - [ ] **Comandos con el relé real:** `starlink` `{"accion": "on"}` →
       ignorado; tag permanente ↔ ventana ida y vuelta.
 - [ ] Si se puede, IN2 con arena tirada a mano (como en julio) para ver que

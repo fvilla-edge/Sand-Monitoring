@@ -177,7 +177,8 @@ valor válido (`ventana` | `permanente`); otro valor no dispara nada.
   - `ventana_minuto`: `5`
   - `ventana_espera_internet_min`: `15`
   - `ventana_espera_losant_s`: `120` (tiempo para que llegue un comando de
-    modo antes de apagar)
+    modo antes de apagar; desde 2026-10-16 también el de `canales`,
+    `docs/plan_canales_por_tag.md`)
   - `ventana_extension_update_min`: `30` (tope extra si la antena está
     actualizando firmware; valor a revisar con la Fase 6)
   - `hora_on`, `hora_off`, `dias_habilitados` **se quedan por ahora**:
