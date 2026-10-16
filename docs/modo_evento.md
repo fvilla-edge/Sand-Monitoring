@@ -1,7 +1,19 @@
 # Modo evento — captura continua 24h, guardando solo lo que importa
 
-Rama `modo-evento`. Estado al 2026-09-24: **validado en la placa de pruebas
-(`rp-f0fd8c`)**, todavía **no desplegado en la placa de campo (`rp-f0fbda`)**.
+Estado al 2026-10-16:
+
+- **Campo (`rp-f0fbda`):** modo evento en **mono** (solo IN1, dec 32) con el
+  bitstream `7f23f7d` (tag `campo-2026-10-08`).
+- **Lab (`rp-f0fd8c`) y paquete integrado** (rama `integracion-campo`,
+  `actualizar_placa_campo.md` sección 7): además **dos sensores** (IN1 + IN2,
+  bitstream del IN2 `20ac88b`), IN2 **independiente** o **asociado**, y cambio
+  mono/dual remoto (comando o tags de Losant). Validado en el lab en reposo;
+  falta probarlo con los sensores reales (en la empresa).
+
+Historia de cada parte en los planes: `plan_dos_canales.md` (primera versión,
+IN2 de referencia; reemplazada), `plan_in2_independiente.md`,
+`plan_in2_asociado.md`, `plan_cambio_canales_remoto.md`,
+`plan_canales_por_tag.md`. Este documento describe **cómo funciona hoy**.
 
 ## Idea
 
@@ -12,7 +24,10 @@ tiempo real; el programa de la placa guarda:
 | Qué | Cuándo | Tamaño aprox. |
 |---|---|---|
 | Área + kurtosis de **cada** ventana (CSV) | siempre, 24h | ~30MB/día |
-| Señal cruda de la ventana ±10ms (`evento_*.bin` + `.json`) | solo si kurtosis ≥ umbral (default 3.4 desde el 5/10/2026, antes 5) | ~0.5MB por evento |
+| Señal cruda de la ventana ±10ms (`evento_*.bin` + `.json`) | solo si kurtosis ≥ umbral (default 3.4 desde el 5/10/2026, antes 5) | ~0.5MB por evento a dec32 |
+
+En dual, el IN2 tiene lo mismo (su CSV y sus eventos) en `<destino>/in2/`
+(ver "Mono y dual").
 
 Por qué guardar siempre el área y la kurtosis, además de los eventos:
 
@@ -36,7 +51,8 @@ Placa (rp-f0fd8c / campo)                      PC
 ─────────────────────────                      ──
 FPGA (bitstream port-2026.1)                   ventanas_a_paquete.py
   pasabanda 50-400kHz + área/kurtosis            CSV -> paquete liviano (JSON)
-  por ventana (registros 0x40000328..)          ver_paquete.py
+  por ventana (registros 0x40000328..;          ver_paquete.py
+  IN2 desde 0x4000034C, bitstream 20ac88b)
         │ registros                              visor área/kurtosis, horas/días
         ▼                                      reconstruir_senal.py
 scripts_campo/c/capturar_eventos (C++)           eventos + CSV -> señal continua
@@ -102,6 +118,16 @@ scripts_campo/capturar_eventos.py (lanzador)
 - Umbral: `Environment=UMBRAL=...` en la unit.
 - **El server acepta un solo cliente**: para usar `capturar_stream.py` en la
   misma placa, antes pasar a modo clásico (`cambiar_modo.sh clasico`, abajo).
+- **Mono/dual y modo del IN2** salen de `config_campo.json`
+  (`modo_evento.canales`, `modo_evento.in2_modo`); ver "Mono y dual". Un
+  drop-in con `Environment=CANALES=` o `DEC=` gana sobre el config (solo para
+  pruebas). `UMBRAL2` (opcional) = umbral del IN2; sin él, el del IN1.
+- **Archivos de estado** (`/run/modo-evento/`, RAM, los lee el anotador):
+  `destino` (carpeta, `sin_disco`), `medicion` (`canales=2 dec=64
+  in2=independiente`, lo escribe el supervisor al arrancar), `in2` (`si`/`no`:
+  si el bitstream calcula el IN2, lo escribe `capturar_eventos`), `cruda_pausada`.
+  El supervisor borra `medicion` e `in2` al parar: mientras reinicia, el
+  resumen no trae `me_canales`.
 
 ```bash
 cp /root/scripts_campo/systemd/modo-evento.service /etc/systemd/system/
@@ -150,6 +176,85 @@ de 1 min (2 chunks, 97%/94% de eficiencia, acumulador en 0); reboot en clásico
 repetir `evento` no reinició el servicio; un segundo cambio simultáneo fue
 rechazado.
 
+## Mono y dual
+
+| Modo | Qué mide | Decimación | Eventos |
+|---|---|---|---|
+| Mono (`canales` 1) | IN1 | 32 (fs 3.906MHz) | IN1 en `<destino>/` |
+| Dual independiente (`canales` 2, `in2_modo` independiente) | IN1 + IN2 | 64 (fs 1.953MHz) | cada sensor dispara por **su** kurtosis y **su** umbral: IN1 en `<destino>/`, IN2 en `<destino>/in2/` |
+| Dual asociado (`in2_modo` asociado) | IN1 + IN2 | 64 | el IN2 graba su cruda **solo cuando graba el IN1**, el mismo tramo y con el **mismo nombre** en `in2/` |
+
+- **Por qué dec64 en dual:** escribiendo 1 evento/s, dual a dec32 perdió
+  0.12% de muestras y 5 ventanas en 15 min; a dec64, 0.00045% y 0 (pruebas
+  W15/W15d64, 2026-10-06). La banda 50-400kHz entra entera (Nyquist 976kHz).
+  Al arrancar, `capturar_eventos` escribe en la FPGA el largo de ventana (50ms)
+  y los coeficientes del pasabanda para esa fs y los verifica. **Mono sigue a
+  dec32.**
+- **Los dos canales se calculan igual** en la FPGA (filtro + acumulador propios,
+  mismos coeficientes y largo de ventana), con `window_count` común: las filas
+  de los dos CSV se emparejan por `window_count`.
+- **El IN2 sigue con su CSV** en los dos modos de dual; asociado solo cambia qué
+  dispara la grabación de su cruda. En asociado el `.json` del IN2 trae
+  `"disparo": "IN1"` y el área/kurtosis **del IN2** en esa ventana. Si la cruda
+  del IN1 no se pudo guardar (espacio, buffer pisado), el IN2 sigue con lo suyo
+  (puede quedar uno sin el otro).
+- **Bitstream sin el IN2** (`7f23f7d`, ID `0x00000000`; el del IN2 tiene
+  `0x534D0002` en `0x4020007C`): en independiente mide **solo el IN1** (log
+  `WARNING bitstream sin calculo del IN2`), sin CSV del IN2; en asociado graba
+  igual la cruda del IN2 (el stream trae los dos canales) pero sin su
+  área/kurtosis (`null`) ni su CSV. Losant informa `me_canales = 1` en
+  independiente.
+- **A dec64 los números no son comparables con dec32 sin recalibrar:** el umbral
+  3.4 se eligió a dec32 (reposo dec64 en el lab: kurtosis mediana 2.998, máx
+  3.06); `ESCALA_FPGA_DEFAULT` / `PISO_FPGA_DEFAULT` están medidos a dec32. El
+  umbral del IN2 es hoy el del IN1, sin calibrar con su sensor real.
+- **Asociado duplica la escritura** de cruda en cada evento (IN1 + IN2): con
+  mucha arena, el doble de disco y de E/S en el mismo instante.
+- En el lab el IN2 solo vio ruido: falta ver los dos sensores con arena real.
+
+### Cambiar de modo
+
+No editar el config a mano (comandos y ejemplos en `COMANDOS.md`, sección
+"Mono / dual y modo del IN2"):
+
+- **En la placa:** `cambiar_canales.sh 1` / `2` / `2 independiente|asociado`.
+- **Losant, comando `canales`:** `{"canales": 1}`, `{"canales": 2, "in2":
+  "asociado"}` (`"in2"` opcional, solo con 2). Lo recibe `publicar_losant.py`
+  y lanza el script.
+- **Losant, tags del Device** `canales` / `in2_modo`: el workflow los compara
+  con lo que la placa informa y manda el comando solo si difieren. **En modo
+  ventana usar los tags**: Losant no guarda comandos, y uno mandado con la placa
+  desconectada se pierde (`plan_canales_por_tag.md`). Con los tags puestos, un
+  comando a mano distinto lo deshace el workflow al minuto.
+
+`cambiar_canales.sh` corre desacoplado (`systemd-run --unit=cambiar-canales`:
+sigue aunque se corte el SSH o Starlink; un segundo cambio en curso se rechaza),
+toma el lock del relé (espera hasta 200 s), escribe las claves de forma atómica
+(`cfg.py --poner`: temporal + fsync + rename), reinicia **solo** `modo-evento`
+(hueco de ~1-2 min en el CSV) y espera hasta 4 min a que `medicion` diga lo
+pedido. Si no, **vuelve solo al modo anterior**. Pedir lo que ya mide responde
+`ok ... (ya estaba)` sin reiniciar; en modo clásico no hace nada. Tarda ~30 s;
+~1 de cada 10 arranques la librería del vendor se cae en `startStreaming` y
+systemd la relanza a los 60 s (el cambio tarda ~1,5 min y termina igual).
+Resultado en `/root/logs_campo/cambio_canales_estado` (= `me_cambio`) y
+historial en `cambiar_canales.log`.
+
+### Qué llega a Losant (anotador `resumen_modo_evento.py`, cada minuto)
+
+Además de lo de siempre (`me_activo`, `me_estado`, `me_ventanas_1min`,
+`kurt_max_1min`, `area_*`, `me_cruda_pausada`, salud de la placa):
+
+| Atributo | Qué es |
+|---|---|
+| `me_canales` | lo que **se mide**: 1 o 2 (dual con bitstream sin IN2 → 1); no viene mientras la captura reinicia |
+| `me_in2_modo` | `independiente` / `asociado`, solo con `me_canales` = 2 |
+| `me_dec` | 32 o 64 |
+| `me_cambio` | resultado del último cambio (`ok 2 asociado <hora>`, `error: ... (volvio a 1)`, ...) |
+| `kurt_max_1min_in2`, `area_max_1min_in2` | del IN2, en dual, **desde el segundo minuto** (el lector arranca al final del CSV) |
+
+Los CSV del IN2 suben a GCS con sufijo `_in2` (`_sd_in2` sin disco), porque
+tienen el mismo nombre que los del IN1.
+
 ## Formatos
 
 ### Registro continuo: `ventanas_AAAAMMDD_HH.csv` (uno por hora UTC)
@@ -157,10 +262,16 @@ rechazado.
 En la carpeta `--destino`, junto a los eventos. Se apaga con `--sin-registro`.
 
 ```
-window_count,t_utc_ms,area,kurtosis,estado,perdidas_fpga
-7995,1790257893778,0.634819,3.24481,ok,0
-7217,1790258000123,,,saltada,0
+window_count,t_utc_ms,area,kurtosis,estado,perdidas_fpga,dec
+7995,1790257893778,0.634819,3.24481,ok,0,32
+7217,1790258000123,,,saltada,0,32
 ```
+
+- `dec` (desde 2026-10-06): la escala del área cambia con la decimación. Los
+  CSV viejos (6 columnas, sin `dec`) son todos dec32; la hora en que se
+  actualiza el software puede mezclar filas de 6 y 7 columnas (los lectores de la PC lo
+  soportan).
+- El del IN2 (`<destino>/in2/ventanas_*.csv`) tiene el mismo formato y nombre.
 
 - `window_count`: contador de ventanas de la FPGA. **Es la referencia de
   tiempo exacta** (cada ventana dura 50ms justos). No es continuo entre
@@ -182,10 +293,15 @@ margen a cada lado. `.json`:
 | Campo | Qué es |
 |---|---|
 | `window_count` | ventana de la FPGA que cruzó el umbral |
-| `ventana_muestras`, `margen_muestras` | 195312 y 39062 a decimación 32 (50ms, ±10ms) |
+| `fs_hz`, `dec` | frecuencia de muestreo y decimación |
+| `ventana_muestras`, `margen_muestras` | 195312 y 39062 a dec32, 97656 y 19531 a dec64 (50ms, ±10ms) |
 | `inicio_ventana_en_archivo` | dónde empieza la ventana oficial dentro del `.bin` (ver "alineación" abajo) |
-| `area`, `kurtosis` | los que calculó la FPGA |
+| `area`, `kurtosis` | los que calculó la FPGA para ese canal (`null` si el bitstream no calcula el IN2) |
 | `con_hueco` | `true` si faltaron muestras en ese tramo (ver "huecos") |
+| `canales` | 1 o 2 (corrida mono o dual) |
+| `canal` | sensor guardado en ese `.bin`: `IN1` o `IN2` (este en `<destino>/in2/`) |
+| `disparo` | sensor que hizo grabar: `IN1`, o `IN2` en independiente; en asociado el del IN2 dice `IN1` |
+| `timestamp_iso` | hora de la detección (desde el 2026-10-15 se fija al detectar, no al escribir: así el par IN1/IN2 asociado tiene el mismo nombre) |
 
 ## Comandos
 
@@ -329,8 +445,9 @@ Detector (FPGA vs software sobre las mismas muestras que llegaron): mediana
   está en HV).
 - Posición del hueco en el JSON del evento.
 - Herramienta de alineación por evento en la PC (monitor del margen).
-- Desplegar en la placa de campo: requiere el bitstream port-2026.1 y un
-  procedimiento de actualización remota segura (checksum + fallback + cortes
-  de Starlink), todavía sin diseñar.
+- Dos sensores en campo (va con el paquete integrado, `actualizar_placa_campo.md`
+  sección 7): antes confirmar físicamente qué hay en el IN2 de campo y su
+  jumper; probar asociado con señal en los dos sensores; calibrar el umbral
+  del IN2 y re-medir escala/piso de la FPGA a dec64 con datos de campo.
 - Recalibrar `FA_THRESH` / `INTERPRETACION_RESULTADOS.md` con los eventos
   reales confirmados del 21/9.

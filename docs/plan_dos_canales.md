@@ -1,6 +1,10 @@
 # Plan — modo evento con 2 canales (IN1 + IN2 de referencia)
 
-Estado: **plan, sin implementar** (2026-10-05). Todo se prueba en la placa de
+Estado: **opción A REEMPLAZADA** (2026-10-06) por el IN2 como sensor
+independiente (`docs/plan_in2_independiente.md`); de este plan siguen
+vigentes la Fase 0, la Fase 1b (decimación configurable, dual a dec64) y la
+bitácora. Cómo funciona hoy: `docs/modo_evento.md`, sección "Mono y dual".
+Estado original: **plan, sin implementar** (2026-10-05). Todo se prueba en la placa de
 pruebas (`rp-f0fd8c`); la placa de campo (`rp-f0fbda`) no se toca hasta cerrar
 las pruebas de lab y decidir cuándo desplegar.
 
