@@ -170,3 +170,17 @@ JSON) debería andar así, pero es lo primero que hay que confirmar. Si
   `comandos_losant/modo_starlink.py`): comando 13:33:03, `ok 2 independiente`
   13:33:36. Cambiar el tag por API también dispara el workflow. Lab queda
   dual independiente.
+- 2026-10-16 13:48-14:08 UTC — rama `modo_starlink` del "test sc" después de
+  sumar los nodos de canales: tag → `permanente`, comando `modo` 13:53:12 (2 s
+  después del informe `sl_modo` de cada 15 min); tag → `ventana`, comando
+  14:08:16. Sigue andando. Recordar: el tag de modo se aplica con el próximo
+  informe `sl_modo` (hasta 15 min con la placa conectada), el de canales con
+  el próximo resumen (1 min).
+- 2026-10-16 13:49 UTC — **hallazgo operativo:** al guardar `modo_starlink`
+  → `permanente` desde la pantalla del Device, `in2_modo` volvió a
+  `asociado` (comando `2 asociado` 13:49:04, `ok` 13:49:36). Causa probable:
+  la pantalla estaba abierta desde antes del PATCH por API de 13:32 y al
+  guardar mandó la lista de tags vieja (Losant reemplaza la lista entera,
+  como el PATCH). El workflow hizo lo correcto con el tag que había. Regla:
+  **recargar la pantalla del Device antes de editar tags** si alguien (o la
+  API) los cambió mientras estaba abierta.
