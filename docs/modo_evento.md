@@ -328,6 +328,13 @@ Antes de estas pruebas, `systemctl stop modo-evento` (un solo cliente). **Antes 
 (los scripts borran `ev_T` y pisan los logs), y **espaciar las corridas
 ~60s** (el streaming-server queda residual si se lanzan en ráfaga).
 
+Dos sensores con un T de OUT1 a IN1 + IN2 (2026-10-16): `etapa5_t.sh NOMBRE
+partes` en el mismo directorio (humo, reposo, p64, p32, arena, tonos,
+tonos32; para y vuelve a arrancar `modo-evento` solo). Análisis en la PC:
+`analisis/placa/comparar_in1_in2.py` (IN1 vs IN2 por `window_count`) y
+`analisis/placa/tonos_banda.py` (forma de banda). Resultados en la bitácora
+de `docs/plan_in2_independiente.md`.
+
 En la PC:
 ```bash
 # CSV -> paquete liviano (uno por hora, o todos juntos)
@@ -441,8 +448,10 @@ Detector (FPGA vs software sobre las mismas muestras que llegaron): mediana
 
 ## Pendientes
 
-- Volver el jumper de IN1 a **HV** al terminar las pruebas de banco (campo
-  está en HV).
+- Volver los jumpers de IN1 **e IN2** a **HV** al terminar las pruebas de
+  banco (campo está en HV; desde el 16/10 el lab tiene los dos en LV con el T).
+- Repetir el reposo dual con el T con el ambiente limpio (el del 16/10 tuvo
+  ruido externo).
 - Posición del hueco en el JSON del evento.
 - Herramienta de alineación por evento en la PC (monitor del margen).
 - Dos sensores en campo (va con el paquete integrado, `actualizar_placa_campo.md`

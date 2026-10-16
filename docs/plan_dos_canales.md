@@ -260,7 +260,9 @@ y su jumper.
     lectura de los registros + el cableado del RTL. **La escala FPGA/software
     cambia con la decimación** -> `ESCALA_FPGA_DEFAULT` (PC) necesita valor
     propio a dec64. Para una prueba de forma de banda haría falta loopback
-    analógico (cable) con tonos.
+    analógico (cable) con tonos. **Hecha el 2026-10-16 con el T** (etapa 5
+    de `docs/plan_in2_independiente.md`): dec64 a 0.19 dB del diseño en
+    50-400 kHz.
 - 2026-10-06: **SIGSEGV de arranque = bug del vendor** (`arranques_core.sh`,
   10 arranques dec32 mono con core dump: 3 caídas, las 3 con la misma
   firma). Un hilo de asio corre el lambda de error de

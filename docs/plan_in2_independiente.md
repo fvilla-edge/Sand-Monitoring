@@ -1,6 +1,7 @@
 # Plan — IN2 como sensor independiente (área/kurtosis en la FPGA)
 
-Estado: **etapas 1-4, 6 y 7 hechas (7 sin commitear); etapa 5 espera el T** (2026-10-06). Reemplaza la "opción A" de
+Estado: **etapas 1-8 hechas en lab; etapa 5 (T) hecha el 2026-10-16** (falta
+solo repetir el reposo con el ambiente limpio). Reemplaza la "opción A" de
 `docs/plan_dos_canales.md` (FPGA solo IN1, IN2 crudo): el IN2 tiene que
 funcionar **igual que el IN1**, como un segundo sensor. Todo en la placa de
 pruebas (`rp-f0fd8c`) hasta la última etapa; la placa de campo no se toca.
@@ -255,4 +256,57 @@ vez en el hardware.
   (`/root/nuevo_in2/` + bitstream IN2 + `canales.conf`, 19:38): dual dec64
   con el IN2 al toque. El CSV de la hora 19 del IN1 quedó con filas de 6 y
   7 columnas mezcladas (los lectores de la PC lo soportan).
+- 2026-10-16, **etapa 5 (T de OUT1 a IN1 + IN2)** en `rp-f0fd8c`, 19:05-19:39
+  UTC. Jumpers de IN1 e IN2 en **LV** (el binario igual pide `A_1_20`/HV al
+  streaming: no afecta, las sumas de la FPGA son cuentas crudas y la
+  kurtosis no depende de la escala). Bitstream `b34cd26f`, binario
+  `74b88bb2`. Script de lab `/root/prueba_eth0/etapa5_t.sh NOMBRE partes`
+  (no versionado, como los otros de `prueba_eth0`): dual, IN2
+  independiente, umbral 3.4/3.4, para `modo-evento` al empezar y lo vuelve
+  a arrancar al terminar. Logs `etapa5_T1.log` (humo), `etapa5_T2.log`
+  (reposo, p64, p32, arena), `etapa5_T3.log` (tonos); datos en
+  `/mnt/usb/etapa5_T*`. Comparación ventana por ventana con
+  `analisis/placa/comparar_in1_in2.py` (cruza por `window_count`).
+  - **OUT1 físico anda con el bitstream del IN2** (el comentario del C++
+    de que no andaba era del bitstream etapa7).
+  - Pulsos por OUT1, siempre en la **misma ventana** en IN1 e IN2, kurtosis
+    ~3600 en los dos: humo 4/4, p64 20/20, p32 14/14 (los otros 6 cayeron
+    en ventanas saltadas por sobrecarga de escritura, ver ruido abajo).
+  - Arena (tramo real 144456, `--dac-escala 8`, dec64): 205 ventanas
+    >= 3.4 en los dos, **ninguna en un solo canal**; kurtosis máx. 203.7
+    (IN1) / 203.5 (IN2).
+  - Ganancia IN2/IN1 con la señal dominando: 0.977-0.991 (diferencia
+    normal entre entradas, constante con la frecuencia, ver tonos).
+  - **Ruido externo intermitente** durante la tanda T2 (también en
+    `modo-evento` entre corridas: 19:02-19:03, 19:05, 19:08-19:19; limpio
+    19:04, en el humo y 19:20): kurtosis de reposo IN1 4.6 / IN2 3.6, área
+    IN2/IN1 0.84 -> casi toda ventana es evento. Llega más fuerte al IN1.
+    Por eso p64 da 174 ventanas "solo IN1" (ruido, no pulsos) y el
+    **reposo de esta tanda no sirve**: repetirlo con el ambiente limpio.
+    No se investigó el origen (decisión del usuario).
+  - **Forma de banda con tonos** (pendiente de la Fase 1b de
+    `docs/plan_dos_canales.md`): `analisis/placa/tonos_banda.py generar`
+    -> `tonos.bin` (marcador 150 kHz + 20 tonos de 5 a 900 kHz, 0.4 s
+    cada uno, amplitud 12000, DAC a 3906250 Hz), partes `tonos` (dec64) y
+    `tonos32` (dec32) del script. Área por tono relativa a 150 kHz contra
+    el diseño (Butterworth orden 2, 50-400 kHz, Q20):
+
+    | | 50-400 kHz vs diseño | -3 dB en 50k / 400k | IN2 vs IN1 |
+    |---|---|---|---|
+    | dec64 | máx. 0.19 dB | -2.9 / -3.2 dB | <= 0.15 dB (0.991 constante) |
+    | dec32 | máx. 1.3 dB | -2.9 / -1.7 dB | <= 0.01 dB |
+
+    dec64 confirma medido que los coeficientes que escribe el C++ dan la
+    banda diseñada (antes solo había lectura de registros + RTL). dec32 queda
+    limitado por la medición: el DAC por red tuvo cortes en esa corrida y
+    la meseta de referencia de 150 kHz salta 0.6 dB; además dec32 mono es
+    la configuración que ya corre en campo. Arriba de 600 kHz la medición
+    se aparta 2-5 dB a -20/-40 dB (piso/decimador del vendor; fuera de la
+    banda de análisis). Hallazgo de método: el DAC por red **no respeta una
+    grilla fija de tiempo** (cortes y corrimientos de algunas ventanas): el
+    análisis separa por mesetas. Los 141 eventos de la corrida dec64 son
+    transitorios de esos cortes (artefacto de la prueba).
+  - Decisión vigente que esto respalda: **mono = dec32, dual = dec64**.
+  - Placa al terminar: `modo-evento` activo, **jumpers en LV y T puesto**
+    (volver a HV para capturar como campo).
 
