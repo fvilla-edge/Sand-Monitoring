@@ -470,7 +470,7 @@ ssh root@<IP_CAMPO> 'md5sum /root/panel_solar_ble/balance_energia.py'
 ssh root@<IP_CAMPO> 'systemctl stop panel-solar-informe && python3 -c "
 import json; f=\"/root/energia_estado.json\"; e=json.load(open(f))
 e.update(soc_ah=50.0, ultimo_float=None, float_racha=0)
-json.dump(e, open(f, \"w\")); print(e)" && sync && systemctl start panel-solar-informe;
+json.dump(e, open(f, \"w\")); print(e)"; sync; systemctl start panel-solar-informe;
   sleep 75; systemctl is-active panel-solar-informe; systemctl show -p NRestarts --value panel-solar-informe;
   python3 -c "import json; e=json.load(open(\"/root/energia_estado.json\")); print(e[\"soc_ah\"], e[\"ultimo_float\"], e[\"float_racha\"])"'
 ```
@@ -677,6 +677,16 @@ paquete**.
   `cfg.py --poner`, `me_canales`, ventanas y GCS en ventana. **No probado:**
   energía con el paquete integrado (el lab no tiene ESP32), Starlink real,
   relé real.
+- **Ensayo completo de esta sección en el lab (16/10, 14:43-14:53 UTC): OK.**
+  Vuelta atrás a mano (7.6) dos veces seguidas (`5de699f_b` y `50dc5ce_b`,
+  45 s cada una, sin errores) hasta dejar el lab como campo (horario viejo,
+  bitstream de campo `1e6b2cf2`); desde ahí 7.1 (tag y placa en permanente),
+  7.2 (`864a15c` → `ok` en 2 min, 80/80 archivos del MANIFIESTO, relé leído
+  "on", bitstream `b34cd26f`) y 7.3 con los comandos literales. Fue la
+  primera aplicación de `864a15c` como paquete (antes el lab tenía
+  `5de699f_b` + instalaciones a mano). Salieron dos correcciones: el `;` del
+  reseteo del SOC (7.3) y crear los tags de canales después de instalar
+  (7.4).
 - **Cambio respecto de la etapa 9 del plan del IN2** (bitstream solo con el
   software viejo en mono, después el software, después dual): ese
   escalonamiento era para cuando el único acceso era Starlink. Con la placa
@@ -727,6 +737,12 @@ ssh root@<IP_CAMPO> 'cat /root/actualizacion/RESULTADO_20261015_190535_864a15c'
   ID ya usado no se vuelve a aplicar: copiar la carpeta como `<id>_b`.
 - La captura arranca en **mono** (`modo_evento.canales` lo agrega la fusión
   en `1`).
+- **No crear todavía los tags `canales` / `in2_modo` en el Device de campo**
+  (van en 7.4, después de `RESULTADO ok`). En el ensayo del 16/10 los tags de
+  `test_SC` (dual) hicieron que Losant mandara el comando `canales` al primer
+  resumen, con `aplicar_actualizacion.sh` todavía verificando: terminó `ok`
+  porque `cambiar_canales.sh` y el reconciliador comparten el lock del relé y
+  se esperan, pero conviene no depender de eso.
 
 ### 7.3 Ajustes después de aplicar (el paquete no pisa valores del config)
 
@@ -737,11 +753,15 @@ ssh root@<IP_CAMPO> 'cat /root/actualizacion/RESULTADO_20261015_190535_864a15c'
 - [ ] Resetear el SOC (el 100 % guardado el 8/10 es falso; 4c-bis, solo el
       paso 2 — el archivo ya lo trae el paquete):
   ```bash
-  ssh root@<IP_CAMPO> 'systemctl stop panel-solar-informe && python3 -c "
-  import json; f=\"/root/energia_estado.json\"; e=json.load(open(f))
-  e.update(soc_ah=50.0, ultimo_float=None, float_racha=0)
-  json.dump(e, open(f, \"w\")); print(e)" && sync && systemctl start panel-solar-informe'
+  ssh root@<IP_CAMPO> 'systemctl stop panel-solar-informe && python3 -c "import json; f=\"/root/energia_estado.json\"; e=json.load(open(f)); e.update(soc_ah=50.0, ultimo_float=None, float_racha=0); json.dump(e, open(f, \"w\")); print(e)"; sync; systemctl start panel-solar-informe; systemctl is-active panel-solar-informe'
   ```
+  El `python3` va en una sola línea a propósito: este bloque está indentado
+  dentro de la lista y, copiado del archivo en crudo, las líneas sueltas
+  llegaban con 2 espacios adelante (`IndentationError`, visto 16/10).
+  El `start` va con `;` y no con `&&`: si el archivo falta o está roto, el
+  `python3` falla pero el cartero vuelve a arrancar igual (con `&&` quedaba
+  parado y la placa dejaba de reportar a Losant; visto en el ensayo del
+  16/10). Si imprime un error en vez del diccionario, el SOC no se reseteó.
 - [ ] Borrar la cola vieja de Losant dejando el contador (4e):
   ```bash
   ssh root@<IP_CAMPO> "cd /mnt/usb/losant_pendientes && ls | wc -l && find . -maxdepth 1 -name '[0-9]*.json' -delete && rm -rf .malos && ls -A"
@@ -776,7 +796,8 @@ ssh root@<IP_CAMPO> 'cat /root/actualizacion/RESULTADO_20261015_190535_864a15c'
       `ADVERTENCIA: aplicar_objetivo.sh fallo al abrir la ventana` (en el lab
       sale en cada ventana porque el cable está sacado).
 - [ ] **Mono/dual por tag en ventana real** (`docs/plan_canales_por_tag.md`;
-      lab 7/7 con placa conectada y reconexión simulada 2026-10-16). Antes:
+      lab 7/7 con placa conectada y reconexión simulada 2026-10-16). Antes
+      (y recién ahora, con la instalación ya en `ok`, ver 7.2):
       en el Device de campo crear tags `canales` / `in2_modo` y los nodos del
       workflow (Cond A/B/C + 2 Command `canales`, **Save**). Con Starlink
       apagada (entre ventanas) cambiar el tag y en la ventana siguiente ver:
