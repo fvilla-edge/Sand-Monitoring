@@ -753,6 +753,14 @@ ssh root@<IP_CAMPO> 'cat /root/actualizacion/RESULTADO_20261015_190535_864a15c'
 
 ### 7.3 Ajustes después de aplicar (el paquete no pisa valores del config)
 
+- [ ] Timer de GCS habilitado y activo (en permanente es el único que sube a
+      GCS; el paquete no lo toca, así que queda como estaba). Si falta, Losant
+      sigue recibiendo todo y nada avisa que GCS dejó de subir (en el lab
+      estaba deshabilitado, visto 2026-10-19):
+  ```bash
+  ssh root@<IP_CAMPO> 'systemctl is-enabled subir-csv-gcs.timer; systemctl is-active subir-csv-gcs.timer'
+  ```
+  Tiene que dar `enabled` y `active`. Si no: `systemctl enable --now subir-csv-gcs.timer`.
 - [ ] `gcs.dias_atras` 7 → 30:
   ```bash
   ssh root@<IP_CAMPO> 'python3 /root/scripts_campo_comun/cfg.py --poner gcs.dias_atras 30 && python3 /root/scripts_campo_comun/cfg.py gcs.dias_atras'
