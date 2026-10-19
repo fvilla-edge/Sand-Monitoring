@@ -703,19 +703,26 @@ paquete**.
   ssh root@<IP_CAMPO> 'bash -s' < scripts_campo_comun/inventario_placa.sh \
       > datos_campo/inventarios/inventario_rp-f0fbda_<fecha>.txt
   ```
-- [ ] Losant, Device de campo — atributos nuevos (si no, Losant los
+- [x] Losant, Device de campo — atributos nuevos (si no, Losant los
       descarta): `sl_modo` (String), `starlink_comando` (String),
       `me_canales` y `me_dec` (Number), `me_cambio` (String),
       `kurt_max_1min_in2` y `area_max_1min_in2` (Number), `me_in2_modo`
       (String). Verificar que
-      estén los `en_*` (se crearon el 8/10).
-- [ ] Losant: tag `modo_starlink` = `permanente` en el Device de campo y el
+      estén los `en_*` (se crearon el 8/10). **Hecho 2026-10-19** (creados
+      por el usuario en `SC1`).
+- [x] Losant: tag `modo_starlink` = `permanente` en el Device de campo y el
       workflow de dos Conditionals (copia del de `test_SC`, con el Device de
-      campo; plan de modos, Fase 0).
-- [ ] `comandos_losant/modo_starlink.py`: anotar el ID del Device de campo; si
-      está en otra aplicación de Losant que `test_SC`, la herramienta tiene el
-      ID de aplicación fijo y hace falta otro token (scope `device.get` +
-      `device.patch`) de esa aplicación.
+      campo; plan de modos, Fase 0). **Hecho 2026-10-19**: workflow aparte
+      para el Device de campo `SC1` (misma aplicación que `test_SC`,
+      `6a85af0d0a0c5812f97c1828`), solo Conditional 1/2 + Command `modo`, sin
+      los nodos de canales (van en 7.4). Probado sin la placa: Virtual Button
+      -> nodo Device: State que escribe `sl_modo` en `SC1` -> trigger real,
+      con Debug en vez del Command: `permanente` -> corta en Cond. 2,
+      `ventana` -> pasa (mandaría `modo`), sin `sl_modo` -> corta en Cond. 1.
+      Nodos de prueba borrados; deja datos `sl_modo` de prueba en el
+      historial de `SC1`. Falta ver el comando llegar a la placa (7.4).
+- [x] Misma aplicación => `comandos_losant/modo_starlink.py` sirve con el
+      mismo token; solo cambia el ID del Device (`SC1`).
 - [ ] Modo permanente en la placa (`aplicar_actualizacion.sh` aborta sin él;
       la placa de campo todavía no tiene `modo_operacion.sh`):
   ```bash
