@@ -1,7 +1,7 @@
 # Plan — IN2 como sensor independiente (área/kurtosis en la FPGA)
 
-Estado: **etapas 1-8 hechas en lab; etapa 5 (T) hecha el 2026-10-16** (falta
-solo repetir el reposo con el ambiente limpio). Reemplaza la "opción A" de
+Estado: **etapas 1-8 hechas en lab; etapa 5 (T) hecha el 2026-10-16**
+(reposo con el T cerrado el 2026-10-19 con los datos del fin de semana). Reemplaza la "opción A" de
 `docs/plan_dos_canales.md` (FPGA solo IN1, IN2 crudo): el IN2 tiene que
 funcionar **igual que el IN1**, como un segundo sensor. Todo en la placa de
 pruebas (`rp-f0fd8c`) hasta la última etapa; la placa de campo no se toca.
@@ -309,4 +309,23 @@ vez en el hardware.
   - Decisión vigente que esto respalda: **mono = dec32, dual = dec64**.
   - Placa al terminar: `modo-evento` activo, **jumpers en LV y T puesto**
     (volver a HV para capturar como campo).
+- 2026-10-19, **reposo dual con el T, ambiente limpio** (cierra el reposo
+  que no sirvió el 16/10). No se corrió `etapa5_t.sh`: `modo-evento` quedó
+  capturando todo el fin de semana con el T puesto y jumpers en **HV**
+  (dual, IN2 independiente, umbral 3.4/3.4), así que se usaron los CSV de
+  ventanas de `/mnt/usb/eventos` (IN1) y `eventos/in2`:
+
+  | Día | Ventanas c/canal | Kurtosis media IN1 / IN2 | Máx. IN1 / IN2 | Eventos >= 3.4 | Área IN1 / IN2 |
+  |---|---|---|---|---|---|
+  | 17/10 | 1727985 | 3.006 / 3.010 | 3.11 / 3.11 | 0 / 0 | 0.565 / 0.550 |
+  | 18/10 | 1727985 | 3.005 / 3.010 | 3.10 / 3.10 | 0 / 0 | 0.565 / 0.550 |
+  | 19/10 (0-12 UTC) | ~872000 | 3.004 / 3.012 | 5.05 / 3.99 | 1 / 1 | 0.566 / 0.550 |
+
+  - Cero ventanas con estado distinto de `ok` en los dos canales.
+  - Ningún evento de un solo canal: el único (19/10 11:48:40 UTC) cae en
+    la misma ventana en IN1 e IN2 (externo).
+  - Área IN2/IN1 en reposo 0.973, coherente con la ganancia 0.977-0.991
+    medida con señal (con el ruido del 16/10 había bajado a 0.84).
+  - Sin muestra cruda ventana por ventana (`comparar_in1_in2.py`): para
+    la pregunta del reposo alcanzan ~3.5 millones de ventanas por canal.
 

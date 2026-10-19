@@ -452,8 +452,6 @@ Detector (FPGA vs software sobre las mismas muestras que llegaron): mediana
   (como campo) y el **T de OUT1 a IN1 + IN2 queda puesto**: lo que captura
   el IN2 del lab es OUT1 en reposo, no un sensor. Para una prueba fina de
   banda con tonos, pasar a LV solo ese rato (en HV 0.8 V es ~4% del rango).
-- Repetir el reposo dual con el T con el ambiente limpio (el del 16/10 tuvo
-  ruido externo).
 - Posición del hueco en el JSON del evento.
 - Herramienta de alineación por evento en la PC (monitor del margen).
 - Dos sensores en campo (va con el paquete integrado, `actualizar_placa_campo.md`
