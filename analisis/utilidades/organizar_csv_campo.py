@@ -37,6 +37,8 @@ def leer_filas(ruta):
         p = linea.split(b",")
         if len(p) not in (6, 7) or linea.startswith(b"window_count"):
             continue
+        if p[4] not in (b"ok", b"saltada"):
+            continue  # fila pegada a una cortada por un corte de energia: columnas corridas
         if len(p) == 6:
             linea += b",32"
         try:

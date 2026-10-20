@@ -49,6 +49,29 @@ def test_csv_y_csv_gz_con_ultima_linea_cortada(tmp_path):
         assert paquete["ventanas_saltadas"] == 1
 
 
+def test_filas_pegadas_por_corte_de_energia(tmp_path):
+    # ventanas_20261020_14.csv de campo: linea cortada + la siguiente pegada
+    # (14:07:44 y 14:32:57), y filas de 7 columnas bajo el encabezado de 6
+    # (hora en que se actualizo la placa)
+    ruta = tmp_path / "ventanas_20261020_14.csv"
+    ruta.write_text(
+        "window_count,t_utc_ms,area,kurtosis,estado,perdidas_fpga\n"
+        "5689,1792505264000,0.6520,2.87,ok,0\n"
+        "5690,1792505264050,1792505482708,0.6523,2.87614,ok,5832\n"
+        "4051,1792505482752,0.65286,2.84142,ok,17536\n"
+        "19611,17925064066,1792506777551,0.50475,2.96188,ok,0\n"
+        "4067,1792506777600,0.503006,2.97358,ok,0\n"
+        "4109,1792507799705,0.501161,2.99631,ok,0,32\n"
+        "4110,1792507799755,0.5,2.9,ok,1100,1792507799805,0.5,2.9,ok,0,32\n")
+    filas = vap.leer_filas([ruta])
+    assert [r["wc"] for r in filas] == [5689, 4051, 4067, 4109]
+    assert all(r["t_ms"] > 1.7e12 for r in filas)
+
+    sys.path.insert(0, str(_ANALISIS / "utilidades"))
+    import organizar_csv_campo as occ  # noqa: E402
+    assert [t for t, _ in occ.leer_filas(ruta)[0]] == [r["t_ms"] for r in filas]
+
+
 def test_area_acumulada_suma_solo_kurtosis_mayor_al_umbral():
     sys.path.insert(0, str(_ANALISIS / "visores"))
     import visor_csv  # noqa: E402 (tkinter/matplotlib se importan, no abren ventana)

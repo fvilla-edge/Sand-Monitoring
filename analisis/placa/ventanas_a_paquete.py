@@ -50,7 +50,10 @@ SALTO_RELOJ_S = 1.0
 def leer_filas(rutas):
     """Filas de uno o mas CSV (.csv o .csv.gz).
     Una fila incompleta se saltea: pasa con la ultima linea de la hora en
-    curso si el CSV se copio mientras la placa lo escribia."""
+    curso si el CSV se copio mientras la placa lo escribia. Tambien una fila
+    pegada a otra cortada por un corte de energia (CSV escritos antes del
+    arreglo del 2026-10-20): queda con columnas corridas, sin "ok"/"saltada"
+    en estado, o con mas de 7 columnas."""
     filas = []
     for ruta in rutas:
         abrir = gzip.open if str(ruta).endswith(".gz") else open
@@ -58,6 +61,8 @@ def leer_filas(rutas):
             for r in csv.DictReader(f):
                 if not r.get("estado") or r.get("perdidas_fpga") is None:
                     continue  # fila cortada: le faltan las ultimas columnas
+                if r["estado"] not in ("ok", "saltada") or len(r) - (None in r) + len(r.get(None) or []) > 7:
+                    continue  # fila pegada a una cortada: columnas corridas
                 try:
                     fila = {
                         "wc": int(r["window_count"]),

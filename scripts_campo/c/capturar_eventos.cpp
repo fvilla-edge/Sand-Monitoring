@@ -722,6 +722,30 @@ class RegistroVentanas {
         }
     }
 
+    // Un corte de energia a mitad de una fila deja el CSV con una linea a medias
+    // y, al reabrirlo en modo "a", la fila nueva se pegaba a esa (campo
+    // 2026-10-20: timestamp truncado, area en la columna de t). Se recorta todo
+    // lo que haya despues del ultimo '\n' (tambien los NUL que deja ext4).
+    // Devuelve el tamano que queda (0 = ni el encabezado estaba completo) o -1.
+    static off_t recortar_linea_cortada(const std::string& ruta) {
+        int fd = open(ruta.c_str(), O_RDWR);
+        if (fd < 0) return -1;
+        off_t fin = lseek(fd, 0, SEEK_END);
+        off_t pos = fin, corte = 0;
+        char buf[4096];
+        bool encontrado = false;
+        while (pos > 0 && !encontrado) {
+            size_t n = pos < (off_t)sizeof buf ? (size_t)pos : sizeof buf;
+            pos -= n;
+            if (pread(fd, buf, n, pos) != (ssize_t)n) { close(fd); return -1; }
+            for (size_t i = n; i-- > 0;)
+                if (buf[i] == '\n') { corte = pos + i + 1; encontrado = true; break; }
+        }
+        if (corte < fin && ftruncate(fd, corte) != 0) corte = -1;
+        close(fd);
+        return corte;
+    }
+
     void escribir(const Fila& f) {
         time_t t = (time_t)(f.t_ms / 1000);
         struct tm tm;
@@ -735,11 +759,22 @@ class RegistroVentanas {
             // llegado a escribirse y el recorte deja el archivo en 0 bytes
             struct stat st_csv;
             bool nuevo = stat(ruta.c_str(), &st_csv) != 0 || st_csv.st_size == 0;
+            if (!nuevo) {
+                off_t queda = recortar_linea_cortada(ruta);
+                if (queda < 0) {
+                    log("WARNING no se pudo revisar la ultima linea de %s", ruta.c_str());
+                } else {
+                    if (queda < st_csv.st_size)
+                        log("CSV %s: recortados %lld bytes de una linea cortada (corte de energia)", ruta.c_str(),
+                            (long long)(st_csv.st_size - queda));
+                    nuevo = queda == 0;
+                }
+            }
             f_ = fopen(ruta.c_str(), "a");
             hora_ = hora;
             if (!f_) { log("WARNING no se pudo abrir %s", ruta.c_str()); return; }
             ruta_ = ruta;
-            pos_bueno_ = ftell(f_);  // en modo "a" queda al final: lo ya escrito esta completo
+            pos_bueno_ = ftell(f_);  // en modo "a" queda al final: recortado arriba, lo ya escrito esta completo
             if (nuevo) fprintf(f_, "window_count,t_utc_ms,area,kurtosis,estado,perdidas_fpga,dec\n");
         }
         if (!f_) return;

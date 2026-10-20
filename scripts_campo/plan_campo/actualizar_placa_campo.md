@@ -885,6 +885,33 @@ asociado (requiere sensor en el IN1), energía y ventana real.
 - Solo el bitstream: `revertir_bitstream.sh` del repo FPGA; con el config en
   dual la captura sigue midiendo el IN1 y `me_canales` pasa a `1`.
 
+## 8. Próximo paquete (después de `campo-2026-10-20`)
+
+Instalado en campo: tag `campo-2026-10-20` (`864a15c`). Lo que sigue va en un
+paquete nuevo armado desde `integracion-campo`:
+
+- [ ] **CSV sin filas pegadas tras un corte de energía** (`capturar_eventos.cpp`,
+      2026-10-20). Visto en campo: `ventanas_20261020_14.csv` con dos líneas
+      cortadas (14:07:44 y 14:32:57) y la fila siguiente pegada (timestamp
+      truncado, área en la columna de t). Al reabrir el CSV de la hora, la
+      captura recorta lo posterior al último `\n` (también los NUL) y lo deja
+      en el log: `CSV ...: recortados N bytes de una linea cortada`. Probado
+      en el lab (`rp-f0fd8c`, dual dec64): 11 bytes recortados, 0 filas mal
+      formadas en IN1 e IN2. Los lectores de la PC (`ventanas_a_paquete.py`,
+      `organizar_csv_campo.py`) descartan las filas pegadas que ya están en
+      GCS. Cambia el binario: rearmar el paquete (compila en la placa de
+      pruebas).
+- [ ] **Primer pulso del relé después de cada arranque sin efecto** (sin
+      hacer). `PS_MIO10` arranca en 0 (leído 2026-10-20, bit 10 de
+      `0xe000a040` a los 31 s del boot) y `pulsar_ps` asume reposo en 1: el
+      primer pulso hace 0→1→0→1 y el relé no cambia. Lo corrige el
+      reconciliador en 5-10 min. Arreglo candidato: fijar el bit en 1 antes de
+      habilitar la salida en `mux_ps10_common.sh`.
+- Sin resolver (no es de software, a confirmar): en la oficina, con fuente de
+  laboratorio y nada en la salida del relé, **cada off→on del relé resetea la
+  placa** (3 de 3 el 2026-10-20: 17:41, 17:44, 19:05 UTC). Revisar en el
+  sitio la primera ventana (`uptime_s` en Losant) antes de dejarla en ventana.
+
 ## Después (no bloquea)
 
 - Opción 2 del relé (lectura de los DIO en el bitstream propio, relé leído
