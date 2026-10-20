@@ -695,10 +695,25 @@ paquete**.
 
 ### 7.1 Antes de tocar la placa
 
-- [ ] **Confirmar físicamente qué hay en el IN2 de campo y su jumper** (lo
-      pide el plan del IN2 antes de pasar a dual).
-- [ ] Inventario (solo lectura) y compararlo con el último: la placa tiene
-      cambios puntuales del 8/10 (4c por `scp`, tag `campo-2026-10-08`):
+`<IP_CAMPO>` en la empresa (llegó 2026-10-20): cable directo a la PC =
+**`10.42.0.180`** (perfil NetworkManager `directo-placa` en la PC, modo
+compartido: `nmcli con up directo-placa`); por la LAN de la oficina =
+`192.168.0.55`.
+
+- [x] **Confirmar físicamente qué hay en el IN2 de campo y su jumper** (lo
+      pide el plan del IN2 antes de pasar a dual). **2026-10-20:** IN2 sin
+      nada conectado, jumper en HV (usuario).
+- [x] Respaldo completo antes de instalar (**2026-10-20**, no lo pedía el
+      plan): `tar` de `/root` (sin `.cache` ni core dumps) + `/etc` +
+      `/opt/stream_app` en `/mnt/usb/respaldos/pre_integracion_20261020.tgz`
+      (40 MB, sha256 `81a219ce…`) y copia verificada en la PC en
+      `datos_campo/respaldos/`.
+- [x] Inventario (solo lectura) y compararlo con el último: la placa tiene
+      cambios puntuales del 8/10 (4c por `scp`, tag `campo-2026-10-08`).
+      **Hecho 2026-10-20** (`inventario_rp-f0fbda_20261020.txt`): coincide
+      con `campo-2026-10-08`; solo difieren el config (propio de la placa) y
+      la copia en `/root` de `modo-evento.service` y `subir-csv-gcs.service`,
+      que está en su versión del 1/10 (`b612993`, `eefbe1b`):
   ```bash
   ssh root@<IP_CAMPO> 'bash -s' < scripts_campo_comun/inventario_placa.sh \
       > datos_campo/inventarios/inventario_rp-f0fbda_<fecha>.txt
@@ -723,13 +738,25 @@ paquete**.
       historial de `SC1`. Falta ver el comando llegar a la placa (7.4).
 - [x] Misma aplicación => `comandos_losant/modo_starlink.py` sirve con el
       mismo token; solo cambia el ID del Device (`SC1`).
-- [ ] Modo permanente en la placa (`aplicar_actualizacion.sh` aborta sin él;
-      la placa de campo todavía no tiene `modo_operacion.sh`):
+- [x] Modo permanente en la placa (`aplicar_actualizacion.sh` aborta sin él;
+      la placa de campo todavía no tiene `modo_operacion.sh`). **Hecho
+      2026-10-20.**
   ```bash
   ssh root@<IP_CAMPO> "printf 'permanente\n' > /root/starlink_remoto/modo_operacion && sync && cat /root/starlink_remoto/modo_operacion"
   ```
 
 ### 7.2 Instalar
+
+**Hecho 2026-10-20 14:49-14:51 UTC** por cable directo (`10.42.0.180`):
+`SOLO_CHEQUEAR` todo OK, `RESULTADO: ok` (73 reemplazados, 8 nuevos; relé
+leído "on", antena no responde porque no estaba conectada), bitstream
+`b34cd26f`, mono, `in2_modo` independiente, timers `starlink-ventana` sin
+`rele-on/off`, 0 units failed.
+
+7.3 el mismo día: timer GCS `enabled`/`active`, `gcs.dias_atras` = 30,
+drop-in solo `umbral.conf`, cola de Losant ya vacía (solo
+`.contadores.json`). SOC reseteado a 50 Ah (`ultimo_float` None,
+`float_racha` 0), `panel-solar-informe` active.
 
 Igual que la sección 6 (pasos 4-6):
 ```bash
@@ -789,6 +816,19 @@ ssh root@<IP_CAMPO> 'cat /root/actualizacion/RESULTADO_20261015_190535_864a15c'
       `me_canales = 1`, `me_dec = 32`, resúmenes cada minuto.
 
 ### 7.4 Pruebas en la empresa (lo que el lab no pudo)
+
+**2026-10-20 (sin SmartSolar ni antena en la oficina; IN2 sin nada
+conectado):** el usuario armó en el workflow de `SC1` los nodos de canales
+(Cond A/B/C + 2 Command) y los tags. Por tag (PATCH por API conservando los
+demás tags), un solo comando por cambio y `RESULTADO: ok` en ~35 s cada uno:
+mono → dual independiente (14:59) → dual asociado (15:02) → mono (15:04) →
+dual independiente (15:06). En dual: `me_canales` 2, `me_dec` 64,
+`kurt_max_1min_in2`/`area_max_1min_in2` en el resumen, CSV en
+`/mnt/usb/eventos/in2/`. Ninguna de las dos entradas tiene nada conectado
+(los sensores quedaron en el sitio): en dual las dos dan `raw_max` ~210,
+solo ruido. Por pedido del usuario **queda en mono** (15:11, `ok 1`, dec32;
+tags `canales` 1, `in2_modo` independiente). Falta: pares de eventos en
+asociado (requiere sensor en el IN1), energía y ventana real.
 
 - [ ] **Energía con el paquete integrado:** filas por minuto en
       `/mnt/usb/energia/`, resumen horario `en_*` en Losant a la hora
