@@ -890,8 +890,14 @@ asociado (requiere sensor en el IN1), energía y ventana real.
 Instalado en campo: tag `campo-2026-10-20` (`864a15c`). Lo que sigue va en un
 paquete nuevo armado desde `integracion-campo`:
 
-- [ ] **CSV sin filas pegadas tras un corte de energía** (`capturar_eventos.cpp`,
-      2026-10-20). Visto en campo: `ventanas_20261020_14.csv` con dos líneas
+- [x] **CSV sin filas pegadas tras un corte de energía** (`capturar_eventos.cpp`,
+      2026-10-20). **Instalado 2026-10-21 12:25-12:27 UTC** en la oficina
+      (LAN `192.168.0.61`) con el paquete `20261021_122105_71bc2ee`
+      (bitstream `b34cd26f`, binario `4e5f1a3b`, compilado en el lab e
+      idéntico al probado allí): `SOLO_CHEQUEAR` todo OK, `RESULTADO: ok`
+      (81 reemplazados, 0 nuevos, ninguna clave agregada), relé leído "on",
+      sin reset (uptime siguió), mono dec32, permanente, 0 units failed, CSV
+      de la hora 12 sin filas mal formadas. Visto en campo: `ventanas_20261020_14.csv` con dos líneas
       cortadas (14:07:44 y 14:32:57) y la fila siguiente pegada (timestamp
       truncado, área en la columna de t). Al reabrir el CSV de la hora, la
       captura recorta lo posterior al último `\n` (también los NUL) y lo deja
