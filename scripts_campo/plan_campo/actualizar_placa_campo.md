@@ -901,15 +901,11 @@ paquete nuevo armado desde `integracion-campo`:
       `organizar_csv_campo.py`) descartan las filas pegadas que ya están en
       GCS. Cambia el binario: rearmar el paquete (compila en la placa de
       pruebas).
-- [ ] **Primer pulso del relé después de cada arranque sin efecto** (sin
-      hacer). `PS_MIO10` arranca en 0 (leído 2026-10-20, bit 10 de
-      `0xe000a040` a los 31 s del boot) y `pulsar_ps` asume reposo en 1: el
-      primer pulso hace 0→1→0→1 y el relé no cambia. Lo corrige el
-      reconciliador en 5-10 min. Arreglo candidato: fijar el bit en 1 antes de
-      habilitar la salida en `mux_ps10_common.sh`.
 - Sin resolver (no es de software, a confirmar): en la oficina, con fuente de
   laboratorio y nada en la salida del relé, **cada off→on del relé resetea la
-  placa** (3 de 3 el 2026-10-20: 17:41, 17:44, 19:05 UTC). Revisar en el
+  placa** (4 de 4 el 2026-10-20: 17:41, 17:44, 19:05 UTC y 20:36 UTC al
+  pasar a permanente por Losant; después, 15 h con el relé on sin resets).
+  Revisar en el
   sitio la primera ventana (`uptime_s` en Losant) antes de dejarla en ventana.
 
 ## Después (no bloquea)
