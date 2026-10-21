@@ -907,7 +907,7 @@ paquete nuevo armado desde `integracion-campo`:
       `organizar_csv_campo.py`) descartan las filas pegadas que ya están en
       GCS. Cambia el binario: rearmar el paquete (compila en la placa de
       pruebas).
-- [ ] **Frenar la captura y `sync` antes de prender el relé** (rama
+- [x] **Frenar la captura y `sync` antes de prender el relé** (rama
       `rele-sin-captura`, `control_starlink.sh`, 2026-10-21). Mitigación, no
       arreglo (ver la nota que sigue): con lectura directa, antes del pulso
       de "on" se para `modo-evento` y se baja a disco lo pendiente; la
@@ -916,9 +916,11 @@ paquete nuevo armado desde `integracion-campo`:
       hardware: cada reset agarra menos escrituras en curso en la SD y el
       pendrive. Probado en campo en la oficina (on tras off corto, sin
       reset, captura reanudada; y en los resets la parada llegó a
-      `success` antes del corte). Instalado a mano en `rp-f0fbda` para
-      probar (respaldo `control_starlink.sh.bak_pre_rele_sin_captura`);
-      falta commit, paquete y tag.
+      `success` antes del corte). **Instalado 2026-10-21 17:54-17:56 UTC** en la oficina
+      con el paquete `20261021_175236_ff47f40` (tag `campo-2026-10-21b`):
+      `SOLO_CHEQUEAR` OK, `RESULTADO: ok` (81 reemplazados, 0 nuevos,
+      ninguna clave), relé leído "on", sin reset, dual, permanente, 0 units
+      failed.
 - **Sin resolver, es de hardware: prender el relé después de más de ~35-45 s
   en "off" resetea la placa** (oficina, 2026-10-20/21, fuente de
   laboratorio, sin antena ni regulador). Pruebas del 2026-10-21 (on por SSH,
