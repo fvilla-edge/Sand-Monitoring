@@ -19,7 +19,8 @@
 # v0.94, por eso ahi se fuerza v0.94, cortando la captura activa antes. El
 # pulso de control (PS_MIO10) no depende de esto.
 #
-# Modo evento (modo-evento.service), solo sin lectura directa: tambien usa el
+# Modo evento (modo-evento.service), sin lectura directa (con lectura
+# directa, solo antes del pulso de "on", ver mas abajo): tambien usa el
 # streaming-server y un bitstream propio, asi que se detiene con systemctl (parada limpia, no cuenta
 # como caida) antes de reprogramar y se reanuda al salir, pase lo que pase
 # (trap EXIT). aplicar_objetivo.sh evita llamar a este script mientras mide,
@@ -257,6 +258,18 @@ if [ "$RECONCILIAR" -eq 1 ]; then
     exit 0
   fi
   rm -f "$MARKER_FILE"
+fi
+
+# Con lectura directa la captura sigue midiendo, pero prender el rele despues
+# de mas de ~35-45 s en "off" resetea la placa (rp-f0fbda, 2026-10-21: probable
+# caida de la alimentacion, no depende del software; ver actualizar_placa_campo.md
+# sec.8). No se puede evitar desde aca: se frena la captura y se baja a disco
+# lo pendiente antes del pulso, para que el corte agarre la menor cantidad de
+# escrituras en curso. La reanuda el trap EXIT si no hubo reset. "off" nunca
+# reseteo.
+if [ "$ACCION" = "on" ] && [ "$LECTURA_DIRECTA" -eq 1 ]; then
+  parar_captura_si_corre
+  sync
 fi
 
 asegurar_mux_gpio   # no-op normalmente (ver header) — starlink-mux-ps10.service ya lo hizo al boot

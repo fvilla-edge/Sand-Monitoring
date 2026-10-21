@@ -907,12 +907,45 @@ paquete nuevo armado desde `integracion-campo`:
       `organizar_csv_campo.py`) descartan las filas pegadas que ya están en
       GCS. Cambia el binario: rearmar el paquete (compila en la placa de
       pruebas).
-- Sin resolver (no es de software, a confirmar): en la oficina, con fuente de
-  laboratorio y nada en la salida del relé, **cada off→on del relé resetea la
-  placa** (4 de 4 el 2026-10-20: 17:41, 17:44, 19:05 UTC y 20:36 UTC al
-  pasar a permanente por Losant; después, 15 h con el relé on sin resets).
-  Revisar en el
-  sitio la primera ventana (`uptime_s` en Losant) antes de dejarla en ventana.
+- [ ] **Frenar la captura y `sync` antes de prender el relé** (rama
+      `rele-sin-captura`, `control_starlink.sh`, 2026-10-21). Mitigación, no
+      arreglo (ver la nota que sigue): con lectura directa, antes del pulso
+      de "on" se para `modo-evento` y se baja a disco lo pendiente; la
+      reanuda el `trap EXIT` (~10 s sin medir si no hay reset). "off" no
+      cambia. Sirve para el modo ventana mientras no se arregle el
+      hardware: cada reset agarra menos escrituras en curso en la SD y el
+      pendrive. Probado en campo en la oficina (on tras off corto, sin
+      reset, captura reanudada; y en los resets la parada llegó a
+      `success` antes del corte). Instalado a mano en `rp-f0fbda` para
+      probar (respaldo `control_starlink.sh.bak_pre_rele_sin_captura`);
+      falta commit, paquete y tag.
+- **Sin resolver, es de hardware: prender el relé después de más de ~35-45 s
+  en "off" resetea la placa** (oficina, 2026-10-20/21, fuente de
+  laboratorio, sin antena ni regulador). Pruebas del 2026-10-21 (on por SSH,
+  unit de systemd o reconciliador, con y sin captura):
+
+  | Tiempo en "off" antes del "on" | Pruebas | Resets |
+  |---|---|---|
+  | 5-21 s | 6 | 0 |
+  | ~25-30 s (arranque después de un reset) | 7 | 0 |
+  | 34 s | 1 | 0 |
+  | 45 s | 1 | 1 |
+  | 64 s | 1 | 1 |
+  | 7 min a 2 h (reconciliador, botón, ventana, Losant, a mano) | 8 | 8 |
+
+  No depende de quién pulsa ni de la captura (la hipótesis "captura
+  corriendo" del mismo día quedó descartada). "off" nunca reseteó. Después
+  de un reset la placa vuelve sola: al arrancar el relé aparece en "off" y
+  `asegurar_mux_ps10` lo prende a los ~30 s, sin reset. Probable: lo que
+  cuelga de la salida del relé se descarga y al prender la corriente de
+  arranque hace caer la alimentación de la Red Pitaya; confirmarlo con
+  osciloscopio en la alimentación de la placa. Arreglo de hardware a
+  elegir: limitador de corriente de arranque en la salida del relé, la
+  placa alimentada aparte, o diodo + capacitor de respaldo en su entrada.
+  **En modo ventana sin ese arreglo: un reset por ventana (12 por día).** Al
+  sitio va en permanente (el relé no cambia, sin resets); antes de pasar a
+  ventana, revisar la primera ventana (`uptime_s` en Losant): con la
+  Starlink real como carga puede ser peor.
 
 ## Después (no bloquea)
 
