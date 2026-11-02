@@ -1,9 +1,13 @@
 # Despliegue — qué hacer después de tocar cada archivo
 
-La placa **no tiene `.git`** — el repo se despliega copiando archivos sueltos por
-`scp`/`wormhole`. **Ningún cambio hecho solo en el repo local existe en la placa hasta
-que se copie explícitamente.** Todo lo de abajo asume que el archivo ya está
-actualizado en la placa; si no se copió todavía, nada de esto aplica.
+La placa **no tiene `.git`**. **Ningún cambio hecho solo en el repo local existe en la
+placa hasta que se instale explícitamente.** La forma normal de instalar es **por
+paquete** (`scripts_campo/actualizacion/`, procedimiento en
+`scripts_campo/plan_campo/actualizar_placa_campo.md` sección 6): copia todo, compila,
+reinicia lo que corresponde, verifica y vuelve solo si algo falla — con el paquete no
+hace falta nada de este documento. Esto es para cuando se copia **un archivo suelto**
+(`scp`, arreglo puntual o prueba en el lab). Todo lo de abajo asume que el archivo ya
+está actualizado en la placa.
 
 Regla general para decidir si algo necesita reinicio: **¿el archivo lo ejecuta un
 proceso que corre en loop indefinidamente (`Restart=always`), o un proceso que se
@@ -20,7 +24,10 @@ próxima vez que arranca.
 |---|---|---|
 | `starlink_remoto/aplicar_objetivo.sh`, `decidir_objetivo.sh`, `control_starlink.sh`, `mux_ps10_common.sh` | `starlink-aplicar-objetivo.service` (oneshot), disparado por `ventana_starlink.sh` (`starlink-ventana.timer`, cada 2 h a los :05 y al arrancar) o a mano (`starlink_manual.sh`, `modo_operacion.sh`); `starlink-reconciliador.service` (mismos scripts, con `--reconciliar`), disparado por `starlink-reconciliador.timer` cada 5 min | En el próximo tick/horario, o de inmediato si se corre a mano |
 | `scripts_campo_comun/config_campo.json` — **cualquier clave**, salvo la excepción de abajo | Todo lo que llama `python3 cfg.py <clave>` (proceso nuevo por invocación — `cfg.py` cachea solo dentro de un mismo proceso, no entre procesos) | En la próxima invocación de quien lea esa clave |
-| `scripts_campo/capturar_stream.py`, `campo_common.py`, `scripts_campo_comun/repetir_captura.sh`, `relanzar_captura.sh`, `starlink_manual.sh`, `estado_starlink.sh`, `analisis/revisar.py` | El operador, a mano, cada vez | En la próxima corrida |
+| `starlink_remoto/ventana_starlink.sh`, `modo_operacion.sh`, `modo_operacion_common.sh` | `starlink-ventana.service` (oneshot, `starlink-ventana.timer`) o a mano | En la próxima ventana / invocación |
+| `scripts_campo/subir_csv_gcs.py` | `subir-csv-gcs.service` (oneshot, timer cada 5 min) y cada ventana | En la próxima corrida |
+| `scripts_campo/cambiar_canales.sh`, `cambiar_modo.sh` | A mano o por comando de Losant (unidad transitoria nueva cada vez) | En el próximo cambio |
+| `scripts_campo/capturar_stream.py`, `campo_common.py`, `scripts_campo_comun/repetir_captura.sh`, `relanzar_captura.sh`, `starlink_manual.sh`, `estado_starlink.sh`, `analisis/revisar.py` | El operador, a mano, cada vez (modo clásico / Starlink manual) | En la próxima corrida |
 | `scripts_campo_comun/udev-automount/automount_usb.sh` | `mnt-usb-automount@.service`, disparado por udev en cada conexión/desconexión física real del USB | En el próximo evento físico real — un `umount` manual sin desconectar el USB **no** cuenta como evento nuevo (`BindsTo=dev-%i.device` no reacciona), hace falta desconectar de verdad o `systemctl restart mnt-usb-automount@sda1.service` |
 
 ---
@@ -29,8 +36,12 @@ próxima vez que arranca.
 
 | Archivo(s) | Servicio a reiniciar | Por qué |
 |---|---|---|
+| `scripts_campo/capturar_eventos.py`, `supervisor_eventos.sh`, el binario `scripts_campo/c/capturar_eventos` (recompilar en la placa: `make -C /root/scripts_campo/c`) y el bitstream `/opt/stream_app/fpga.bin` | `systemctl restart modo-evento` | La captura corre de por vida (`Restart=always`) y carga el bitstream y el binario solo al arrancar. El reinicio deja un hueco de ~1-2 min en el CSV. Para cambiar mono/dual no reiniciar a mano: `cambiar_canales.sh` (verifica y vuelve solo) |
+| `scripts_campo/systemd/modo-evento.service` (ej. `UMBRAL=`) | copiar a `/etc/systemd/system/`, `systemctl daemon-reload && systemctl restart modo-evento` | Es la unit misma: sin `daemon-reload` systemd sigue con la vieja |
+| `config_campo.json`, claves **`modo_evento.*`** | `systemctl restart modo-evento` (o, para `canales`/`in2_modo`, `cambiar_canales.sh`) | El supervisor las lee al arrancar la captura |
+| `scripts_campo/resumen_modo_evento.py` | `systemctl restart resumen-modo-evento` | Proceso persistente (`Restart=always`) |
 | `indicador_estado/indicador_estado.sh`, `mux_ps11_common.sh` | `systemctl restart pitaya-indicador-estado.service` | Es un loop bash (`while true`) que ya está corriendo (`Type=simple`, `Restart=always`) — bash no relee el archivo desde disco mientras el loop sigue vivo |
-| `panel_solar_ble/publicar_losant.py` (y los módulos que importa: `victron_scanner.py`, `puerto.py`, `config.py`, `losant_config.py`, `starlink_api/starlink_get_location.py`) | `systemctl restart panel-solar-informe.service` | Mismo motivo: `Type=simple`, `Restart=always`, loop de por vida (`while True` en `main()`) |
+| `panel_solar_ble/publicar_losant.py` (y los módulos que importa: `victron_scanner.py`, `puerto.py`, `config.py`, `losant_config.py`, `registro_energia.py`, `balance_energia.py`, `starlink_api/starlink_get_location.py`) | `systemctl restart panel-solar-informe.service` | Mismo motivo: `Type=simple`, `Restart=always`, loop de por vida (`while True` en `main()`) |
 | `scripts_campo_comun/config_campo.json`, claves **`panel_solar.informe_intervalo_min`**, **`panel_solar.reintento_conexion_s`** y **`starlink_api.modo`/`starlink_api.host`/`starlink_api.timeout_s`** | `systemctl restart panel-solar-informe.service` | Excepción a la regla de "config se relee sola": `publicar_losant.py` las lee **una sola vez cada una**, al importar el módulo (fuera del loop) y las cachea en constantes para toda la vida del proceso. Cualquier lectura nueva de `cfg.obtener()` que se agregue a ese script fuera del `while True` va a tener el mismo problema — dentro del loop, en cambio, se releería sola |
 
 ---

@@ -5,9 +5,144 @@ campo (setup, topologías de red, troubleshooting) ver `scripts_campo/PLAN_CAMPO
 
 ---
 
-## Captura (corren en la Red Pitaya)
+## Modo evento — lo que corre hoy en la placa
 
-### `scripts_campo/capturar_stream.py` — recomendado
+La placa mide sola desde que arranca (`modo-evento.service`): área y kurtosis de
+todas las ventanas de 50 ms en un CSV por hora y la señal cruda de las ventanas con
+kurtosis ≥ 3.4. No hay que lanzar nada a mano. Detalle completo, formatos y pruebas:
+`docs/modo_evento.md`.
+
+### Ver cómo está la placa
+
+```bash
+ssh root@<IP_PLACA> 'bash -s' < scripts_campo_comun/estado_placa.sh   # desde la PC, solo lectura
+```
+
+### `modo-evento.service` — la medición
+
+```bash
+systemctl status modo-evento            # estado
+journalctl -u modo-evento -f            # log en vivo (línea ESTADO)
+systemctl stop modo-evento              # pausar la medición (no lo relanza; al reiniciar vuelve)
+systemctl start modo-evento             # retomarla
+cat /run/modo-evento/medicion           # qué mide: canales=2 dec=64 in2=independiente
+cat /run/modo-evento/destino            # dónde escribe (/mnt/usb/eventos, o "sin_disco")
+```
+
+Relanza solo si se cae (60 s de espera, sin límite). Historial de corridas en
+`/root/logs_campo/modo_evento_reinicios.log`. El umbral es `Environment=UMBRAL=` en la
+unit (`scripts_campo/systemd/modo-evento.service`).
+
+### `scripts_campo/capturar_eventos.py` — a mano (solo pruebas)
+
+Lanzador del núcleo C++. En la placa lo corre `modo-evento.service`; a mano solo para
+pruebas, con el servicio parado (el streaming-server acepta un solo cliente).
+
+```bash
+make -C /root/scripts_campo/c      # compilar el nucleo C++ en la placa (lo hace el paquete de actualizacion)
+python3 /root/scripts_campo/capturar_eventos.py --umbral 3.4 --destino /root/eventos
+```
+
+### `resumen-modo-evento.service` y `subir-csv-gcs.timer`
+
+- `resumen-modo-evento` ("anotador"): cada minuto resume el CSV y deja solo el último
+  resumen en RAM; el cartero (`publicar_losant.py`) lo manda a Losant mientras hay
+  conexión. Sin conexión no se acumula nada: el detalle va a GCS en los CSV.
+  Atributos (`me_activo`, `me_ventanas_1min`, `kurt_max_1min`, `me_canales`, salud):
+  `docs/modo_evento.md` → "Qué llega a Losant".
+- `subir-csv-gcs.timer` (cada 5 min) y cada ventana de Starlink suben a GCS los CSV
+  horarios ya cerrados (ventanas IN1, IN2 y energía), comprimidos. Si no hay internet
+  quedan para la próxima. Registro de lo subido: `/root/gcs_subidos.txt`.
+
+```bash
+journalctl -u subir-csv-gcs -n 20
+python3 /root/scripts_campo/subir_csv_gcs.py --seco    # qué subiría, sin conectarse
+```
+
+### Mono / dual y modo del IN2
+
+En la placa lo maneja `modo-evento.service`; el modo sale de `config_campo.json`
+(`modo_evento.canales` y `modo_evento.in2_modo`). No editar el config a mano:
+cambiarlo con el comando de Losant o con `cambiar_canales.sh`, que escriben la clave
+de forma segura, reinician la captura, verifican que mida y, si no mide en 4 min,
+vuelven solos al modo anterior.
+
+| Modo | Qué mide | Losant (comando `canales`) | SSH |
+|---|---|---|---|
+| Mono | solo IN1, dec 32 | `{"canales": 1}` | `cambiar_canales.sh 1` |
+| Dual independiente | IN1 + IN2 (dec 64); el IN2 graba su cruda por **su** kurtosis | `{"canales": 2, "in2": "independiente"}` | `cambiar_canales.sh 2 independiente` |
+| Dual asociado | IN1 + IN2; el IN2 graba su cruda **solo cuando graba el IN1** (mismo tramo, mismo nombre en `in2/`) | `{"canales": 2, "in2": "asociado"}` | `cambiar_canales.sh 2 asociado` |
+
+**En modo ventana usar los tags del Device, no el comando a mano**
+(`docs/plan_canales_por_tag.md`): Losant no guarda comandos, y uno mandado con
+la placa desconectada (entre ventanas) se pierde sin error. Tags `canales` (`1` |
+`2`) e `in2_modo` (`independiente` | `asociado`, solo con `canales` = `2`): el
+workflow los compara con `me_canales`/`me_in2_modo` y manda el comando `canales`
+solo si difieren, apenas la placa conecta (en el lab, `ok` a los ~40 s de
+conectar; la ventana espera 2 min). Sin tags o con un valor mal escrito no hace
+nada. Cambiar el tag a mano en el Device; el comando a mano sirve con la placa
+conectada (modo permanente o durante una ventana). Ojo: con los tags puestos, un
+comando a mano que no coincida con ellos lo deshace el workflow al minuto
+siguiente.
+
+- `{"canales": 2}` sin `"in2"` deja el modo del IN2 como estaba. `"in2"` con
+  `"canales": 1` se rechaza (el modo del IN2 queda guardado para el próximo dual).
+- El dual pide el bitstream del IN2. Con el bitstream viejo: independiente mide solo
+  el IN1; asociado graba la cruda del IN2 igual, sin su área/kurtosis ni su CSV.
+- Tarda ~30 s. Alrededor de 1 de cada 10 arranques la captura se cae dentro de la
+  librería del vendor (`startStreaming`) y systemd la relanza a los 60 s: el cambio
+  tarda ~1,5 min pero termina igual.
+- Detalle: `docs/plan_cambio_canales_remoto.md`, `docs/plan_in2_independiente.md`,
+  `docs/plan_in2_asociado.md`.
+
+```bash
+# en la placa (se desacopla solo: un corte de SSH no lo frena)
+bash /root/scripts_campo/cambiar_canales.sh 2 asociado
+journalctl -u cambiar-canales -f                       # seguirlo
+cat /root/logs_campo/cambio_canales_estado             # resultado (= me_cambio en Losant)
+cat /run/modo-evento/medicion                          # lo que mide ahora: canales=2 dec=64 in2=asociado
+```
+
+Resultado (`cambio_canales_estado`, en Losant `me_cambio`): `ok 2 asociado`,
+`ok 1 (ya estaba)`, `ok 2 (bitstream sin IN2: mide solo IN1)`,
+`error: modo clasico (modo-evento deshabilitado), sin cambio`,
+`error: no midio con 2 asociado (volvio a 1)`, etc. En Losant también: `me_canales`
+(lo que de verdad se mide: 1 si el dual no puede medir el IN2), `me_dec`,
+`me_in2_modo` (en dual) y `kurt_max_1min_in2` / `area_max_1min_in2` (desde el
+segundo minuto en dual con el bitstream del IN2).
+
+Modo evento ↔ modo clásico (vuelta atrás, captura a pedido como antes):
+```bash
+bash /root/scripts_campo/cambiar_modo.sh clasico   # deshabilita modo-evento, bitstream del vendor
+bash /root/scripts_campo/cambiar_modo.sh evento    # vuelve al modo evento con el modo de canales del config
+```
+
+### `scripts_campo_comun/automount_usb.sh` — montaje automático de `/mnt/usb`
+
+No se ejecuta a mano: lo invoca `mnt-usb-automount@.service` (`scripts_campo_comun/udev-automount/`)
+como `ExecStart` (mount) y `ExecStop` (umount, al desconectar el dispositivo vía
+`BindsTo=dev-%i.device`), disparado por una regla udev al conectar el storage externo. Monta
+la primera partición `sd[a-z][0-9]` que aparece y no pisa un montaje existente. Setup e instrucciones de prueba en
+`scripts_campo/plan_campo/setup_placa.md` ("3. Montaje automático del USB"). Log propio en
+`/root/logs_campo/automount_usb.log`.
+
+### Actualizar el software de la placa (`scripts_campo/actualizacion/`)
+
+Por paquete (`armar_paquete_actualizacion.sh` → `enviar_paquete.sh` →
+`aplicar_actualizacion.sh`, vuelve solo al respaldo si algo falla), con Starlink en
+modo permanente. Procedimiento: `scripts_campo/plan_campo/actualizar_placa_campo.md` →
+sección 6. Qué reiniciar si se toca un archivo suelto: `DESPLIEGUE.md`.
+
+---
+
+## Modo clásico — captura a pedido (antes del modo evento)
+
+Capturas `.bin` continuas lanzadas a mano. **Solo con la placa en modo clásico**
+(`bash /root/scripts_campo/cambiar_modo.sh clasico`, ver arriba): con el modo evento
+activo el streaming-server ya está ocupado. Mientras está en clásico no se registra
+nada salvo lo que se capture a mano. Guía paso a paso: `scripts_campo/plan_campo/operacion_campo.md`.
+
+### `scripts_campo/capturar_stream.py`
 
 Streaming FILE mode, ~98% eficiencia, raw `.bin`. Mono (1 canal) o dual (2 canales,
 sensor de referencia) con el mismo script.
@@ -82,15 +217,6 @@ repetición no terminaría nunca). Tercer argumento en adelante: el comando comp
 repetir, tal cual (no incluir `--duracion_total` ahí, se pisa). Si una repetición agota
 los reintentos del supervisor (falla dura), aborta el lote entero.
 
-### `scripts_campo_comun/automount_usb.sh` — montaje automático de `/mnt/usb`
-
-No se ejecuta a mano: lo invoca `mnt-usb-automount@.service` (`scripts_campo_comun/udev-automount/`)
-como `ExecStart` (mount) y `ExecStop` (umount, al desconectar el dispositivo vía
-`BindsTo=dev-%i.device`), disparado por una regla udev al conectar el storage externo. Monta
-la primera partición `sd[a-z][0-9]` que aparece y no pisa un montaje existente. Setup e instrucciones de prueba en
-`scripts_campo/plan_campo/setup_placa.md` ("3. Montaje automático del USB"). Log propio en
-`/root/logs_campo/automount_usb.log`.
-
 ### `scripts_campo/repro_in1_file_bug.py` — referencia
 
 Script mínimo de reproducción enviado a Red Pitaya para un issue ya resuelto (el formato
@@ -98,79 +224,11 @@ Script mínimo de reproducción enviado a Red Pitaya para un issue ya resuelto (
 no es parte del flujo operativo normal.
 
 ---
-
-### `scripts_campo/capturar_eventos.py` — modo evento (rama `modo-evento`)
-
-Captura continua; guarda la señal cruda solo de las ventanas con kurtosis ≥ umbral
-y un CSV por hora con área/kurtosis de todas. Detalle completo, formatos y pruebas
-en `docs/modo_evento.md`.
-
-```bash
-make -C /root/scripts_campo/c      # compilar el nucleo C++ en la placa (una vez)
-python3 /root/scripts_campo/capturar_eventos.py --umbral 3.4 --destino /root/eventos   # a mano; en la placa lo corre modo-evento.service
-```
-
-### Mono / dual y modo del IN2 (modo evento instalado)
-
-En la placa lo maneja `modo-evento.service`; el modo sale de `config_campo.json`
-(`modo_evento.canales` y `modo_evento.in2_modo`). No editar el config a mano:
-cambiarlo con el comando de Losant o con `cambiar_canales.sh`, que escriben la clave
-de forma segura, reinician la captura, verifican que mida y, si no mide en 4 min,
-vuelven solos al modo anterior.
-
-| Modo | Qué mide | Losant (comando `canales`) | SSH |
-|---|---|---|---|
-| Mono | solo IN1, dec 32 | `{"canales": 1}` | `cambiar_canales.sh 1` |
-| Dual independiente | IN1 + IN2 (dec 64); el IN2 graba su cruda por **su** kurtosis | `{"canales": 2, "in2": "independiente"}` | `cambiar_canales.sh 2 independiente` |
-| Dual asociado | IN1 + IN2; el IN2 graba su cruda **solo cuando graba el IN1** (mismo tramo, mismo nombre en `in2/`) | `{"canales": 2, "in2": "asociado"}` | `cambiar_canales.sh 2 asociado` |
-
-**En modo ventana usar los tags del Device, no el comando a mano**
-(`docs/plan_canales_por_tag.md`): Losant no guarda comandos, y uno mandado con
-la placa desconectada (entre ventanas) se pierde sin error. Tags `canales` (`1` |
-`2`) e `in2_modo` (`independiente` | `asociado`, solo con `canales` = `2`): el
-workflow los compara con `me_canales`/`me_in2_modo` y manda el comando `canales`
-solo si difieren, apenas la placa conecta (en el lab, `ok` a los ~40 s de
-conectar; la ventana espera 2 min). Sin tags o con un valor mal escrito no hace
-nada. Cambiar el tag a mano en el Device; el comando a mano sirve con la placa
-conectada (modo permanente o durante una ventana). Ojo: con los tags puestos, un
-comando a mano que no coincida con ellos lo deshace el workflow al minuto
-siguiente.
-
-- `{"canales": 2}` sin `"in2"` deja el modo del IN2 como estaba. `"in2"` con
-  `"canales": 1` se rechaza (el modo del IN2 queda guardado para el próximo dual).
-- El dual pide el bitstream del IN2. Con el bitstream viejo: independiente mide solo
-  el IN1; asociado graba la cruda del IN2 igual, sin su área/kurtosis ni su CSV.
-- Tarda ~30 s. Alrededor de 1 de cada 10 arranques la captura se cae dentro de la
-  librería del vendor (`startStreaming`) y systemd la relanza a los 60 s: el cambio
-  tarda ~1,5 min pero termina igual.
-- Detalle: `docs/plan_cambio_canales_remoto.md`, `docs/plan_in2_independiente.md`,
-  `docs/plan_in2_asociado.md`.
-
-```bash
-# en la placa (se desacopla solo: un corte de SSH no lo frena)
-bash /root/scripts_campo/cambiar_canales.sh 2 asociado
-journalctl -u cambiar-canales -f                       # seguirlo
-cat /root/logs_campo/cambio_canales_estado             # resultado (= me_cambio en Losant)
-cat /run/modo-evento/medicion                          # lo que mide ahora: canales=2 dec=64 in2=asociado
-```
-
-Resultado (`cambio_canales_estado`, en Losant `me_cambio`): `ok 2 asociado`,
-`ok 1 (ya estaba)`, `ok 2 (bitstream sin IN2: mide solo IN1)`,
-`error: modo clasico (modo-evento deshabilitado), sin cambio`,
-`error: no midio con 2 asociado (volvio a 1)`, etc. En Losant también: `me_canales`
-(lo que de verdad se mide: 1 si el dual no puede medir el IN2), `me_dec`,
-`me_in2_modo` (en dual) y `kurt_max_1min_in2` / `area_max_1min_in2` (desde el
-segundo minuto en dual con el bitstream del IN2).
-
-Modo evento ↔ modo clásico (vuelta atrás, captura a pedido como antes):
-```bash
-bash /root/scripts_campo/cambiar_modo.sh clasico   # deshabilita modo-evento, bitstream del vendor
-bash /root/scripts_campo/cambiar_modo.sh evento    # vuelve al modo evento con el modo de canales del config
-```
+---
 
 ## Análisis (corren en la PC)
 
-### `analisis/revisar.py` — revisión rápida
+### `analisis/revisar.py` — revisión rápida (capturas del modo clásico)
 
 Lee `.bin` + `session_*_info.json`, detecta automáticamente si cada archivo es mono o
 dual (no hace falta indicarlo). Calcula kurtosis, crest factor, fracción activa y
@@ -388,8 +446,10 @@ Losant).
 
 ## Referencias
 
+- Uso día a día: `GUIA_USO_BASICO.md`
+- Modo evento: `docs/modo_evento.md`
 - Guía operativa completa (setup, topologías de red, troubleshooting): `scripts_campo/PLAN_CAMPO.md`
 - Interpretación de métricas con valores reales medidos: `analisis/INTERPRETACION_RESULTADOS.md`
 - Historial y arquitectura del relé de Starlink: `starlink_remoto/HISTORIAL_STARLINK.md`
 - Panel solar por BLE (ESP32-C3 como puente): `panel_solar_ble/README.md`
-- Plan de proyecto vigente: `docs/roadmap_deteccion_arena.md`
+- Roadmap original (julio 2026, histórico): `docs/roadmap_deteccion_arena.md`

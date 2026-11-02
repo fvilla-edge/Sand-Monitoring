@@ -1,183 +1,168 @@
 # Guía de uso básico — Sand Monitoring
 
-Todo lo que sigue corre por SSH contra la Red Pitaya, salvo el paso de revisar datos
-(eso corre en la PC).
+Cómo funciona hoy (desde la instalación del 29/10/2026 en PAD-118): **la placa mide
+sola, las 24 h, desde que se enciende.** No hay que lanzar capturas a mano. Lo que hace
+el operador es encender, mirar que esté midiendo y, si hace falta, cambiar el modo o
+bajar datos.
+
+```
+sensor(es) → Red Pitaya (modo evento, 24 h) → USB: CSV por hora + señal cruda de los eventos
+                                            → cada 2 h (ventana Starlink): CSV a GCS → SandVision
+                                            → cada minuto con conexión: resumen a Losant
+```
+
+Detalle técnico del modo evento: `docs/modo_evento.md`. Comandos y argumentos:
+`COMANDOS.md`.
 
 ---
 
-## Flujo típico completo
+## 1. Encender
 
-### 1. Encender
+Conectar la alimentación (batería + panel solar en campo, fuente en banco) con el
+disco USB conectado. Al arrancar, solo y sin intervención:
 
-Conectar la alimentación de la placa (batería + panel solar en campo, fuente en banco).
-Esperar que bootee y conectarse por SSH:
+- `modo-evento` empieza a medir (espera ~90 s de uptime) en el modo de canales
+  guardado (mono = IN1, o dual = IN1 + IN2).
+- El control de Starlink aplica el modo guardado (ventana o permanente). En modo
+  ventana, la placa abre una ventana al arrancar.
+- Si no hay disco, mide igual pero guarda solo los CSV, en la SD
+  (`/root/eventos_sd`), sin señal cruda. Cuando el disco vuelve, retoma en el USB solo.
 
-```bash
-ssh root@<IP_PLACA>
-```
+## 2. Ver que esté midiendo
 
-La IP depende de cómo está conectada la placa (router, o RJ45 directo a la PC) — ver
-`scripts_campo/PLAN_CAMPO.md` → "IPs según topología de red".
+**Sin entrar a la placa** (lo normal):
 
-### 2. Prender el Starlink (si el relé ya está instalado en esta placa)
+- **SandVision** (`vista-sandvision.web.app`): el resumen público muestra arena y
+  energía de los últimos días; `/completa` (editores) tiene las solapas Arena,
+  Energía, Estado y Planilla. Los datos llegan con cada ventana, o sea con hasta
+  ~2 h de atraso en modo ventana.
+- **Losant**, Device de campo: `me_activo = true`, `me_ventanas_1min` ~1200,
+  `me_canales`, `sl_modo`. Solo se actualiza mientras hay conexión.
 
-En el sitio real, el relé se prende y apaga solo según el modo (ventana cada 2 h o
-permanente, ver `COMANDOS.md` → "Modo de operación") — no hace falta hacer nada.
-`prender-starlink` es para forzarlo a mano cuando se necesita acceso fuera de una ventana, o en banco/pruebas donde
-todavía no hay Starlink real conectado:
-
-```bash
-prender-starlink   # pulsa el relé a "on"
-```
-
-Si esta placa todavía no tiene el relé instalado, saltear este paso — no es necesario para
-capturar, solo controla el link de datos remoto. Para instalarlo: `scripts_campo/plan_campo/setup_placa.md` → paso 5.
-
-### 3. Verificar que el USB está listo (si se captura a `usb`)
+**Por SSH** (durante una ventana, en modo permanente, o en la empresa por cable):
 
 ```bash
-df -h /mnt/usb
+ssh root@<IP_PLACA> 'bash -s' < scripts_campo_comun/estado_placa.sh   # desde la PC, solo lectura
 ```
 
-Si no aparece montado, ver `scripts_campo/plan_campo/operacion_campo.md` → paso 2 (montaje
-a mano).
+Muestra modo, servicios, última línea `ESTADO` de la medición, salud, relé y
+resultado de la última actualización. No escribe nada ni toca el relé.
+IPs según cómo esté conectada la placa: `scripts_campo/PLAN_CAMPO.md` → "IPs según
+topología de red" (en la empresa por cable directo: `10.42.0.180`, perfil
+`directo-placa` de NetworkManager).
 
-### 4. Lanzar la captura
+## 3. Starlink: ventana o permanente
 
-**Mono (1 canal, captura corta de prueba — 4 chunks de 30s, 2 minutos total):**
+| Modo | Qué hace |
+|---|---|
+| **ventana** (defecto) | Prende cada 2 h a los :05 (horas pares, hora Argentina) y al arrancar; espera internet hasta 15 min, sube los CSV a GCS, espera 2 min por Losant y apaga. Suele durar 3-5 min (algunas, hasta ~12). |
+| **permanente** | Prendida las 24 h. Para trabajar remoto un rato largo o antes de una actualización. |
 
-```bash
-python3 /root/scripts_campo/capturar_stream.py \
-  --condicion reposo --duracion_chunk 0.5 --duracion_total 2 --directorio /mnt/usb
-```
+**Cambiarlo:** desde SandVision (`/completa` → Estado → Modos) o desde Losant con el
+tag `modo_starlink` del Device. En modo ventana el cambio llega recién en la próxima
+ventana (hasta 2 h). Otras formas (SSH, script de la PC): `COMANDOS.md` → "Modo de
+operación".
 
-**Dual (2 canales, sensor de referencia en IN2):**
+**A mano por SSH**, sin cambiar el modo: `prender-starlink` / `apagar-starlink`
+(entra en modo manual, se limpia solo) y `auto-starlink` para volver al control
+automático. `apagar-starlink` corta la sesión si estás entrando por ese mismo Starlink:
+es lo esperado. Desde Losant existe solo el apagado (comando `starlink`,
+`{"accion": "off"}`).
 
-```bash
-python3 /root/scripts_campo/capturar_stream.py \
-  --condicion reposo --canales 2 --decimacion 64 \
-  --duracion_chunk 0.5 --duracion_total 2 --directorio /mnt/usb
-```
+## 4. Mono o dual
 
-`--condicion` es `reposo` o `con_arena` según lo que se esté probando. `--duracion_total`
-hace que la sesión termine sola (acá, 2 minutos) — sin esto corre indefinido hasta
-`Ctrl+C` (corta al terminar el chunk en curso). Para sesiones largas o sin supervisión
-(de noche), usar el supervisor en vez del script solo — ver "Otros casos de uso" abajo.
+| Modo | Qué mide |
+|---|---|
+| Mono | Solo IN1, dec 32 |
+| Dual independiente | IN1 + IN2, dec 64; cada sensor graba su cruda por su propia kurtosis |
+| Dual asociado | IN1 + IN2, dec 64; el IN2 graba su cruda solo cuando graba el IN1 |
 
-Opcionalmente se puede identificar la sesión con `--pad` y `--pozo` (texto libre, default
-`0` si no se pasan) — se usan para nombrar la carpeta de destino (ver paso 6) y quedan
-guardados en el JSON de metadata. Ejemplo: `--pad Pad-3 --pozo "Pozo A"`.
+**Cambiarlo:** desde SandVision (Estado → Modos) o con los tags `canales` (`1` | `2`)
+e `in2_modo` (`independiente` | `asociado`) del Device en Losant. **No mandar el
+comando a mano en modo ventana**: Losant no guarda comandos y uno enviado con la placa
+desconectada se pierde sin error. Si el modo nuevo no llega a medir en 4 min, la placa
+vuelve sola al anterior; el resultado queda en `me_cambio`. Detalle y comando por SSH:
+`COMANDOS.md` → "Mono / dual y modo del IN2".
 
-Detalle completo de parámetros y qué se ve en pantalla:
-`scripts_campo/plan_campo/operacion_campo.md`.
+No editar `config_campo.json` a mano para esto.
 
-### 5. Terminar la captura
+## 5. Los datos
 
-Con `--duracion_total` (como arriba) termina sola. Si se lanzó sin ese límite, `Ctrl+C` y
-esperar a que cierre el chunk en curso (no matar el proceso a la fuerza).
+**Qué se guarda (en el USB, `/mnt/usb/eventos/`):**
 
-### 6. Sacar los datos
+- `ventanas_AAAAMMDD_HH.csv`: área y kurtosis de **todas** las ventanas de 50 ms,
+  uno por hora **UTC** (= hora Argentina + 3), ~3 MB/h por canal.
+- `evento_*.bin` + `.json`: señal cruda de cada ventana con kurtosis ≥ 3.4 (±10 ms).
+- En dual, lo del IN2 va igual en `/mnt/usb/eventos/in2/`.
 
-Cada sesión crea su propia carpeta (no una fija) — nombrada `[pad]_[pozo]_[condicion]_[fecha_hora]`,
-por ejemplo `Pad-3_Pozo A_reposo_20260811_133945/` si se lanzó con `--pad Pad-3 --pozo "Pozo A"`,
-o `0_0_reposo_20260811_133945/` si no se pasaron esos argumentos. Adentro:
+Los CSV no se borran del USB después de subirlos. Si queda poco lugar, la placa pausa
+la señal cruda y sigue con los CSV (`me_cruda_pausada` en Losant).
 
-```
-/mnt/usb/<pad>_<pozo>_<condicion>_<fecha_hora>/
-  session_reposo_..._info.json
-  campo_reposo_..._0001.bin
-  campo_reposo_..._0002.bin
-  ...
-```
+**CSV (lo de todos los días):** suben solos a GCS en cada ventana. Se miran en
+SandVision; no hace falta bajarlos de la placa. Para analizarlos en la PC (paquete
+liviano y visor): `README.md` → "Analizar las mediciones del modo evento".
 
-**Si estás en el sitio, con acceso físico a la placa:** desconectar el pendrive — el
-automontaje se encarga de desmontarlo solo al detectar la desconexión, no hace falta un
-comando de umount manual. Conectarlo a la PC y copiar la carpeta directo.
+**Señal cruda de los eventos:** no sube a GCS (pesa demasiado para Starlink). Se trae
+a mano:
 
-**Si el equipo no está al alcance (remoto, vía Starlink):**
-
-- **Por SSH/scp**, cuando la placa se puede alcanzar directo por IP (misma red, o IP
-  pública del Starlink sin CGNAT):
+- Con acceso físico: desconectar el disco (el automontaje lo desmonta solo, y la
+  captura sigue en la SD solo con CSV hasta que vuelva) y copiar en la PC.
+- Remoto, con Starlink prendida (permanente o durante una ventana), solo lo que haga
+  falta, no la carpeta entera (puede tener decenas de miles de archivos):
 
   ```bash
-  scp -r root@<IP_PLACA>:/mnt/usb/<carpeta_de_la_sesion>/ /home/facu-edge/datos_campo/
+  ssh root@<IP_PLACA> 'ls /mnt/usb/eventos/ | grep "^evento_20261029_15"'
+  mkdir -p datos_campo/placa_campo/eventos
+  scp 'root@<IP_PLACA>:/mnt/usb/eventos/evento_20261029_15*' datos_campo/placa_campo/eventos/
   ```
 
-- **Por "agujero de gusano" (`magic-wormhole`)**, cuando no hay forma de alcanzar la
-  placa directo (sin IP pública, detrás de CGNAT) — no necesita puertos abiertos ni IP
-  fija en ninguno de los dos lados, solo que ambos tengan salida a internet (instalar una
-  vez con `apt install magic-wormhole` o `pip install magic-wormhole`):
-
-  ```bash
-  # en la placa (root@<IP_PLACA>)
-  wormhole send /mnt/usb/<carpeta_de_la_sesion>/
-
-  # en la PC, con el código que imprime el comando anterior
-  wormhole receive <codigo>
-  ```
-
-(Si se capturó con `--destino red` en vez de `usb`, los archivos ya llegaron solos a la
-PC durante la captura — no hace falta ninguno de estos pasos, ver "Otros casos de uso"
-abajo.)
-
-**Liberar espacio en el USB para la próxima captura**, una vez confirmado que los datos
-ya están copiados y a salvo en la PC (este comando no tiene vuelta atrás):
+Reconstruir un tramo de señal en la PC a partir de eventos + CSV:
 
 ```bash
-df -h /mnt/usb                              # confirmar que es el USB real antes de borrar
-rm -rf /mnt/usb/<carpeta_de_la_sesion>/     # borra esa carpeta de sesion y su contenido
+.venv/bin/python analisis/placa/reconstruir_senal.py CARPETA --desde 120 --duracion-s 10 --png
 ```
 
-No hace falta crear ninguna carpeta a mano — `capturar_stream.py` crea una nueva en cada
-corrida, con nombre distinto (incluye la fecha y hora), así que sesiones viejas nunca se
-pisan entre sí.
+Cómo leer área/kurtosis (reposo, pico aislado, pase de arena): `README.md`, al final
+de "Analizar las mediciones del modo evento".
 
-### 7. Revisar los datos (en la PC)
+## 6. Pausar la medición sin tocar lo demás
 
 ```bash
-.venv/bin/python3 analisis/revisar.py /ruta/a/<carpeta_de_la_sesion>/
+systemctl stop modo-evento      # para la captura (Starlink, Losant y energía siguen)
+systemctl start modo-evento     # la retoma
+systemctl is-active modo-evento
 ```
 
-Detecta solo si cada archivo es mono o dual y muestra kurtosis, crest factor, fracción
-activa por archivo (más métricas cruzadas CH1/CH2 si es dual). Cómo interpretar los
-números: `analisis/INTERPRETACION_RESULTADOS.md`.
+`stop` no la deshabilita: al reiniciar la placa vuelve a medir.
 
-### 8. Apagar el Starlink (si corresponde)
+## 7. Apagar la placa
 
-```bash
-apagar-starlink
-```
-
-Corta la sesión SSH en el momento si se estaba conectado a través del mismo Starlink —
-es lo esperado, no un error.
-
-### 9. Apagar la placa
-
-Apagado prolijo por SSH antes de cortar alimentación física, si se puede:
+Apagado prolijo por SSH antes de cortar la alimentación, si se puede:
 
 ```bash
 shutdown -h now
 ```
 
+Un corte de energía sin apagado no rompe nada: al volver la placa retoma la medición
+y recorta la última línea del CSV que haya quedado a medias.
+
 ---
 
-## Otros casos de uso
+## Otros casos
 
-| Caso | Qué cambia del flujo típico |
+| Caso | Qué hacer |
 |---|---|
-| **Sesión larga o de noche, sin supervisión** | Lanzar con el supervisor en vez de `capturar_stream.py` solo: `bash /root/scripts_campo_comun/relanzar_captura.sh /root/scripts_campo/capturar_stream.py --condicion reposo --directorio /mnt/usb`. Relanza sola si crashea (bug conocido de la librería), no si termina limpio. |
-| **Varias sesiones cortas en vez de una larga** (carpetas más livianas, más fáciles de transmitir) | `bash /root/scripts_campo_comun/repetir_captura.sh <repeticiones> <minutos_por_repeticion> /root/scripts_campo_comun/relanzar_captura.sh /root/scripts_campo/capturar_stream.py --condicion reposo --directorio /mnt/usb`. Cada repetición es una carpeta independiente con su propio timestamp — ver `COMANDOS.md`. |
-| **Sin pendrive, directo a la PC por red** | Agregar `--destino red --pc_host usuario@IP --pc_ruta /ruta/en/pc` al comando de captura. Los archivos llegan solos a la PC, se saltea el paso 6 completo. |
-| **Prueba rápida de banco (sin guardar nada)** | `probar_dual_stream.py` — captura corta de solo lectura para chequear que los 2 canales están bien mapeados, no toca el USB. Usar antes de confiar en una captura dual nueva. |
-| **Cambiar el modo del Starlink** (ventana / permanente) | Desde Losant (tag `modo_starlink` del Device) o en la placa `/root/starlink_remoto/modo_operacion.sh permanente && /root/starlink_remoto/aplicar_objetivo.sh`. Ver `COMANDOS.md` → "Modo de operación". |
-| **Desactivar el control automático del Starlink** (ej. pruebas de campo) | `systemctl disable --now starlink-ventana.timer starlink-reconciliador.timer` en la placa (los dos — si dejás el reconciliador prendido, revierte solo lo que fijes a mano cada 5 min). `prender-starlink`/`apagar-starlink` siguen funcionando igual. |
+| **Actualizar el software o el bitstream** | Por paquete, con la placa en permanente: `scripts_campo/plan_campo/actualizar_placa_campo.md` → sección 6. Vuelve sola si algo falla. |
+| **Captura clásica a pedido** (`.bin` continuos, como antes del modo evento) | `bash /root/scripts_campo/cambiar_modo.sh clasico` deshabilita el modo evento; después `capturar_stream.py` como en `scripts_campo/plan_campo/operacion_campo.md`. Volver: `cambiar_modo.sh evento`. Mientras está en clásico **no se registra nada** salvo lo que se capture a mano. |
+| **Dejar el relé quieto en una prueba** | `prender-starlink`/`apagar-starlink` o modo permanente. Desactivar los timers (`COMANDOS.md` → "Activar/desactivar la programación automática") solo si además no querés que la placa reevalúe nada. |
+| **Panel solar / batería** | Llegan a Losant (`panel-solar-informe`) y a SandVision → Energía. Detalle: `panel_solar_ble/README.md`. |
 
 ---
 
-## Referencias (para más detalle)
+## Referencias
 
-- Todos los comandos y sus argumentos: `COMANDOS.md`
-- Guía operativa completa de campo (setup, topologías de red, troubleshooting):
-  `scripts_campo/PLAN_CAMPO.md` y `scripts_campo/plan_campo/`
-- Arquitectura e historial del control remoto del relé: `starlink_remoto/HISTORIAL_STARLINK.md`
-- Interpretación de resultados de `revisar.py`: `analisis/INTERPRETACION_RESULTADOS.md`
+- Todos los comandos: `COMANDOS.md`
+- Modo evento (formatos, supervisor, mono/dual, qué llega a Losant): `docs/modo_evento.md`
+- Modos de Starlink: `docs/plan_modos_starlink.md`; arquitectura del relé: `starlink_remoto/HISTORIAL_STARLINK.md`
+- Actualizaciones de la placa de campo: `scripts_campo/plan_campo/actualizar_placa_campo.md`
+- Después de tocar un archivo en la placa, qué reiniciar: `DESPLIEGUE.md`

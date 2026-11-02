@@ -3,6 +3,19 @@
 Estos pasos se hacen una vez por placa. Después de un reset de firmware hay que repetirlos.
 IPs según topología de red: ver `../PLAN_CAMPO.md` → "IPs según topología de red".
 
+> **Alcance (2026-11-02):** esto es el setup **base** de la placa (librería de
+> streaming, USB, journal, SSH, relé, RTC, panel solar). Lo que corre hoy en campo
+> — modo evento (`modo-evento`, `resumen-modo-evento`, `subir-csv-gcs`), bitstream
+> propio, modos de Starlink ventana/permanente, cambio de canales, registro de energía —
+> se instala **por paquete** sobre una placa ya preparada: `actualizar_placa_campo.md`
+> secciones 6 (procedimiento) y 7 (paquete integrado). El paquete exige USB montado y
+> Starlink en permanente, así que va después de estos pasos. [No ensayado sobre una
+> placa recién flasheada: la última instalación completa fue sobre la de campo, que
+> ya tenía el setup base.]
+>
+> El paso 1 copia lo mínimo del **modo clásico** (`capturar_stream.py`); con el paquete
+> eso se pisa con el árbol completo de `scripts_campo/`.
+
 ## 1. Copiar los scripts a la placa
 
 ```bash
@@ -59,10 +72,10 @@ descubren por un **broadcast UDP propio del vendor**: el servidor manda cada 1s 
 qué IP conectarse por TCP (puerto 18901). Confirmado con `strace -f -e trace=network`.
 
 Si `eth0` no tiene una ruta válida (cae la interfaz, se pierde el lease DHCP durante el corte de
-`hora_off` del relé de Starlink, etc.), ese `sendto()` falla con `ENETUNREACH` — el cliente nunca
+apagado del relé de Starlink, etc.), ese `sendto()` falla con `ENETUNREACH` — el cliente nunca
 ve el anuncio y la captura entera falla con `ERROR: no se pudo conectar al streaming-server` /
 `Host not found` (mensaje genérico del vendor, **no** es un error real de DNS pese al nombre).
-Sin esta interfaz, una captura larga que atraviesa un corte de `hora_off` agota los 10 reintentos
+Sin esta interfaz, una captura larga que atraviesa un apagado del relé de Starlink agota los 10 reintentos
 del supervisor y **abandona el lote entero** — pasó de verdad en `rp-f0fbda` el 2026-09-21.
 
 **Fix:** una interfaz `dummy0` local, siempre arriba, con su propia IP, le da a ese broadcast un

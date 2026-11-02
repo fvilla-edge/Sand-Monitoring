@@ -59,6 +59,16 @@ SmartSolar  --BLE (advertisement cifrado)-->  ESP32-C3  --USB serial (hex crudo)
   también publica, una sola vez por conexión, la telemetría del dish
   Starlink (GPS + estado del link) — ver `starlink_api/README.md`, va al
   mismo Device de Losant que el panel solar, a propósito.
+  Hoy es además el **"cartero"**: la única conexión MQTT al Device, así que
+  también manda el resumen del modo evento (`resumen_modo_evento.py`) y
+  recibe los comandos de Losant (`modo`, `canales`, `starlink`).
+- `registro_energia.py` — deja una fila por minuto (promedio) en un CSV por
+  hora UTC (`energia_AAAAMMDD_HH.csv`, en `energia.dir_usb` o, sin disco, en
+  `energia.dir_sd`), haya o no internet. Esos CSV suben a GCS con los del
+  modo evento (`subir_csv_gcs.py`) y los usa SandVision → Energía.
+- `balance_energia.py` — SOC por conteo de Ah (100 % en float sostenido),
+  energía por hora/día y consumo con y sin Starlink; manda un resumen horario
+  a Losant (atributos `en_*`). Diseño: `docs/plan_perfiles_energia.md`.
 - `losant_config.py` — Device ID + credenciales de Losant. **No está en
   git** (ver `.gitignore`) — hay que crearlo a mano en la placa (paso 5).
 

@@ -4,7 +4,15 @@ Lista viva de todo lo que la placa de campo tiene que recibir cuando se la
 iguale a la placa de pruebas (`rp-f0fd8c`). Cada cambio que afecte a campo se
 agrega acá en el momento, no al final.
 
-**Estado (2026-09-30):** placa de campo con la **segunda actualización**
+**Estado (2026-11-02):** placa de campo **instalada en el sitio** (PAD-118,
+IN1 = IN2 = BPO-21182H) desde el 29/10/2026, con el paquete
+`20261021_175236_ff47f40` (tag `campo-2026-10-21b`, sección 8), bitstream del
+IN2 `20ac88b` (md5 `b34cd26f`), **dual** y Starlink en **modo ventana** (desde
+el 29/10 16:56 UTC). Primera ventana real (29/10 19:05 UTC) sin reset; la noche
+29-30/10, 9/9 ventanas subieron a GCS. Pendiente: lo de la sección 7.5. Lo de
+abajo es el historial de cada actualización, en orden.
+
+**Estado anterior (2026-09-30):** placa de campo con la **segunda actualización**
 (sección 0) desde el 30/9 18:05 UTC: paquete `20260930_171700_4740b4e`, tag
 `campo-2026-09-30`, bitstream `7f23f7d` (relé leído sin cortar la medición +
 modo Master fijo + protecciones). La primera fue el 29/9 (paquete
@@ -614,7 +622,8 @@ estado de cada placa quedan fuera de git (`paquetes_actualizacion/`,
    ```
    (`--commit <tag>` para armar desde un tag; en `VERSION` queda el commit.)
 
-**En la ventana de Starlink (hora_on), con tiempo para volver:**
+**Con Starlink prendida y tiempo para volver** (pasar antes a modo permanente:
+`aplicar_actualizacion.sh` lo exige; en modo ventana la conexión dura ~3-5 min):
 
 4. Mandar el paquete. No toca nada instalado; reintenta si se corta y lo
    verifica por sha256 en la placa:
@@ -944,7 +953,11 @@ paquete nuevo armado desde `integracion-campo`:
   osciloscopio en la alimentación de la placa. Arreglo de hardware a
   elegir: limitador de corriente de arranque en la salida del relé, la
   placa alimentada aparte, o diodo + capacitor de respaldo en su entrada.
-  **En modo ventana sin ese arreglo: un reset por ventana (12 por día).** Al
+  **En modo ventana sin ese arreglo: un reset por ventana (12 por día).**
+  [Actualización 30/10: en el sitio, con la Starlink real, la primera ventana
+  (29/10 19:05 UTC) no reseteó y en la noche 29-30/10 no aparecieron señales de
+  reset en 9 ventanas; el hueco de captura por ventana es la mitigación de
+  arriba, no un reboot.] Al
   sitio va en permanente (el relé no cambia, sin resets); antes de pasar a
   ventana, revisar la primera ventana (`uptime_s` en Losant): con la
   Starlink real como carga puede ser peor.

@@ -1,14 +1,15 @@
 # Modo evento — captura continua 24h, guardando solo lo que importa
 
-Estado al 2026-10-16:
+Estado al 2026-11-02:
 
-- **Campo (`rp-f0fbda`):** modo evento en **mono** (solo IN1, dec 32) con el
-  bitstream `7f23f7d` (tag `campo-2026-10-08`).
-- **Lab (`rp-f0fd8c`) y paquete integrado** (rama `integracion-campo`,
-  `actualizar_placa_campo.md` sección 7): además **dos sensores** (IN1 + IN2,
-  bitstream del IN2 `20ac88b`), IN2 **independiente** o **asociado**, y cambio
-  mono/dual remoto (comando o tags de Losant). Validado en el lab en reposo;
-  falta probarlo con los sensores reales (en la empresa).
+- **Campo (`rp-f0fbda`):** instalada en el sitio (PAD-118) desde el 29/10, en
+  **dual** (IN1 + IN2, dec 64) con el bitstream del IN2 `20ac88b` y el
+  paquete `ff47f40` (tag `campo-2026-10-21b`). Starlink en modo ventana: los
+  CSV suben a GCS cada 2 h y se ven en SandVision.
+- **Lab (`rp-f0fd8c`):** mismo software; ahí se prueba todo antes de campo.
+- Falta: calibrar el umbral del IN2 con arena real (hoy usa el del IN1) y
+  explicar los picos sueltos del IN2 de la primera noche en el sitio
+  (29-30/10, kurtosis 5-850 en un solo punto, sin pase en el IN1).
 
 Historia de cada parte en los planes: `plan_dos_canales.md` (primera versión,
 IN2 de referencia; reemplazada), `plan_in2_independiente.md`,
@@ -310,7 +311,8 @@ En la placa (compilar una vez):
 make -C /root/scripts_campo/c
 ```
 
-Captura (umbral 3.4, destino por defecto `/root/eventos`):
+Captura a mano, solo para pruebas con `modo-evento` parado (umbral 3.4,
+destino por defecto `/root/eventos`; en la placa la corre el servicio):
 ```bash
 python3 /root/scripts_campo/capturar_eventos.py --umbral 3.4 --destino /root/eventos
 ```

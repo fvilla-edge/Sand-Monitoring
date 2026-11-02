@@ -7,12 +7,18 @@ sin cortar la produccion ni instalar nada invasivo.
 ## Idea general
 
 Un sensor acustico pegado a la tuberia capta las vibraciones que genera la arena al chocar contra las paredes.
-Una placa ADC digitaliza esa senal a alta frecuencia, y un script calcula metricas (kurtosis, RMS, crest factor,
-rms diferencial) que permiten distinguir reposo de produccion de arena.
+Una placa Red Pitaya digitaliza esa senal y su FPGA calcula, en tiempo real, el area y la kurtosis
+de cada ventana de 50 ms. La placa mide las 24 h (**modo evento**): guarda esos dos valores de todas
+las ventanas y la senal cruda solo de las ventanas con kurtosis alta.
 
 ```
-tuberia  →  sensor(es) VS150-RI  →  Red Pitaya (ADC)  →  captura .bin en campo  →  analisis en PC
+tuberia → sensor(es) VS150-RI → Red Pitaya (FPGA: area/kurtosis por ventana, modo evento 24 h)
+        → USB: CSV por hora + crudos de eventos → cada 2 h por Starlink: CSV a GCS → SandVision (web)
+                                                → resumen por minuto a Losant
 ```
+
+Estado (2026-11-02): placa de campo `rp-f0fbda` instalada en PAD-118 (BPO-21182H) desde el 29/10,
+en dual independiente y Starlink en modo ventana.
 
 ## Hardware
 
@@ -31,25 +37,34 @@ tuberia  →  sensor(es) VS150-RI  →  Red Pitaya (ADC)  →  captura .bin en c
 ```
 Sand Monitoring/
 ├── scripts_campo/          # Captura en campo (corren en la Red Pitaya)
-│   ├── capturar_stream.py     # Recomendado — streaming FILE mode, ~98% eficiencia, --canales 1|2
-│   ├── probar_dual_stream.py  # Prueba de banco de solo lectura (2 canales)
-│   ├── capturar_eventos.py    # Modo evento (rama modo-evento): captura 24h, guarda cruda solo si kurtosis>=umbral + CSV de todas las ventanas — ver docs/modo_evento.md
+│   ├── capturar_eventos.py    # Modo evento (lo que corre hoy): lanzador del nucleo C++ — ver docs/modo_evento.md
 │   ├── c/                     # Nucleo C++ del modo evento (capturar_eventos.cpp, compilar en la placa)
-│   ├── PLAN_CAMPO.md          # Indice de la guia operativa, mono y dual (--canales 1|2)
-│   └── plan_campo/            # Guias detalladas: setup, operacion, formato, troubleshooting
+│   ├── supervisor_eventos.sh  # Arranque/destino del modo evento (lo usa modo-evento.service)
+│   ├── resumen_modo_evento.py # Anotador: resumen por minuto a Losant (me_activo, kurt_max_1min, ...)
+│   ├── subir_csv_gcs.py       # Sube los CSV horarios (ventanas y energia) a Google Cloud Storage
+│   ├── cambiar_canales.sh     # Mono / dual (IN2 independiente o asociado), con vuelta atras sola
+│   ├── cambiar_modo.sh        # Modo evento <-> modo clasico
+│   ├── systemd/               # modo-evento, resumen-modo-evento, subir-csv-gcs (.service/.timer)
+│   ├── actualizacion/         # Paquetes de actualizacion: armar, enviar, aplicar, revertir
+│   ├── capturar_stream.py     # Modo clasico: captura continua a pedido (.bin), streaming FILE mode
+│   ├── probar_dual_stream.py  # Modo clasico: prueba de banco de solo lectura (2 canales)
+│   ├── PLAN_CAMPO.md          # Indice de la guia operativa
+│   └── plan_campo/            # Guias detalladas: setup, actualizaciones, troubleshooting, modo clasico
 ├── scripts_campo_comun/    # Codigo y supervisor compartidos
 │   ├── campo_common.py        # Funciones compartidas de captura (FPGA, ADC, formato .bin)
 │   ├── cfg.py                 # Lectura de config_campo.json — fuente unica de parametros operativos
 │   ├── config_campo.json      # Umbrales, horarios y rutas — compartido con starlink_remoto/ y panel_solar_ble/
-│   ├── relanzar_captura.sh    # Supervisor: relanza capturar_stream.py si el streaming-server se cae
-│   ├── repetir_captura.sh     # Repite una captura corta N veces (carpetas livianas, mas faciles de transmitir)
+│   ├── estado_placa.sh        # Resumen de solo lectura de una placa (se corre desde la PC por ssh)
+│   ├── inventario_placa.sh    # Inventario de lo instalado (antes de una actualizacion)
+│   ├── relanzar_captura.sh    # Modo clasico: relanza capturar_stream.py si el streaming-server se cae
+│   ├── repetir_captura.sh     # Modo clasico: repite una captura corta N veces
 │   └── udev-automount/        # Montaje/desmontaje automatico del storage de campo (USB/SSD) en /mnt/usb
 ├── analisis/               # Scripts de analisis (mayoria corre en la PC, placa/ es la excepcion)
-│   ├── revisar.py          # Revision rapida de capturas, mono o dual (.bin) — fuente de verdad en texto
+│   ├── revisar.py          # Revision rapida de capturas del modo clasico, mono o dual (.bin)
 │   ├── visores/            # GUIs de matplotlib/tkinter (ver_forma_onda.py, ver_acumulado_lote.py + abrir_*.sh)
 │   ├── lote/               # Analisis de un lote completo pegado en el tiempo (acumulado_lote.py)
-│   ├── utilidades/         # graficar.py, extraer_canal.py, generar_baseline.py
-│   ├── placa/              # Paquete liviano area/kurtosis, corre EN la placa — exportar_paquete_area_c.py (binario C) es el camino real, exportar_paquete_area.py (Python) queda de referencia
+│   ├── utilidades/         # organizar_csv_campo.py (CSV de campo por dia), graficar.py, extraer_canal.py, generar_baseline.py
+│   ├── placa/              # Modo evento en la PC: ventanas_a_paquete.py (CSV -> paquete), reconstruir_senal.py, comparar_in1_in2.py
 │   ├── INTERPRETACION_RESULTADOS.md  # Guia de lectura de metricas: deteccion vs clasificacion
 │   └── tests/              # Tests del parser de .bin y la logica de deteccion (pytest)
 ├── indicador_estado/       # LED de estado (PS_MIO11) — parpadeo distinto en captura/transmision/standby
@@ -70,7 +85,9 @@ Sand Monitoring/
 │   ├── esp32_victron_scan/    # Sketch del ESP32-C3 (el puente en si)
 │   ├── victron_scanner.py     # Desencriptado AES-CTR + parser de las lineas del ESP32
 │   ├── leer_smartsolar_serial.py  # Lectura por pantalla, para probar el puente
-│   ├── publicar_losant.py     # Publica por MQTT a Losant (por conexion y cada N minutos)
+│   ├── publicar_losant.py     # "Cartero": publica a Losant por MQTT y recibe sus comandos (modo, canales, starlink)
+│   ├── registro_energia.py    # CSV por minuto/hora de la energia (con o sin internet)
+│   ├── balance_energia.py     # SOC por conteo de Ah y balance horario/diario
 │   └── systemd/                # Servicio que corre publicar_losant.py en la placa
 ├── rtc_ds3231/             # RTC DS3231 por I2C — reloj confiable sin conectividad
 │   ├── ds3231.py               # Lectura/escritura por I2C via smbus2 (sin dependencias del proyecto)
@@ -78,12 +95,14 @@ Sand Monitoring/
 │   ├── probar_rtc.py           # Prueba aislada por linea de comandos (lee, opcionalmente setea, compara con el sistema)
 │   ├── restaurar_hora.sh       # Al boot, setea la hora del sistema desde el RTC antes de ntpsec y Starlink
 │   └── systemd/                # Unit que corre restaurar_hora.sh en el boot (antes de ntpsec y del mux de PS_MIO10)
+├── comandos_losant/        # modo_starlink.py: cambiar el tag modo_starlink desde la PC (API REST); el resto es la prueba vieja de comandos
 ├── relay/                  # Foto/referencia del modulo de rele biestable
 ├── datos_campo/            # Capturas de campo (gitignoreado)
-├── docs/                   # Roadmap del proyecto y notas tecnicas (modo_evento.md: modo evento, registro continuo y reconstruccion)
+├── docs/                   # modo_evento.md (como funciona hoy) + planes/bitacoras de cada feature (plan_*.md)
 ├── Click_shield_for_Red_Pitaya_v102_Schematic.pdf  # Esquematico de la Click Shield
 ├── requirements.txt        # Dependencias de analisis/ (PC) — numpy, scipy, pytest
 ├── COMANDOS.md             # Referencia rapida de todos los scripts y sus argumentos
+├── DESPLIEGUE.md           # Que reiniciar despues de tocar cada archivo en la placa
 └── GUIA_USO_BASICO.md      # Guia de uso dia a dia, paso a paso, para alguien nuevo
 ```
 
@@ -97,19 +116,18 @@ python3 -m venv .venv
 
 ## Flujo basico
 
-Para alguien nuevo en el proyecto, empezar por `GUIA_USO_BASICO.md` — flujo tipico
-paso a paso (encender, prender Starlink, capturar, sacar datos, revisar, apagar).
+Para alguien nuevo en el proyecto, empezar por `GUIA_USO_BASICO.md`: encender, ver que
+este midiendo, modos de Starlink y de canales, datos y apagado.
 
-Para captura en campo (loop continuo, storage externo, mono o dual con `--canales`) ver
-`scripts_campo/PLAN_CAMPO.md`.
+- Como funciona el modo evento por dentro: `docs/modo_evento.md`.
+- Setup, actualizaciones y troubleshooting de una placa: `scripts_campo/PLAN_CAMPO.md`.
+- Lista completa de scripts y argumentos: `COMANDOS.md`.
+- Ver los datos: SandVision (`vista-sandvision.web.app`, repo aparte `SandVision-web-app`)
+  lee los CSV que la placa sube a GCS.
 
-Revision rapida de una captura de campo:
-
-```bash
-.venv/bin/python3 analisis/revisar.py /ruta/a/la/captura/
-```
-
-Para la lista completa de scripts y argumentos ver `COMANDOS.md`.
+Modo clasico (capturas `.bin` continuas a pedido, como antes del modo evento): ver
+`scripts_campo/plan_campo/operacion_campo.md`; revision rapida en la PC con
+`.venv/bin/python3 analisis/revisar.py /ruta/a/la/captura/`.
 
 ## Analizar las mediciones del modo evento (CSV de ventanas)
 
@@ -117,7 +135,14 @@ En modo evento la placa guarda, ademas de la señal cruda de cada evento, un CSV
 por hora con el area y la kurtosis de TODAS las ventanas de 50 ms
 (`/mnt/usb/eventos/ventanas_AAAAMMDD_HH.csv`, ~3 MB/hora, hora en UTC = local + 3).
 Es liviano para bajarlo por Starlink y alcanza para ver la linea de tiempo del dia.
-Detalle del modo en `docs/modo_evento.md`.
+Detalle del modo en `docs/modo_evento.md`. En dual, los del IN2 estan en
+`/mnt/usb/eventos/in2/` con el mismo nombre.
+
+**Lo normal es no bajarlos de la placa:** suben solos a GCS en cada ventana de Starlink
+(`<prefijo>/<hostname>/AAAA/MM/DD/ventanas_AAAAMMDD_HH[_sd][_in2].csv.gz`, bucket en
+`config_campo.json` → `gcs`) y se miran en SandVision. Los pasos de abajo son para
+analizarlos en la PC con las herramientas del repo; si ya estan en GCS, se pueden bajar
+de ahi (descomprimir el `.gz`) y saltear los pasos 1-2.
 
 Desde la carpeta del proyecto, con Starlink prendido (modo permanente, o durante una ventana).
 `<IP_CAMPO>` es la IP publica actual de la placa de campo.
@@ -149,18 +174,19 @@ Desde la carpeta del proyecto, con Starlink prendido (modo permanente, o durante
    ```
 5. Abrirlo en el visor: doble click en `analisis/visores/abrir_paquete.sh` (o
    `bash analisis/visores/abrir_paquete.sh`) y elegir el `.paquete.json`. La linea
-   punteada y el contador "N/M ventanas ≥ 5" usan el mismo umbral que el modo
-   evento de la placa (kurtosis ≥ 5 guarda la cruda).
+   punteada y el contador "N/M ventanas ≥ 5" usan `FA_THRESH` de `analisis/revisar.py`,
+   que **sigue en 5**: la placa guarda la cruda con kurtosis ≥ 3.4 desde el 5/10/2026,
+   asi que el contador del visor no cuenta lo mismo que los eventos guardados.
 6. Opcional, lista de eventos sin abrir el visor (el `LC_ALL=C` es necesario: con
    el idioma en español awk usa coma decimal y cuenta mal):
    ```bash
-   LC_ALL=C awk -F, 'NR>1 && $4>=5 {printf "%s UTC  kurt=%.2f  area=%.3f\n", strftime("%H:%M:%S",$2/1000,1), $4, $3}' datos_campo/placa_campo/csv_por_dia/2026-09-29/ventanas_*.csv
+   LC_ALL=C awk -F, 'NR>1 && $4>=3.4 {printf "%s UTC  kurt=%.2f  area=%.3f\n", strftime("%H:%M:%S",$2/1000,1), $4, $3}' datos_campo/placa_campo/csv_por_dia/2026-09-29/ventanas_*.csv
    ```
 
 Como leerlo:
 
 - **Reposo:** kurtosis ~3 y area plana.
-- **Pico aislado:** una sola ventana sobre 5 con las vecinas en ~3. Solo, no
+- **Pico aislado:** una sola ventana sobre el umbral con las vecinas en ~3. Solo, no
   alcanza para decir que es arena (puede ser ruido electrico del lugar).
 - **Pase de arena** (como los del 21/9): muchas ventanas seguidas sobre el umbral
   durante minutos, valores altos (decenas a cientos) y el area subiendo.

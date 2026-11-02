@@ -1,20 +1,14 @@
 # Guía operativa de campo — Sand Monitoring
 
-El script recomendado es **`capturar_stream.py`**, con `--canales 1` (mono, default)
-o `--canales 2` (dual — sensor de referencia además del sensor de medición, ver
-`plan_campo/operacion_campo.md` → "Sensor de referencia").
+Desde fines de septiembre de 2026 la placa corre en **modo evento**: mide sola las 24 h
+desde que arranca (`modo-evento.service`), guarda área y kurtosis de todas las ventanas
+de 50 ms en un CSV por hora y la señal cruda solo de las ventanas con kurtosis ≥ 3.4.
+Los CSV suben a GCS en cada ventana de Starlink y se ven en SandVision. Cómo funciona:
+`../docs/modo_evento.md`. Uso día a día: `../GUIA_USO_BASICO.md`.
 
-Captura a ~98% de eficiencia escribiendo primero a la SD interna de la placa (15 MB/s,
-suficiente para los 7.8 MB/s de datos a 1 canal) y luego mueve cada chunk al destino elegido en
-un thread de fondo mientras ya empieza el siguiente chunk.
-
-**Tres modos de operación (mono y dual):**
-
-| Modo | Topología de red | Velocidad típica | Límite de sesión |
-|---|---|---|---|
-| `usb` | Sin PC | 4–5 MB/s | Storage del USB |
-| `red` via gateway | Placa y PC en la misma red (router) | 6–15+ MB/s | Sin límite en SD |
-| `red` via link directo | RJ45 placa ↔ PC directamente | 5.6 MB/s concurrente | ~2.9 horas (ver `plan_campo/formato_y_funcionamiento.md`, 1 canal) |
+El **modo clásico** (capturas `.bin` continuas a pedido con `capturar_stream.py`) sigue
+disponible como vuelta atrás (`cambiar_modo.sh clasico`) y para pruebas de banco; sus
+guías quedan abajo, marcadas.
 
 ---
 
@@ -22,10 +16,11 @@ un thread de fondo mientras ya empieza el siguiente chunk.
 
 | Documento | Contenido | Cuándo leerlo |
 |---|---|---|
-| [`plan_campo/setup_placa.md`](plan_campo/setup_placa.md) | Setup único por placa: copiar scripts, librería de streaming, montaje automático de USB, autosuspend, modo red, control remoto del relé Starlink | Antes de la primera salida a campo con una placa, o después de reflashearla |
-| [`plan_campo/operacion_campo.md`](plan_campo/operacion_campo.md) | Sensor de referencia (dual), conectar, verificar USB, ejecutar captura, parámetros, ejemplos, sesiones largas/relanzado, archivos generados, revisar en la PC | Cada vez que se sale a capturar |
-| [`plan_campo/formato_y_funcionamiento.md`](plan_campo/formato_y_funcionamiento.md) | Cómo funciona el script por dentro (buffer SD, eficiencia), estructura del repo, formato `.bin`, logs, core dumps, espacio en disco y velocidades | Para entender resultados raros, estimar espacio/tiempo, o debuggear |
-| [`plan_campo/troubleshooting.md`](plan_campo/troubleshooting.md) | Qué hacer si algo falla, organizado por síntoma | Cuando algo no anda |
+| [`plan_campo/setup_placa.md`](plan_campo/setup_placa.md) | Setup base, una vez por placa: librería de streaming, `dummy0`, montaje automático del USB, autosuspend, journal, SSH, relé de Starlink, RTC, panel solar | Placa nueva o reflasheada (antes del primer paquete) |
+| [`plan_campo/actualizar_placa_campo.md`](plan_campo/actualizar_placa_campo.md) | Historial de lo instalado en la placa de campo y procedimiento de actualización por paquete (sección 6) | Para instalar o actualizar el software/bitstream |
+| [`plan_campo/troubleshooting.md`](plan_campo/troubleshooting.md) | Qué hacer si algo falla, por síntoma (modo evento primero, modo clásico después) | Cuando algo no anda |
+| [`plan_campo/operacion_campo.md`](plan_campo/operacion_campo.md) | **Modo clásico:** captura a pedido con `capturar_stream.py`, parámetros, sesiones largas, archivos `.bin` | Solo con la placa en modo clásico |
+| [`plan_campo/formato_y_funcionamiento.md`](plan_campo/formato_y_funcionamiento.md) | **Modo clásico:** buffer en SD, eficiencia, formato `.bin`. Vigente para todos: logs, core dumps, `config_campo.json` | Debug, o para entender una captura clásica |
 
 ---
 
@@ -36,7 +31,8 @@ La placa obtiene su IP del router o de la PC según cómo esté conectada:
 | Topología | IP placa | IP PC (en esa interfaz) | Notas |
 |---|---|---|---|
 | Placa → gateway/router → PC | según DHCP del router | según DHCP del router | Red compartida |
-| Placa → RJ45 directo → PC | `10.42.0.180` | `10.42.0.1` | Linux "connection sharing" |
+| Placa → RJ45 directo → PC | `10.42.0.180` | `10.42.0.1` | Linux "connection sharing" (en la PC de la oficina: `nmcli con up directo-placa`) |
+| Placa en el sitio → Starlink | IP pública del Starlink (cambia) | — | Solo accesible con Starlink prendida: modo permanente o durante una ventana |
 
 > Con link directo (RJ45), Linux asigna automáticamente `10.42.0.1` al lado PC y
 > da `10.42.0.180` a la placa por DHCP. No hay que configurar nada extra.
@@ -47,8 +43,8 @@ La placa obtiene su IP del router o de la PC según cómo esté conectada:
 
 | Componente | Detalle |
 |---|---|
-| Sensor (medición, IN1) | Vallen VS150-RI (100–450 kHz, preamp 40 dB) |
-| Sensor (referencia, IN2 — solo dual) | Vallen VS150-RI, mismo modelo |
+| Sensor IN1 | Vallen VS150-RI (100–450 kHz, preamp 40 dB) |
+| Sensor IN2 (solo dual) | Vallen VS150-RI, mismo modelo; hoy es un segundo sensor de medición, independiente o asociado al IN1 (`../docs/modo_evento.md` → "Mono y dual") |
 | ADC | Red Pitaya STEMlab 125-14 (125 MHz, 14 bits, 2 canales sincrónicos) |
 | Jumper | HV → rango ±20 V |
 | Attenuator config | `A_1_20` (ambos canales en dual) |

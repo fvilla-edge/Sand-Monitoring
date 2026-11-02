@@ -1,7 +1,11 @@
 # Cómo funciona el script y formato de datos
 
 Referencia interna — para entender resultados raros, debuggear, o estimar espacio/tiempos.
-Para el uso día a día ver `operacion_campo.md`.
+
+> **Alcance:** las secciones del buffer en SD, flujo por chunk, eficiencia, estructura
+> de archivos y espacio/velocidades son del **modo clásico** (`capturar_stream.py`).
+> Formatos y funcionamiento del modo evento (lo que corre hoy): `../../docs/modo_evento.md`.
+> Siguen vigentes para los dos modos: "Configuración centralizada", "Logs" y "Core dumps".
 
 ## Por qué la SD como buffer intermedio
 
@@ -91,14 +95,21 @@ Los parámetros operativos que tiene sentido ajustar sin tocar código viven en
   "espacio":           { "minimo_mb_por_canal": 500 },
   "eficiencia":        { "umbral_bajo_pct": 80 },
   "reintentos":        { "max": 10, "espera_s": 5 },
-  "starlink":          { "timeout_stop_s": 150, "hora_on": "08:55", "hora_off": "17:15", "rescate_manual_horas": 24 },
+  "starlink":          { "timeout_stop_s": 150, "modo_defecto": "ventana", "ventana_cada_h": 2, "rescate_manual_horas": 24, ... },
   "captura_defaults":  { "decimacion": 32, "duracion_chunk_min": 1.0, "directorio": "/mnt/usb" },
   "rutas":             { "log_dir": "/root/logs_campo", "stream_dir": "...", "state_file": "...", "modo_manual_file": "..." }
 }
 ```
 
+(Extracto. Hoy el archivo tiene además `limpieza`, `panel_solar`, `energia`,
+`starlink_api`, `indicador_estado`, `rtc_ds3231`, `modo_evento` y `gcs`; ver el
+archivo mismo. `hora_on`/`hora_off` ya no existen: los reemplazaron los modos
+ventana/permanente.)
+
 **Cómo cambiar un valor:** editar `config_campo.json` directamente en la placa
-(`/root/scripts_campo_comun/config_campo.json`) y volver a correr — no hace falta
+(`/root/scripts_campo_comun/config_campo.json`) — salvo `modo_evento.canales`/`in2_modo`,
+que se cambian con `cambiar_canales.sh` o desde Losant, y las claves que exigen
+reiniciar un servicio (`../../DESPLIEGUE.md`) — y volver a correr — no hace falta
 tocar ni redesplegar código Python/Bash. Los defaults de `--decimacion`,
 `--duracion_chunk` y `--directorio` siguen siendo overrideables por argumento de
 línea de comandos como siempre; lo que cambió es de dónde sale el valor por defecto.

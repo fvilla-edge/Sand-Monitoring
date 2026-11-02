@@ -1,5 +1,14 @@
 # Operación de campo — captura paso a paso
 
+> **Solo modo clásico.** Desde fines de septiembre de 2026 la placa mide sola en
+> **modo evento** (`../../GUIA_USO_BASICO.md`, `../../docs/modo_evento.md`) y no hay
+> que lanzar capturas. Esta guía aplica solo después de
+> `bash /root/scripts_campo/cambiar_modo.sh clasico` (con el modo evento activo el
+> streaming-server ya está ocupado y `capturar_stream.py` no conecta). Mientras está en
+> clásico no se registra nada salvo lo que se capture a mano; volver con
+> `cambiar_modo.sh evento`. El "sensor de referencia" de abajo es el uso viejo del IN2:
+> hoy el IN2 es un segundo sensor de medición en el modo evento.
+
 Requiere el setup de `setup_placa.md` ya hecho una vez en esta placa.
 
 ## Sensor de referencia (dual, `--canales 2`)
