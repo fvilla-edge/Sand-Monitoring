@@ -99,8 +99,9 @@ Los CSV no se borran del USB después de subirlos. Si queda poco lugar, la placa
 la señal cruda y sigue con los CSV (`me_cruda_pausada` en Losant).
 
 **CSV (lo de todos los días):** suben solos a GCS en cada ventana. Se miran en
-SandVision; no hace falta bajarlos de la placa. Para analizarlos en la PC (paquete
-liviano y visor): `README.md` → "Analizar las mediciones del modo evento".
+SandVision; no hace falta bajarlos de la placa. Para bajarlos y ordenarlos en la PC
+(por ejemplo, para listar eventos por hora): `README.md` → "Analizar las mediciones del
+modo evento".
 
 **Señal cruda de los eventos:** no sube a GCS (pesa demasiado para Starlink). Se trae
 a mano:

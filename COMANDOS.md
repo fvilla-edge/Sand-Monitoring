@@ -244,15 +244,17 @@ es dual). No usa `argparse` — rutas posicionales.
 |---|---|
 | rutas (posicional) | Archivos `.bin` o directorios (busca `campo_*.bin` recursivamente) |
 
-### Modo evento: `ventanas_a_paquete.py`, `reconstruir_senal.py`, `ver_paquete.py`
+### Modo evento: `reconstruir_senal.py`, `organizar_csv_campo.py`
+
+Los CSV de ventanas se miran en SandVision. En la PC:
 
 ```bash
-.venv/bin/python analisis/placa/ventanas_a_paquete.py CARPETA --unir -o dia.paquete.json   # CSV -> paquete liviano
-./analisis/visores/abrir_paquete.sh                                                          # visor (horas/dias)
+python3 analisis/utilidades/organizar_csv_campo.py DESTINO DESTINO BAJADA --aplicar           # CSV bajados -> carpeta por dia (sin --aplicar: solo muestra)
 .venv/bin/python analisis/placa/reconstruir_senal.py CARPETA --desde 120 --duracion-s 10 --png   # señal continua (max 300s)
 ```
 
-Ver `docs/modo_evento.md`.
+Pasos completos para bajar y ordenar CSV: `README.md` → "Analizar las mediciones del
+modo evento". Ver también `docs/modo_evento.md`.
 
 ### `analisis/tests/` — tests del parser y la lógica de detección
 

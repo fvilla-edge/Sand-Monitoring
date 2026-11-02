@@ -64,7 +64,7 @@ Sand Monitoring/
 │   ├── visores/            # GUIs de matplotlib/tkinter (ver_forma_onda.py, ver_acumulado_lote.py + abrir_*.sh)
 │   ├── lote/               # Analisis de un lote completo pegado en el tiempo (acumulado_lote.py)
 │   ├── utilidades/         # organizar_csv_campo.py (CSV de campo por dia), graficar.py, extraer_canal.py, generar_baseline.py
-│   ├── placa/              # Modo evento en la PC: ventanas_a_paquete.py (CSV -> paquete), reconstruir_senal.py, comparar_in1_in2.py
+│   ├── placa/              # Modo evento en la PC: reconstruir_senal.py, comparar_in1_in2.py (ventanas_a_paquete.py: solo para el visor viejo, en desuso)
 │   ├── INTERPRETACION_RESULTADOS.md  # Guia de lectura de metricas: deteccion vs clasificacion
 │   └── tests/              # Tests del parser de .bin y la logica de deteccion (pytest)
 ├── indicador_estado/       # LED de estado (PS_MIO11) — parpadeo distinto en captura/transmision/standby
@@ -141,7 +141,7 @@ Detalle del modo en `docs/modo_evento.md`. En dual, los del IN2 estan en
 **Lo normal es no bajarlos de la placa:** suben solos a GCS en cada ventana de Starlink
 (`<prefijo>/<hostname>/AAAA/MM/DD/ventanas_AAAAMMDD_HH[_sd][_in2].csv.gz`, bucket en
 `config_campo.json` → `gcs`) y se miran en SandVision. Los pasos de abajo son para
-analizarlos en la PC con las herramientas del repo; si ya estan en GCS, se pueden bajar
+analizarlos en la PC; si ya estan en GCS, se pueden bajar
 de ahi (descomprimir el `.gz`) y saltear los pasos 1-2.
 
 Desde la carpeta del proyecto, con Starlink prendido (modo permanente, o durante una ventana).
@@ -165,20 +165,8 @@ Desde la carpeta del proyecto, con Starlink prendido (modo permanente, o durante
    ```bash
    python3 analisis/utilidades/organizar_csv_campo.py datos_campo/placa_campo/csv_por_dia datos_campo/placa_campo/csv_por_dia datos_campo/placa_campo/_bajadas/AAAAMMDD --aplicar
    ```
-4. Convertirlos al formato de paquete liviano:
-   ```bash
-   # una hora -> ventanas_20260929_12.paquete.json al lado del CSV
-   .venv/bin/python3 analisis/placa/ventanas_a_paquete.py datos_campo/placa_campo/csv_por_dia/2026-09-29/ventanas_20260929_12.csv
-   # todo el dia en un solo archivo
-   .venv/bin/python3 analisis/placa/ventanas_a_paquete.py datos_campo/placa_campo/csv_por_dia/2026-09-29 --unir -o datos_campo/placa_campo/csv_por_dia/2026-09-29/dia_29_sep.paquete.json
-   ```
-5. Abrirlo en el visor: doble click en `analisis/visores/abrir_paquete.sh` (o
-   `bash analisis/visores/abrir_paquete.sh`) y elegir el `.paquete.json`. La linea
-   punteada y el contador "N/M ventanas ≥ 5" usan `FA_THRESH` de `analisis/revisar.py`,
-   que **sigue en 5**: la placa guarda la cruda con kurtosis ≥ 3.4 desde el 5/10/2026,
-   asi que el contador del visor no cuenta lo mismo que los eventos guardados.
-6. Opcional, lista de eventos sin abrir el visor (el `LC_ALL=C` es necesario: con
-   el idioma en español awk usa coma decimal y cuenta mal):
+4. Lista de ventanas sobre el umbral de la placa (3.4) con su hora (el `LC_ALL=C` es
+   necesario: con el idioma en español awk usa coma decimal y cuenta mal):
    ```bash
    LC_ALL=C awk -F, 'NR>1 && $4>=3.4 {printf "%s UTC  kurt=%.2f  area=%.3f\n", strftime("%H:%M:%S",$2/1000,1), $4, $3}' datos_campo/placa_campo/csv_por_dia/2026-09-29/ventanas_*.csv
    ```
