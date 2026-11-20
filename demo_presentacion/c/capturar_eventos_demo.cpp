@@ -1,0 +1,1464 @@
+// capturar_eventos_demo.cpp — COPIA para la demo del 10/12 (rama
+// demo-presentacion, no va a campo) de scripts_campo/c/capturar_eventos.cpp,
+// con un unico agregado: --en-vivo RUTA (clase EnVivo), JSON con las ultimas
+// 30 s de ventanas para el panel "Arena". Lo demas es igual al original.
+//
+// capturar_eventos.cpp — nucleo del "modo evento" en C++ (reemplaza el loop
+// de capturar_eventos.py, que queda solo como lanzador: carga bitstream +
+// streaming-server y hace exec de este binario).
+//
+// Por que C++ (medido en rp-f0fd8c, 2026-09-23): en Python, solo leer
+// `ch.raw` de un paquete cuesta 3.2ms (la libreria SWIG arma una list de
+// 32768 ints) y convertirlo a numpy otros 15ms, contra 8.4ms entre paquetes
+// a decimacion 32 — el streaming-server descartaba ~63% de las muestras.
+// Con la API C++ del vendor, `raw` es un std::vector<int16_t>: el callback
+// completo (memcpy al buffer circular) tarda ~0.1ms y llega el 100%.
+//
+// Funcionamiento (igual que el diseño Python de la Fase 2):
+//   - Streaming NET continuo, cada paquete se copia a un buffer circular en
+//     RAM con los ultimos BUFFER_VENTANAS x 50ms de señal cruda.
+//   - Hilo principal sondea el acumulador de area/kurtosis de la FPGA
+//     (window_count + sumas, 0x4000032C..0x348 en el bitstream portado a
+//     Release_2026.1, 0x4000022C..0x248 en el etapa7 viejo — se detecta
+//     solo, ver Registros::abrir) cada 2ms. Si una ventana
+//     cruza kurtosis>=umbral, recorta esa ventana del buffer y la guarda
+//     (.bin int16 LE + .json) con un margen de --margen-ms (default 10ms) a
+//     cada lado. Las ventanas tranquilas no se guardan.
+//   - Margen: la Fase 3 (loopback DAC->ADC con pulsos conocidos, 2026-09-23)
+//     mostro que las fronteras de ventana de la FPGA quedan corridas ~2.6-3.5ms
+//     respecto de las del buffer propio — la calibracion toma el instante de
+//     entrega mas al dia, pero la entrega nunca tiene retraso cero (DMA + red),
+//     y el retraso cambia entre corridas. Sin margen, un pulso cerca del borde
+//     quedaba en la ventana cruda de al lado. El .json dice donde empieza la
+//     ventana "oficial" dentro del archivo (`inicio_ventana_en_archivo`).
+//   - Registro continuo (--sin-registro lo apaga): area y kurtosis de TODAS
+//     las ventanas (no solo las que cruzan el umbral) en CSVs por hora UTC,
+//     `ventanas_AAAAMMDD_HH.csv` en --destino. Da la linea de tiempo completa
+//     (y una señal de vida: carpeta sin eventos != sensor muerto), permite
+//     reanalizar con otro umbral y escalar el relleno al reconstruir la señal
+//     en la PC. Las ventanas que el sondeo no llego a leer van con
+//     estado=saltada y area/kurtosis vacias (el registro de la FPGA solo
+//     guarda la ultima). Escribe su propio hilo, igual que los eventos.
+//     Ultima columna `dec`: la escala del area cambia con la decimacion y un
+//     cambio de modo (mono dec32 <-> dual dec64) puede caer en la misma hora;
+//     los CSV viejos (6 columnas, sin dec) son todos dec32.
+//   - Destino vigilado: se anota el dispositivo de --destino al arrancar y se
+//     verifica antes de cada escritura; si cambia (USB desconectado -> /mnt/usb
+//     queda como carpeta de la SD) corta con codigo 4 en vez de escribir en la SD.
+//   - La escritura a disco va en un hilo aparte (cola acotada): escribir ~0.5MB
+//     en la SD puede tardar mas que una ventana y el registro de la FPGA solo
+//     guarda la ultima — escribir en el hilo de sondeo hacia perder ventanas.
+//   - Alineacion window_count <-> indice de muestra propio: offset medido
+//     una vez tras arrancar (ver calibrar()). Las muestras que el server
+//     reporta perdidas (fpgaLost, cuenta MUESTRAS — verificado: recibidas +
+//     fpgaLost ~= esperadas) avanzan el indice igual, asi un descarte no
+//     desalinea: el hueco queda registrado y un evento que lo toque se marca
+//     con "con_hueco": true.
+//   - Espacio libre (--minimo-libre-mb, default 2048; 0 = sin control): por
+//     debajo se pausa la señal cruda de los eventos y el CSV sigue (~3MB/h,
+//     la linea de tiempo nunca se pierde); se reanuda con un 25% de margen.
+//     Estado visible afuera en /run/modo-evento/cruda_pausada (lo manda a
+//     Losant resumen_modo_evento.py). Si una escritura falla igual (disco
+//     lleno), el archivo a medias se borra y se cuenta, sin cortar la medicion.
+//   - Si la deriva medida (window_count vs muestras propias) se sale de
+//     TOLERANCIA_DERIVA (ej. stream congelado sin fpgaLost, visto al bajar
+//     eth0), se recalibra y se loguea.
+//
+// Uso: capturar_eventos [--umbral 3.4] [--destino DIR] [--dec 32|64] [--canales 1] [--in2-modo independiente]
+//                       [--estado-s 10] [--duracion-s 0] [--host IP] [--margen-ms 10] [--sin-registro]
+//                       [--minimo-libre-mb 2048]
+//   --canales 2: enciende tambien el IN2. Con un bitstream que calcula el IN2
+//           (fpga_pitaya 20ac88b+, ID 0x534D0002 en 0x36C) el IN2 es un sensor
+//           independiente (docs/plan_in2_independiente.md): area/kurtosis
+//           propios, umbral propio (--umbral2, default = --umbral), eventos y
+//           CSV propios en <destino>/in2 con la misma estructura que los del
+//           IN1. Con el bitstream viejo se mide solo el IN1 (y se avisa).
+//   --in2-modo independiente|asociado (con --canales 2; docs/plan_in2_asociado.md):
+//           independiente (default) = lo de arriba. asociado = el IN2 graba su
+//           cruda solo cuando graba el IN1, la misma ventana y con el mismo
+//           nombre (en <destino>/in2); su CSV y su kurtosis siguen igual pero
+//           no disparan. Con el bitstream viejo graba la cruda igual, sin
+//           area/kurtosis del IN2 (null) ni CSV.
+//   --dec: 32 (default) o 64. Al arrancar escribe en la FPGA la ventana del
+//           acumulador (50ms = fs*0.05 muestras) y los coeficientes del
+//           pasabanda para esa fs, y los verifica (docs/plan_dos_canales.md,
+//           Fase 1b). OJO: el umbral 3.4 y el piso/escala de la PC son de dec32.
+//   --host: conectar a esa IP fija en vez del descubrimiento por broadcast
+//           del vendor (que ata la conexion a la IP de eth0).
+//
+// Modo PRUEBA (Fase 3, loopback OUT1->IN1, ver generador_pulsos.h):
+//   --prueba-pulsos N [--pulso-periodo-s 2.37] [--pulso-freq 150000]
+//   [--pulso-tau-us 20] [--pulso-amp 0.8] [--pulso-log pulsos.csv]
+//   [--pulso-loopback-digital]  (DAC->ADC canal 1 dentro de la FPGA, registro
+//   0x40000040 bit1 — con el bitstream etapa7 la salida fisica OUT1 no anda)
+//   Genera N pulsos por OUT1 y corta sola ~3s despues del ultimo.
+//   --prueba-archivo RUTA [--dac-escala 4] [--dac-rate 7812500]: en vez de
+//   pulsos, reproduce un tramo de señal real (int16 LE) por el DAC (Fase 3
+//   etapa B) y corta sola ~3s despues. --dac-repetir N lo repite N veces
+//   seguidas (pase de arena largo). --dac-xor-signo compensa el bit de signo
+//   invertido del loopback digital en el bitstream 2026.1.
+//
+// OJO: el streaming-server acepta UNA sola conexion de configuracion. Si otro
+// cliente se conecta, a este le llega "End of file" y la libreria del vendor
+// muere por SIGSEGV (visto con strace en HW, 2026-09-23). No hay forma de
+// atraparlo desde aca: no correr otro cliente contra el server a la vez.
+#include "adc_streaming.h"
+#include "callbacks.h"
+#include "config_streaming.h"
+#include "dac_streaming.h"
+#include "generador_pulsos.h"
+
+#include <atomic>
+#include <chrono>
+#include <cerrno>
+#include <cmath>
+#include <csignal>
+#include <cstdarg>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <deque>
+#include <fcntl.h>
+#include <condition_variable>
+#include <future>
+#include <memory>
+#include <mutex>
+#include <string>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <sys/statvfs.h>
+#include <sys/sysmacros.h>
+#include <thread>
+#include <unistd.h>
+#include <vector>
+
+namespace {
+
+const double VENTANA_S = 0.05;
+const int BUFFER_VENTANAS = 6;           // ~300ms de margen, igual que el Python
+const int POLL_US = 2000;
+const int64_t TOLERANCIA_DERIVA = 4 * 32768;  // 4 paquetes; jitter normal medido < 2
+
+const uint32_t REG_BASE = 0x40000000;
+// Offsets del etapa7 viejo (Release_2025.2); el bitstream portado a
+// Release_2026.1 tiene el mismo bloque +0x100 (2026.1 ocupo 0x200-0x214).
+const uint32_t OFF_WINDOW_SAMPLES = 0x228;
+const uint32_t OFF_BP_COEFF = 0x200;  // 10 coeficientes del pasabanda: b0 b1 b2 a1 a2 (seccion 0), idem seccion 1
+const uint32_t OFF_WINDOW_COUNT = 0x22C, OFF_SUM_ABS_LO = 0x230, OFF_SUM_ABS_HI = 0x234,
+               OFF_SUM_X2_LO = 0x238, OFF_SUM_X2_HI = 0x23C, OFF_SUM_X4_LO = 0x240,
+               OFF_SUM_X4_MID = 0x244, OFF_SUM_X4_HI = 0x248;
+// IN2 como sensor independiente (docs/plan_in2_independiente.md, bitstream
+// fpga_pitaya 20ac88b+): mismas sumas del canal 1, 0x20 mas arriba que las del
+// canal 0 (0x34C..0x368), y un ID del bloque en 0x36C. Solo en Release_2026.1.
+const uint32_t OFF_CANAL = 0x20;
+const uint32_t OFF_AREA_ID = 0x26C;
+const uint32_t AREA_ID_IN2 = 0x534D0002;  // "SM" + 2 canales; bitstream sin IN2: lee 0
+// "si" o "no": si esta corrida mide el IN2 (independiente con su bitstream, o asociado; lo lee resumen_modo_evento.py)
+const char* const ARCHIVO_IN2 = "/run/modo-evento/in2";
+
+// Pasabanda de la FPGA (2 biquads, Butterworth 50-400kHz, Q20, 25 bits con
+// signo) por decimacion. Los defaults del bitstream son los de dec32; sin
+// reescribirlos, a dec64 la banda quedaba en ~25-200kHz. Generados con
+// generar_etapa4c.py (dec32, = defaults) y generar_coefs_dec64.py del repo
+// fpga_pitaya (tbn/vectores), mismo modelo de punto fijo que el RTL.
+struct CoefsPasabanda { int dec; int32_t c[10]; };
+const CoefsPasabanda COEFS_PASABANDA[] = {
+    {32, {58743, 117487, 58743, -1311029, 526845, 1048576, -2097152, 1048576, -1984139, 943367}},
+    {64, {182309, 364619, 182309, -480688, 286917, 1048576, -2097152, 1048576, -1865486, 846090}},
+};
+
+const CoefsPasabanda* coefs_para(int dec) {
+    for (const auto& c : COEFS_PASABANDA)
+        if (c.dec == dec) return &c;
+    return nullptr;
+}
+
+std::atomic<bool> g_stop{false};
+
+// Destino vigilado: se anota el dispositivo (st_dev) de --destino al arrancar
+// y se verifica antes de cada escritura. Si el USB se desconecta, el
+// automontaje hace umount -l y /mnt/usb pasa a ser una carpeta comun de la SD:
+// sin este chequeo, los archivos siguientes caerian en la SD sin aviso. Si
+// cambia, se corta con codigo 4 y el supervisor relanza (y espera al USB).
+dev_t g_dev_destino = 0;
+std::atomic<bool> g_destino_perdido{false};
+
+void on_signal(int) { g_stop = true; }
+
+void log(const char* fmt, ...) {
+    char ts[16];
+    time_t t = time(nullptr);
+    strftime(ts, sizeof ts, "%H:%M:%S", gmtime(&t));
+    printf("  [LOG %s] ", ts);
+    va_list ap;
+    va_start(ap, fmt);
+    vprintf(fmt, ap);
+    va_end(ap);
+    printf("\n");
+    fflush(stdout);
+}
+
+// Muestras recibidas indexadas por posicion ABSOLUTA desde el arranque del
+// stream (incluye las perdidas reportadas por fpgaLost, que no se escriben).
+class BufferCircular {
+   public:
+    explicit BufferCircular(size_t cap) : datos_(cap), cap_(cap) {}
+
+    void escribir(const int16_t* x, size_t n, uint64_t perdidas) {
+        std::lock_guard<std::mutex> g(mtx_);
+        if (perdidas) {
+            huecos_.push_back({total_, total_ + perdidas});
+            while (huecos_.size() > 64) huecos_.pop_front();
+            total_ += perdidas;
+        }
+        size_t pos = total_ % cap_, k = std::min(n, cap_ - pos);
+        memcpy(&datos_[pos], x, k * sizeof(int16_t));
+        if (n > k) memcpy(&datos_[0], x + k, (n - k) * sizeof(int16_t));
+        total_ += n;
+    }
+
+    uint64_t total() {
+        std::lock_guard<std::mutex> g(mtx_);
+        return total_;
+    }
+
+    enum Resultado { OK, TODAVIA_NO, PISADA };
+
+    Resultado extraer(int64_t inicio, size_t n, std::vector<int16_t>& out, bool& con_hueco) {
+        std::lock_guard<std::mutex> g(mtx_);
+        if (inicio < 0) return PISADA;
+        uint64_t ini = (uint64_t)inicio, fin = ini + n;
+        if (fin > total_) return TODAVIA_NO;
+        if (total_ - ini > cap_) return PISADA;
+        out.resize(n);
+        size_t pos = ini % cap_, k = std::min(n, cap_ - pos);
+        memcpy(out.data(), &datos_[pos], k * sizeof(int16_t));
+        if (n > k) memcpy(out.data() + k, &datos_[0], (n - k) * sizeof(int16_t));
+        con_hueco = false;
+        for (auto& h : huecos_)
+            if (h.first < fin && h.second > ini) con_hueco = true;
+        return OK;
+    }
+
+   private:
+    std::vector<int16_t> datos_;
+    size_t cap_;
+    uint64_t total_ = 0;
+    std::deque<std::pair<uint64_t, uint64_t>> huecos_;
+    std::mutex mtx_;
+};
+
+struct Stats {
+    std::atomic<uint64_t> paquetes{0}, fpga_lost{0}, paquetes_con_lost{0};
+    std::atomic<int64_t> ultimo_paquete_ms{0};
+    std::atomic<bool> conectado{false};
+    std::atomic<int> raw_max{0};  // max |x| crudo desde la ultima linea de ESTADO
+    // IN2 (--canales 2). desfase2: paquetes en que el IN2 trajo otra cantidad de
+    // muestras o de perdidas que el IN1 (desalinea los indices; esperado 0).
+    std::atomic<uint64_t> paquetes2{0}, muestras2{0}, fpga_lost2{0}, desfase2{0};
+    std::atomic<int> raw_max2{0};
+};
+
+int64_t ahora_ms() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+class CB : public ADCCallback {
+   public:
+    CB(BufferCircular& b, BufferCircular* b2, Stats& s) : buf_(b), buf2_(b2), st_(s) {}
+    void receivePack(ADCStreamClient*, ADCPack& p) override {
+        auto& ch = p.channel1;
+        // El IN2 se escribe ANTES que el IN1: cuando el hilo de sondeo ve
+        // completa una ventana del IN1, la del IN2 ya esta (mismo indice).
+        if (buf2_) {
+            auto& c2 = p.channel2;
+            buf2_->escribir(c2.raw.data(), c2.raw.size(), c2.fpgaLost);
+            int m2 = 0;
+            for (int16_t x : c2.raw) m2 = std::max(m2, std::abs((int)x));
+            if (m2 > st_.raw_max2) st_.raw_max2 = m2;
+            st_.paquetes2++;
+            st_.muestras2 += c2.raw.size();
+            st_.fpga_lost2 += c2.fpgaLost;
+            if (c2.raw.size() != ch.raw.size() || c2.fpgaLost != ch.fpgaLost) st_.desfase2++;
+        }
+        buf_.escribir(ch.raw.data(), ch.raw.size(), ch.fpgaLost);
+        int m = 0;
+        for (int16_t x : ch.raw) m = std::max(m, std::abs((int)x));
+        if (m > st_.raw_max) st_.raw_max = m;
+        st_.paquetes++;
+        if (ch.fpgaLost) {
+            st_.fpga_lost += ch.fpgaLost;
+            st_.paquetes_con_lost++;
+        }
+        st_.ultimo_paquete_ms = ahora_ms();
+    }
+    void connected(ADCStreamClient*, std::string h) override {
+        st_.conectado = true;
+        log("Conectado: %s", h.c_str());
+    }
+    void disconnected(ADCStreamClient*, std::string h) override {
+        st_.conectado = false;
+        log("WARNING Desconectado: %s", h.c_str());
+    }
+    void error(ADCStreamClient*, std::string h, int code) override {
+        log("WARNING Error receivePack %s: %d", h.c_str(), code);
+    }
+
+   private:
+    BufferCircular& buf_;
+    BufferCircular* buf2_;  // nullptr en mono
+    Stats& st_;
+};
+
+class Registros {
+   public:
+    // Detecta en que bloque esta el acumulador: el registro de muestras por
+    // ventana (R/W, default 195312) responde en 0x328 (port 2026.1) o en
+    // 0x228 (etapa7 viejo). Si no responde en ninguno, el bitstream cargado
+    // no tiene el acumulador (p.ej. el stream_app del vendor).
+    bool abrir() {
+        int fd = open("/dev/mem", O_RDWR | O_SYNC);
+        if (fd < 0) return false;
+        void* m = mmap(nullptr, 0x1000, PROT_READ | PROT_WRITE, MAP_SHARED, fd, REG_BASE);
+        close(fd);
+        if (m == MAP_FAILED) return false;
+        r_ = (volatile uint32_t*)m;
+        if (r_[(OFF_WINDOW_SAMPLES + 0x100) / 4] != 0) {
+            base_ = 0x100;
+            nombre_ = "Release_2026.1 (0x328..)";
+        } else if (r_[OFF_WINDOW_SAMPLES / 4] != 0) {
+            base_ = 0;
+            nombre_ = "etapa7 viejo (0x228..)";
+        } else {
+            return false;
+        }
+        return true;
+    }
+    const char* nombre() const { return nombre_; }
+    // Pasabanda segun la decimacion (los defaults del bitstream son de dec32).
+    // Devuelve false si algun registro no quedo con el valor escrito. Se leen
+    // de vuelta sin extension de signo (25 bits), por eso la mascara.
+    bool escribir_coefs(const CoefsPasabanda& c) {
+        for (int i = 0; i < 10; i++) w(OFF_BP_COEFF + 4 * i, (uint32_t)c.c[i]);
+        return coefs_ok(c);
+    }
+    bool coefs_ok(const CoefsPasabanda& c) const {
+        for (int i = 0; i < 10; i++)
+            if (r(OFF_BP_COEFF + 4 * i) != ((uint32_t)c.c[i] & 0x1FFFFFF)) return false;
+        return true;
+    }
+    // Muestras por ventana del acumulador. OJO: el RTL cierra la ventana con
+    // sample_cnt == N-1 (igualdad); si se ACHICA N cuando el contador ya paso
+    // el valor nuevo, sigue de largo hasta dar la vuelta a 2^32 (~36 min a
+    // dec64, visto en HW 2026-10-06: window_count congelado). Por eso se
+    // escribe justo despues de que window_count cambia (sample_cnt ~0), con
+    // el stream ya corriendo a la decimacion pedida. Ver ajustar_ventana().
+    void escribir_window_samples(uint32_t n) { w(OFF_WINDOW_SAMPLES, n); }
+    uint32_t window_samples() const { return r(OFF_WINDOW_SAMPLES); }
+    uint32_t window_count(int canal = 0) const { return r(OFF_WINDOW_COUNT + OFF_CANAL * canal); }
+    // true si el bitstream calcula area/kurtosis tambien del IN2 (canal 1)
+    bool tiene_in2() const { return base_ == 0x100 && r(OFF_AREA_ID) == AREA_ID_IN2; }
+    // Lee las sumas de la ultima ventana completa del canal (0 = IN1, 1 = IN2).
+    // Se relee window_count al final: si cambio en el medio, las sumas pueden
+    // ser de dos ventanas distintas y se vuelve a leer.
+    uint32_t leer(double& s_abs, double& s_x2, double& s_x4, int canal = 0) const {
+        const uint32_t c = OFF_CANAL * canal;
+        for (;;) {
+            uint32_t wc = window_count(canal);
+            s_abs = r(OFF_SUM_ABS_LO + c) + ldexp((double)r(OFF_SUM_ABS_HI + c), 32);
+            s_x2 = r(OFF_SUM_X2_LO + c) + ldexp((double)r(OFF_SUM_X2_HI + c), 32);
+            s_x4 = r(OFF_SUM_X4_LO + c) + ldexp((double)r(OFF_SUM_X4_MID + c), 32) +
+                   ldexp((double)r(OFF_SUM_X4_HI + c), 64);
+            if (window_count(canal) == wc) return wc;
+        }
+    }
+
+   private:
+    uint32_t r(uint32_t off) const { return r_[(off + base_) / 4]; }
+    void w(uint32_t off, uint32_t v) { r_[(off + base_) / 4] = v; }
+    volatile uint32_t* r_ = nullptr;
+    uint32_t base_ = 0;
+    const char* nombre_ = "";
+};
+
+// Misma formula que _area_kurtosis_de_suma (coleccionar_paquete_placa.py).
+void area_kurtosis(double s_abs, double s_x2, double s_x4, double n, double fs, double& area,
+                   double& kurt) {
+    area = s_abs / fs;
+    double m2 = s_x2 / n, m4 = s_x4 / n;
+    kurt = m2 > 0 ? m4 / (m2 * m2) : m4 / 1e-30;
+}
+
+struct Evento {
+    std::vector<int16_t> x;  // ventana + margen a cada lado
+    double fs, area, kurt;
+    uint32_t wc;
+    int64_t indice_inicio;   // indice absoluto (stream propio) de x[0]
+    int64_t margen;          // muestras de margen antes (y despues) de la ventana oficial
+    int64_t ventana;         // muestras de la ventana oficial
+    bool con_hueco;
+    int canales, dec;
+    const char* canal = "IN1";  // sensor cuya señal se guarda (IN2 en <destino>/in2)
+    const char* disparo = "IN1";  // sensor que disparo la grabacion (IN1 en el IN2 asociado)
+    std::string base, iso;   // nombre y hora de deteccion
+};
+
+Evento nuevo_evento(uint32_t wc) {
+    Evento e;
+    e.wc = wc;
+    auto now = std::chrono::system_clock::now();
+    time_t t = std::chrono::system_clock::to_time_t(now);
+    long us = std::chrono::duration_cast<std::chrono::microseconds>(now.time_since_epoch()).count() % 1000000;
+    struct tm tm;
+    gmtime_r(&t, &tm);
+    char ts[32], iso[48], base[96];
+    strftime(ts, sizeof ts, "%Y%m%d_%H%M%S", &tm);
+    snprintf(base, sizeof base, "evento_%s_%06ld_wc%010u", ts, us, wc);
+    strftime(iso, sizeof iso, "%Y-%m-%dT%H:%M:%S", &tm);
+    e.base = base;
+    e.iso = std::string(iso) + "." + std::to_string(1000000 + us).substr(1) + "+00:00";
+    return e;
+}
+
+bool destino_ok(const std::string& destino) {
+    if (g_dev_destino == 0) return true;
+    struct stat st;
+    if (stat(destino.c_str(), &st) == 0 && st.st_dev == g_dev_destino) return true;
+    if (!g_destino_perdido.exchange(true)) {
+        log("ERROR %s ya no esta en el mismo dispositivo que al arrancar (¿USB desconectado?) — se corta "
+            "para no escribir en otro disco", destino.c_str());
+        g_stop = true;
+    }
+    return false;
+}
+
+bool escribir_bin(const std::string& ruta, const std::vector<int16_t>& x) {
+    FILE* f = fopen(ruta.c_str(), "wb");
+    if (!f) return false;
+    bool ok = fwrite(x.data(), sizeof(int16_t), x.size(), f) == x.size();  // ARM es little-endian
+    if (fclose(f) != 0) ok = false;
+    return ok;
+}
+
+// numero para el JSON, o null si no hay (area/kurtosis del IN2 asociado con el bitstream viejo)
+std::string num_json(double v, const char* fmt) {
+    if (std::isnan(v)) return "null";
+    char t[32];
+    snprintf(t, sizeof t, fmt, v);
+    return t;
+}
+
+bool guardar_evento(const std::string& destino, const Evento& e) {
+    if (!destino_ok(destino)) return false;
+    // Disco lleno: fwrite/fprintf fallan sin avisar y quedaba un archivo vacio o
+    // cortado. Se chequea todo y, si algo falla, se borra el par .bin/.json.
+    std::string bin = destino + "/" + e.base + ".bin";
+    std::string js = destino + "/" + e.base + ".json";
+    bool ok = escribir_bin(bin, e.x);
+    if (ok) {
+        FILE* f = fopen(js.c_str(), "w");
+        ok = f != nullptr;
+        if (f) {
+            ok = fprintf(f,
+                    "{\n  \"formato\": \"evento_ventana_cruda_int16_le\",\n  \"fs_hz\": %.1f,\n  \"dec\": %d,\n"
+                    "  \"ventana_s\": %.2f,\n  \"ventana_muestras\": %lld,\n  \"margen_muestras\": %lld,\n"
+                    "  \"inicio_ventana_en_archivo\": %lld,\n  \"muestras\": %zu,\n  \"window_count\": %u,\n"
+                    "  \"indice_inicio\": %lld,\n"
+                    "  \"area\": %s,\n  \"kurtosis\": %s,\n  \"con_hueco\": %s,\n"
+                    "  \"canales\": %d,\n  \"canal\": \"%s\",\n  \"disparo\": \"%s\",\n"
+                    "  \"timestamp_iso\": \"%s\"\n}\n",
+                    e.fs, e.dec, VENTANA_S, (long long)e.ventana, (long long)e.margen, (long long)e.margen, e.x.size(),
+                    e.wc, (long long)e.indice_inicio, num_json(e.area, "%.9g").c_str(), num_json(e.kurt, "%.6g").c_str(),
+                    e.con_hueco ? "true" : "false", e.canales, e.canal, e.disparo, e.iso.c_str()) > 0;
+            if (fclose(f) != 0) ok = false;
+        }
+    }
+    if (!ok) {
+        int err = errno;  // unlink puede pisarlo; el llamador lo loguea
+        unlink(js.c_str());
+        unlink(bin.c_str());
+        errno = err;
+    }
+    return ok;
+}
+
+// Espacio libre en --destino. Por debajo de minimo_mb se pausa la señal cruda
+// de los eventos (el CSV sigue); se reanuda recien con un 25% de margen, para
+// no alternar evento a evento justo en el borde. El estado queda visible
+// afuera del proceso con un archivo bandera en /run (tmpfs: no escribe en la
+// SD ni en el USB lleno), que lee resumen_modo_evento.py.
+class VigiaEspacio {
+   public:
+    static constexpr const char* DIR_BANDERA = "/run/modo-evento";
+    static constexpr const char* BANDERA = "/run/modo-evento/cruda_pausada";
+
+    VigiaEspacio(std::string destino, int64_t minimo_mb) : destino_(std::move(destino)), minimo_mb_(minimo_mb) {
+        unlink(BANDERA);  // de una corrida anterior
+    }
+    // al terminar: sin proceso no hay nada pausado (si se cae, la borra el proximo arranque)
+    ~VigiaEspacio() { unlink(BANDERA); }
+
+    void revisar(int64_t t_ms) {
+        if (t_ms - t_ult_ < 2000) return;
+        t_ult_ = t_ms;
+        struct statvfs sv;
+        if (statvfs(destino_.c_str(), &sv) != 0) return;
+        libre_mb_ = (int64_t)sv.f_bavail * (int64_t)sv.f_frsize / (1024 * 1024);
+        if (minimo_mb_ <= 0) return;  // sin control: solo se informa en ESTADO
+        if (!pausada_ && libre_mb_ < minimo_mb_) {
+            pausada_ = true;
+            log("WARNING quedan %lld MB libres en %s (minimo %lld): se PAUSA la señal cruda de los eventos, "
+                "el registro de ventanas sigue", (long long)libre_mb_, destino_.c_str(), (long long)minimo_mb_);
+            mkdir(DIR_BANDERA, 0755);
+            int fd = open(BANDERA, O_CREAT | O_WRONLY | O_TRUNC, 0644);
+            if (fd >= 0) close(fd);
+        } else if (pausada_ && libre_mb_ >= reanudar_mb()) {
+            pausada_ = false;
+            log("Espacio recuperado (%lld MB libres): se REANUDA la señal cruda de los eventos", (long long)libre_mb_);
+            unlink(BANDERA);
+        }
+    }
+
+    bool pausada() const { return pausada_; }
+    int64_t libre_mb() const { return libre_mb_; }
+
+   private:
+    int64_t reanudar_mb() const { return minimo_mb_ + minimo_mb_ / 4; }
+
+    std::string destino_;
+    int64_t minimo_mb_;
+    int64_t libre_mb_ = -1;
+    int64_t t_ult_ = INT64_MIN / 2;
+    bool pausada_ = false;
+};
+
+// Escribe los eventos en disco desde un hilo propio. Cola acotada: si se
+// llena (disco trabado), el evento se descarta y se cuenta, en vez de
+// comerse la RAM de la placa (~0.5MB por evento, ~1MB en dual; 459MB en total).
+class Escritor {
+   public:
+    static const size_t MAX_COLA = 40;
+
+    explicit Escritor(std::string destino) : destino_(std::move(destino)), hilo_([this] { correr(); }) {}
+    ~Escritor() {
+        if (hilo_.joinable()) cerrar();
+    }
+
+    bool encolar(Evento&& e) {
+        {
+            std::lock_guard<std::mutex> g(mtx_);
+            if (cola_.size() >= MAX_COLA) return false;
+            cola_.push_back(std::move(e));
+        }
+        cv_.notify_one();
+        return true;
+    }
+
+    void cerrar() {  // escribe lo que quede y termina
+        {
+            std::lock_guard<std::mutex> g(mtx_);
+            fin_ = true;
+        }
+        cv_.notify_one();
+        hilo_.join();
+    }
+
+    uint64_t escritos() const { return escritos_; }
+    uint64_t fallidos() const { return fallidos_; }
+
+   private:
+    void correr() {
+        for (;;) {
+            Evento e;
+            {
+                std::unique_lock<std::mutex> g(mtx_);
+                cv_.wait(g, [this] { return fin_ || !cola_.empty(); });
+                if (cola_.empty()) return;
+                e = std::move(cola_.front());
+                cola_.pop_front();
+            }
+            if (guardar_evento(destino_, e)) {
+                escritos_++;
+            } else if (++fallidos_ % 100 == 1) {  // el 1ro y despues 1 de cada 100: sin inundar el log
+                log("WARNING no se pudo guardar el evento %s (%s) — %llu fallidos hasta ahora", e.base.c_str(),
+                    strerror(errno), (unsigned long long)fallidos_.load());
+            }
+        }
+    }
+
+    std::string destino_;
+    std::mutex mtx_;
+    std::condition_variable cv_;
+    std::deque<Evento> cola_;
+    bool fin_ = false;
+    std::atomic<uint64_t> escritos_{0}, fallidos_{0};
+    std::thread hilo_;
+};
+
+// offset tal que: indice_propio = wc*N - offset. Se mide con el stream ya
+// corriendo y la decimacion ya aplicada (antes de configurarla, el contador
+// de la FPGA corre a decimacion 1: 640 ventanas/s).
+//
+// Se mide SOLO en el instante en que window_count cambia: entre cambios el
+// contador va atrasado hasta una ventana entera respecto de las muestras, y
+// medir en instantes cualquiera (version anterior) calibraba ~1 ventana
+// corrido — la deriva lo detectaba y recalibraba ~47ms al segundo en todas
+// las corridas (visto en HW, Fase 3). Los paquetes llegan en rafagas, asi que
+// (wc*N - total) oscila en ~1 paquete: se toma el MINIMO sobre `dur_ms` (el
+// instante con la entrega mas al dia), mismo criterio que la recalibracion.
+int64_t calibrar(const Registros& reg, BufferCircular& buf, int64_t n, int dur_ms) {
+    int64_t mejor = INT64_MAX, t0 = ahora_ms();
+    uint32_t ultimo = reg.window_count();
+    while (ahora_ms() - t0 < dur_ms) {
+        uint32_t wc = reg.window_count();
+        if (wc != ultimo) {
+            mejor = std::min(mejor, (int64_t)wc * n - (int64_t)buf.total());
+            ultimo = wc;
+        }
+        usleep(500);
+    }
+    return mejor;
+}
+
+// Deja la ventana del acumulador en n muestras (50ms a la fs pedida) y
+// verifica que la FPGA cierre ventanas al ritmo esperado. Se llama con el
+// stream ya corriendo a la decimacion pedida (antes, el contador corre a
+// decimacion 1). Ver Registros::escribir_window_samples por que se escribe
+// justo despues de un cambio de window_count. Si el ritmo no da, sale con
+// error: el supervisor relanza y la recarga del bitstream vuelve a defaults.
+bool ajustar_ventana(Registros& reg, uint32_t n, double fs) {
+    if (reg.window_samples() != n) {
+        uint32_t wc0 = reg.window_count();
+        int64_t t0 = ahora_ms();
+        while (reg.window_count() == wc0 && ahora_ms() - t0 < 3000) {
+        }  // espera activa: hay que escribir lo antes posible despues del cambio
+        reg.escribir_window_samples(n);
+    }
+    uint32_t a = reg.window_count();
+    usleep(1000000);
+    uint32_t b = reg.window_count();
+    double esperadas = fs / n;  // ventanas por segundo (20)
+    if (reg.window_samples() != n || std::fabs((double)(b - a) - esperadas) > 2) {
+        log("ERROR la ventana de la FPGA no quedo en %u muestras (lee %u, %u ventanas en 1s, esperadas %.0f)", n,
+            reg.window_samples(), b - a, esperadas);
+        return false;
+    }
+    log("Ventana de la FPGA: %u muestras (%u ventanas en 1s)", n, b - a);
+    return true;
+}
+
+// Registro continuo de area/kurtosis por ventana. El hilo de sondeo solo
+// agrega filas a un vector en RAM; un hilo propio las baja al CSV cada ~1s
+// (fflush a la SD puede trabarse, ver Escritor). Cota: 10 min de filas en
+// RAM — si el disco no responde se descartan y se cuentan.
+class RegistroVentanas {
+   public:
+    static const size_t MAX_FILAS = 20 * 600;
+    struct Fila { uint32_t wc; int64_t t_ms; double area, kurt; bool saltada; uint64_t perdidas; };
+
+    RegistroVentanas(std::string destino, int dec)
+        : destino_(std::move(destino)), dec_(dec), hilo_([this] { correr(); }) {}
+    ~RegistroVentanas() {
+        if (hilo_.joinable()) cerrar();
+    }
+
+    void agregar(const Fila& f) {
+        std::lock_guard<std::mutex> g(mtx_);
+        if (filas_.size() >= MAX_FILAS) { descartadas_++; return; }
+        filas_.push_back(f);
+    }
+
+    void cerrar() {
+        {
+            std::lock_guard<std::mutex> g(mtx_);
+            fin_ = true;
+        }
+        cv_.notify_one();
+        hilo_.join();
+        if (f_) fclose(f_);
+        f_ = nullptr;
+    }
+
+    uint64_t escritas() const { return escritas_; }
+    uint64_t descartadas() const { return descartadas_; }
+
+   private:
+    void correr() {
+        std::vector<Fila> lote;
+        for (;;) {
+            bool fin;
+            {
+                std::unique_lock<std::mutex> g(mtx_);
+                cv_.wait_for(g, std::chrono::seconds(1), [this] { return fin_; });
+                lote.swap(filas_);
+                fin = fin_;
+            }
+            if (destino_ok(destino_)) {
+                for (const auto& f : lote) escribir(f);
+            } else {
+                descartadas_ += lote.size();
+            }
+            if (f_ && (fflush(f_) != 0 || ferror(f_))) {
+                // Disco lleno: las filas del lote se pierden (se avisa una vez por
+                // racha). stdio pudo dejar media fila en el archivo: se cierra y se
+                // recorta a la ultima fila completa, si no la fila siguiente quedaria
+                // pegada a esa mitad. escribir() lo reabre en la proxima vuelta.
+                int err = errno;
+                descartadas_ += lote.size();
+                escritas_ -= lote.size();
+                fclose(f_);
+                f_ = nullptr;
+                if (truncate(ruta_.c_str(), (off_t)pos_bueno_) != 0)
+                    log("WARNING no se pudo recortar %s (%s)", ruta_.c_str(), strerror(errno));
+                hora_.clear();
+                if (!error_csv_) log("WARNING no se pudo escribir el registro de ventanas (%s)", strerror(err));
+                error_csv_ = true;
+            } else if (f_) {
+                pos_bueno_ = ftell(f_);
+            }
+            if (error_csv_ && f_ && !lote.empty()) {
+                log("Registro de ventanas: se volvio a escribir bien");
+                error_csv_ = false;
+            }
+            lote.clear();
+            if (fin) return;
+        }
+    }
+
+    // Un corte de energia a mitad de una fila deja el CSV con una linea a medias
+    // y, al reabrirlo en modo "a", la fila nueva se pegaba a esa (campo
+    // 2026-10-20: timestamp truncado, area en la columna de t). Se recorta todo
+    // lo que haya despues del ultimo '\n' (tambien los NUL que deja ext4).
+    // Devuelve el tamano que queda (0 = ni el encabezado estaba completo) o -1.
+    static off_t recortar_linea_cortada(const std::string& ruta) {
+        int fd = open(ruta.c_str(), O_RDWR);
+        if (fd < 0) return -1;
+        off_t fin = lseek(fd, 0, SEEK_END);
+        off_t pos = fin, corte = 0;
+        char buf[4096];
+        bool encontrado = false;
+        while (pos > 0 && !encontrado) {
+            size_t n = pos < (off_t)sizeof buf ? (size_t)pos : sizeof buf;
+            pos -= n;
+            if (pread(fd, buf, n, pos) != (ssize_t)n) { close(fd); return -1; }
+            for (size_t i = n; i-- > 0;)
+                if (buf[i] == '\n') { corte = pos + i + 1; encontrado = true; break; }
+        }
+        if (corte < fin && ftruncate(fd, corte) != 0) corte = -1;
+        close(fd);
+        return corte;
+    }
+
+    void escribir(const Fila& f) {
+        time_t t = (time_t)(f.t_ms / 1000);
+        struct tm tm;
+        gmtime_r(&t, &tm);
+        char hora[16];
+        strftime(hora, sizeof hora, "%Y%m%d_%H", &tm);
+        if (!f_ || hora_ != hora) {  // rota por hora UTC
+            if (f_) fclose(f_);
+            std::string ruta = destino_ + "/ventanas_" + hora + ".csv";
+            // vacio cuenta como nuevo: con el disco lleno el encabezado puede no haber
+            // llegado a escribirse y el recorte deja el archivo en 0 bytes
+            struct stat st_csv;
+            bool nuevo = stat(ruta.c_str(), &st_csv) != 0 || st_csv.st_size == 0;
+            if (!nuevo) {
+                off_t queda = recortar_linea_cortada(ruta);
+                if (queda < 0) {
+                    log("WARNING no se pudo revisar la ultima linea de %s", ruta.c_str());
+                } else {
+                    if (queda < st_csv.st_size)
+                        log("CSV %s: recortados %lld bytes de una linea cortada (corte de energia)", ruta.c_str(),
+                            (long long)(st_csv.st_size - queda));
+                    nuevo = queda == 0;
+                }
+            }
+            f_ = fopen(ruta.c_str(), "a");
+            hora_ = hora;
+            if (!f_) { log("WARNING no se pudo abrir %s", ruta.c_str()); return; }
+            ruta_ = ruta;
+            pos_bueno_ = ftell(f_);  // en modo "a" queda al final: recortado arriba, lo ya escrito esta completo
+            if (nuevo) fprintf(f_, "window_count,t_utc_ms,area,kurtosis,estado,perdidas_fpga,dec\n");
+        }
+        if (!f_) return;
+        if (f.saltada)
+            fprintf(f_, "%u,%lld,,,saltada,%llu,%d\n", f.wc, (long long)f.t_ms, (unsigned long long)f.perdidas, dec_);
+        else
+            fprintf(f_, "%u,%lld,%.6g,%.6g,ok,%llu,%d\n", f.wc, (long long)f.t_ms, f.area, f.kurt,
+                    (unsigned long long)f.perdidas, dec_);
+        escritas_++;
+    }
+
+    std::string destino_, hora_;
+    int dec_;
+    FILE* f_ = nullptr;
+    std::string ruta_;       // CSV abierto
+    long pos_bueno_ = 0;     // hasta donde el CSV tiene filas completas (ultimo flush bueno)
+    bool error_csv_ = false;
+    std::mutex mtx_;
+    std::condition_variable cv_;
+    std::vector<Fila> filas_;
+    bool fin_ = false;
+    std::atomic<uint64_t> escritas_{0}, descartadas_{0};
+    std::thread hilo_;
+};
+
+// Bug del vendor (cores del 2026-10-06, ~30% de los arranques con --host):
+// ConfigStreamClient::connect() deja registrado un lambda de error que guarda
+// referencias a su propia pila. Segundos despues de que connect() volvio, el
+// hilo de asio lo dispara ("Error: 127.0.0.1 Operation aborted") y escribe en
+// esa pila muerta: el hilo que habia llamado a connect() (antes, el principal)
+// muere saltando a una direccion basura (0x4e). Arreglo sin tocar la libreria:
+// connect() corre en un hilo propio, por DEBAJO de un relleno de pila, y ese
+// hilo despues queda bloqueado para siempre mas arriba. Las escrituras
+// tardias caen en una zona de pila que nadie vuelve a usar.
+__attribute__((noinline)) void conectar_bajo_relleno(const std::shared_ptr<ConfigStreamClient>& conf,
+                                                     const std::string& host, std::promise<bool>& res) {
+    volatile char relleno[256 * 1024];  // connect() queda >=256KB mas abajo que el pause() de despues
+    relleno[0] = 0;
+    relleno[sizeof relleno - 1] = 0;
+    res.set_value(host.empty() ? conf->connect() : conf->connect(std::vector<std::string>{host}));
+}
+
+bool conectar_config(std::shared_ptr<ConfigStreamClient> conf, const std::string& host) {
+    auto res = std::make_shared<std::promise<bool>>();
+    auto fut = res->get_future();
+    std::thread([conf, host, res] {
+        conectar_bajo_relleno(conf, host, *res);
+        for (;;) pause();  // vivo hasta que termine el proceso: su pila vieja no se reusa
+    }).detach();
+    return fut.get();
+}
+
+int64_t ahora_utc_ms() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::system_clock::now().time_since_epoch()).count();
+}
+
+// --en-vivo (demo): ultimas MAX_FILAS ventanas en RAM; un hilo propio reescribe
+// el JSON cada ~200 ms (tmp + rename: quien lo lee nunca ve uno a medio
+// escribir). Tamaño fijo: no crece con el tiempo. Pensado para /run (RAM).
+class EnVivo {
+   public:
+    static const size_t MAX_FILAS = 20 * 30;  // 30 s de ventanas de 50 ms
+    struct Fila { uint32_t wc; int64_t t_ms; double area, kurt, area2, kurt2; };
+    EnVivo(std::string ruta, int dec, double fs) : ruta_(std::move(ruta)), dec_(dec), fs_(fs),
+                                                  hilo_([this] { correr(); }) {}
+    ~EnVivo() {
+        {
+            std::lock_guard<std::mutex> g(mtx_);
+            fin_ = true;
+        }
+        cv_.notify_one();
+        hilo_.join();
+    }
+    void agregar(const Fila& f) {
+        std::lock_guard<std::mutex> g(mtx_);
+        filas_.push_back(f);
+        if (filas_.size() > MAX_FILAS) filas_.pop_front();
+    }
+
+   private:
+    static void num(std::string& s, double v) {
+        char b[32];
+        if (std::isfinite(v)) snprintf(b, sizeof b, "%.6g", v);
+        else snprintf(b, sizeof b, "null");
+        s += b;
+    }
+    void correr() {
+        std::vector<Fila> copia;
+        std::string s;
+        const std::string tmp = ruta_ + ".tmp";
+        for (;;) {
+            bool fin;
+            {
+                std::unique_lock<std::mutex> g(mtx_);
+                cv_.wait_for(g, std::chrono::milliseconds(200), [this] { return fin_; });
+                copia.assign(filas_.begin(), filas_.end());
+                fin = fin_;
+            }
+            if (fin) return;
+            char cab[160];
+            snprintf(cab, sizeof cab, "{\"t_ms\":%lld,\"dec\":%d,\"fs_hz\":%.1f,\"ventanas\":[",
+                     (long long)ahora_utc_ms(), dec_, fs_);
+            s = cab;
+            for (size_t i = 0; i < copia.size(); i++) {
+                const Fila& f = copia[i];
+                char b[48];
+                snprintf(b, sizeof b, "%s[%u,%lld,", i ? "," : "", f.wc, (long long)f.t_ms);
+                s += b;
+                num(s, f.area); s += ',';
+                num(s, f.kurt); s += ',';
+                num(s, f.area2); s += ',';
+                num(s, f.kurt2); s += ']';
+            }
+            s += "]}\n";
+            if (FILE* fp = fopen(tmp.c_str(), "w")) {
+                bool ok = fwrite(s.data(), 1, s.size(), fp) == s.size();
+                ok = (fclose(fp) == 0) && ok;
+                if (ok) rename(tmp.c_str(), ruta_.c_str());
+            }
+        }
+    }
+    std::string ruta_;
+    int dec_;
+    double fs_;
+    std::mutex mtx_;
+    std::condition_variable cv_;
+    std::deque<Fila> filas_;
+    bool fin_ = false;
+    std::thread hilo_;
+};
+
+}  // namespace
+
+int main(int argc, char** argv) {
+    double umbral = 3.4;  // 2026-10-05, antes 5.0
+    double umbral2 = -1;  // IN2; sin --umbral2 = el mismo que el IN1
+    bool in2_asociado = false;  // --in2-modo asociado: el IN2 graba cuando graba el IN1
+    std::string destino = "/root/eventos";
+    int dec = 32;
+    int canales = 1;
+    int estado_s = 10;
+    double margen_ms = 10;
+    int duracion_s = 0;  // 0 = hasta SIGINT/SIGTERM
+    std::string host;    // vacio = descubrimiento por broadcast (default del vendor)
+    ParamsPulsos pp;     // modo prueba, apagado si pp.n == 0
+    bool loopback_digital = false;
+    std::string prueba_archivo;
+    bool con_registro = true;
+    double dac_escala = 4;
+    bool dac_xor_signo = false;
+    int dac_repetir = 1;
+    int64_t minimo_libre_mb = 2048;
+    std::string en_vivo;  // --en-vivo RUTA: JSON con las ultimas ventanas (demo)
+    for (int i = 1; i < argc; i++) {
+        std::string a = argv[i];
+        auto sig = [&](void) -> const char* {
+            if (i + 1 >= argc) { fprintf(stderr, "falta valor para %s\n", a.c_str()); exit(2); }
+            return argv[++i];
+        };
+        if (a == "--umbral") umbral = atof(sig());
+        else if (a == "--umbral2") umbral2 = atof(sig());
+        else if (a == "--destino") destino = sig();
+        else if (a == "--dec") dec = atoi(sig());
+        else if (a == "--canales") canales = atoi(sig());
+        else if (a == "--in2-modo") {
+            std::string m = sig();
+            if (m == "asociado") in2_asociado = true;
+            else if (m != "independiente") { fprintf(stderr, "--in2-modo debe ser independiente o asociado\n"); return 2; }
+        }
+        else if (a == "--estado-s") estado_s = atoi(sig());
+        else if (a == "--margen-ms") margen_ms = atof(sig());
+        else if (a == "--duracion-s") duracion_s = atoi(sig());
+        else if (a == "--host") host = sig();
+        else if (a == "--prueba-pulsos") pp.n = atoi(sig());
+        else if (a == "--pulso-periodo-s") pp.periodo_s = atof(sig());
+        else if (a == "--pulso-freq") pp.freq = atof(sig());
+        else if (a == "--pulso-tau-us") pp.tau_us = atof(sig());
+        else if (a == "--pulso-amp") pp.amp = atof(sig());
+        else if (a == "--pulso-log") pp.log = sig();
+        else if (a == "--pulso-loopback-digital") loopback_digital = true;
+        else if (a == "--prueba-archivo") prueba_archivo = sig();
+        else if (a == "--sin-registro") con_registro = false;
+        else if (a == "--en-vivo") en_vivo = sig();
+        else if (a == "--minimo-libre-mb") minimo_libre_mb = atoll(sig());
+        else if (a == "--dac-escala") dac_escala = atof(sig());
+        else if (a == "--dac-xor-signo") dac_xor_signo = true;
+        else if (a == "--dac-repetir") dac_repetir = atoi(sig());
+        else if (a == "--dac-rate") pp.rate = atof(sig());
+        else { fprintf(stderr, "argumento desconocido: %s\n", a.c_str()); return 2; }
+    }
+    if (canales != 1 && canales != 2) { fprintf(stderr, "--canales debe ser 1 o 2\n"); return 2; }
+    if (umbral2 < 0) umbral2 = umbral;
+    const CoefsPasabanda* coefs = coefs_para(dec);
+    if (!coefs) { fprintf(stderr, "--dec %d sin coeficientes del pasabanda (permitidas: 32, 64)\n", dec); return 2; }
+    const double fs = 125e6 / dec;
+    const int64_t N = (int64_t)(fs * VENTANA_S);
+
+    Registros reg;
+    if (!reg.abrir()) {
+        log("ERROR no se encontro el acumulador de area/kurtosis de la FPGA (¿bitstream sin el, o sin permisos "
+            "para /dev/mem?)");
+        return 1;
+    }
+    log("Acumulador de la FPGA: %s, %u muestras por ventana", reg.nombre(), reg.window_samples());
+    // IN2 como sensor independiente: solo en dual y con un bitstream que lo calcule
+    const bool in2 = canales == 2 && reg.tiene_in2();
+    if (canales == 2)
+        log(in2 ? "IN2: area/kurtosis propios en la FPGA (ID 0x%08X), umbral kurtosis>=%.2f, eventos y CSV en <destino>/in2"
+                : "WARNING bitstream sin calculo del IN2 (ID 0x%08X): se mide solo el IN1",
+            in2 ? AREA_ID_IN2 : 0, umbral2);
+    // El IN2 graba cruda si es independiente (con el bitstream del IN2) o si
+    // esta asociado al IN1 (con cualquier bitstream: la cruda viene en el stream)
+    const bool graba_in2 = canales == 2 && (in2 || in2_asociado);
+    if (canales == 2 && in2_asociado)
+        log("IN2: modo asociado (graba su cruda cuando graba el IN1, mismo nombre en <destino>/in2)%s",
+            in2 ? "" : ", sin area/kurtosis ni CSV del IN2 (bitstream viejo)");
+    // Si de verdad se mide el IN2 (el config puede decir dual con un bitstream
+    // sin IN2; asociado graba su cruda igual): resumen_modo_evento.py lo usa
+    // para me_canales. Lo borra el supervisor.
+    mkdir(VigiaEspacio::DIR_BANDERA, 0755);
+    if (FILE* f = fopen(ARCHIVO_IN2, "w")) {
+        fputs(graba_in2 ? "si\n" : "no\n", f);
+        fclose(f);
+    }
+    if (!reg.escribir_coefs(*coefs)) {
+        log("ERROR no se pudo escribir el pasabanda de la FPGA para dec=%d: el registro no devolvio lo escrito", dec);
+        return 1;
+    }
+    log("Pasabanda de la FPGA: 50-400kHz para dec=%d (fs=%.0f Hz)", dec, fs);
+
+    const int64_t M = (int64_t)(fs * margen_ms / 1000);
+    if (2 * M >= (int64_t)N * (BUFFER_VENTANAS - 2)) { log("ERROR --margen-ms demasiado grande para el buffer"); return 1; }
+    BufferCircular buf((size_t)N * BUFFER_VENTANAS);
+    std::unique_ptr<BufferCircular> buf2;
+    if (canales == 2) buf2.reset(new BufferCircular((size_t)N * BUFFER_VENTANAS));
+    mkdir(destino.c_str(), 0755);
+    {
+        struct stat st;
+        if (stat(destino.c_str(), &st) != 0) { log("ERROR no se pudo crear/leer el destino %s", destino.c_str()); return 1; }
+        g_dev_destino = st.st_dev;
+        log("Destino %s (dispositivo %u:%u)", destino.c_str(), major(st.st_dev), minor(st.st_dev));
+    }
+    Escritor escritor(destino);
+    VigiaEspacio espacio(destino, minimo_libre_mb);
+    std::unique_ptr<RegistroVentanas> registro;
+    if (con_registro) registro.reset(new RegistroVentanas(destino, dec));
+    std::unique_ptr<EnVivo> vivo;
+    if (!en_vivo.empty()) {
+        vivo.reset(new EnVivo(en_vivo, dec, fs));
+        log("En vivo: ultimas %zu ventanas en %s (cada ~200 ms)", EnVivo::MAX_FILAS, en_vivo.c_str());
+    }
+    // IN2: su propia carpeta con la misma estructura que la del IN1 (CSV y
+    // eventos), asi las herramientas de la PC sirven sin cambios
+    const std::string destino2 = destino + "/in2";
+    std::unique_ptr<RegistroVentanas> registro2;
+    std::unique_ptr<Escritor> escritor2;
+    if (graba_in2) {
+        mkdir(destino2.c_str(), 0755);
+        escritor2.reset(new Escritor(destino2));
+        if (in2 && con_registro) registro2.reset(new RegistroVentanas(destino2, dec));
+    }
+    Stats st;
+
+    auto conf = std::make_shared<ConfigStreamClient>();
+    auto adc = std::make_shared<ADCStreamClient>(conf);
+    conf->setVerbose(false);
+    adc->setVerbose(false);
+    bool ok = conectar_config(conf, host);
+    if (!ok) { log("ERROR no se pudo conectar al streaming-server%s%s", host.empty() ? "" : " en ", host.c_str()); return 1; }
+    log("Config conectada via %s", host.empty() ? "descubrimiento broadcast" : host.c_str());
+    conf->sendConfig("adc_pass_mode", "NET");
+    conf->sendConfig("adc_decimation", std::to_string(dec));
+    conf->sendConfig("channel_attenuator_1", "A_1_20");
+    conf->sendConfig("channel_state_1", "ON");
+    if (canales == 2) {
+        conf->sendConfig("channel_attenuator_2", "A_1_20");
+        conf->sendConfig("channel_state_2", "ON");
+    } else {
+        conf->sendConfig("channel_state_2", "OFF");
+    }
+    adc->setCallback(std::make_shared<CB>(buf, buf2.get(), st));
+
+    // Modo prueba: DAC por el MISMO ConfigStreamClient (una segunda conexion
+    // de configuracion tira la primera, ver generador_pulsos.h).
+    std::shared_ptr<DACStreamClient> dac;
+    std::shared_ptr<GeneradorPulsos> gen;
+    std::shared_ptr<GeneradorArchivo> gen_archivo;
+    FILE* pulsos_log = nullptr;
+    if (!prueba_archivo.empty()) {
+        gen_archivo = std::make_shared<GeneradorArchivo>(prueba_archivo, dac_escala, pp.rate,
+                                                         dac_xor_signo ? 0x8000 : 0, dac_repetir);
+        if (!gen_archivo->ok()) { log("ERROR no se pudo leer %s", prueba_archivo.c_str()); return 1; }
+        char rate[32];
+        snprintf(rate, sizeof rate, "%.0f", pp.rate);
+        conf->sendConfig("dac_pass_mode", "DAC_NET");
+        conf->sendConfig("dac_rate", rate);
+        log("PRUEBA: dac_rate pedido=%s leido=%s", rate, conf->getConfig("dac_rate").c_str());
+        dac = std::make_shared<DACStreamClient>(conf);
+        dac->setVerbose(false);
+        dac->setCallback(gen_archivo);
+    } else if (pp.n > 0) {
+        pulsos_log = fopen(pp.log.c_str(), "w");
+        if (!pulsos_log) { log("ERROR no se pudo abrir %s", pp.log.c_str()); return 1; }
+        char rate[32];
+        snprintf(rate, sizeof rate, "%.0f", pp.rate);
+        conf->sendConfig("dac_pass_mode", "DAC_NET");
+        conf->sendConfig("dac_rate", rate);
+        dac = std::make_shared<DACStreamClient>(conf);
+        dac->setVerbose(false);
+        gen = std::make_shared<GeneradorPulsos>(pp, pulsos_log);
+        dac->setCallback(gen);
+    }
+
+    log("Modo evento (C++) — umbral kurtosis>=%.2f, dec=%d (fs=%.0f Hz, ventana=%lld muestras, margen=%lld), "
+        "destino=%s, canales=%d", umbral, dec, fs, (long long)N, (long long)M, destino.c_str(), canales);
+    if (!adc->startStreaming()) { log("ERROR startStreaming fallo"); return 1; }
+    // Recien ahora: la libreria del vendor instala su propio handler con
+    // signal() y pisaba el nuestro (Ctrl+C/SIGTERM no cortaban, visto en HW).
+    struct sigaction sa_stop = {};
+    sa_stop.sa_handler = on_signal;
+    sigaction(SIGINT, &sa_stop, nullptr);
+    sigaction(SIGTERM, &sa_stop, nullptr);
+
+    // Esperar a que lleguen datos y el contador corra a la decimacion pedida.
+    int64_t t_ini = ahora_ms();
+    while (!g_stop && buf.total() == 0 && ahora_ms() - t_ini < 15000) usleep(10000);
+    if (buf.total() == 0) {
+        log("ERROR no llegaron muestras en 15s");
+        adc->stopStreaming();
+        return 1;
+    }
+    usleep(2000000);
+    if (!ajustar_ventana(reg, (uint32_t)N, fs)) {
+        adc->stopStreaming();
+        return 1;
+    }
+    int64_t offset = calibrar(reg, buf, N, 1000);
+    log("Calibracion: window_count=%u muestras_propias=%llu offset=%lld", reg.window_count(),
+        (unsigned long long)buf.total(), (long long)offset);
+    // el streaming-server configura la decimacion despues de que escribimos: confirmar que no piso nada
+    if (reg.window_samples() != (uint32_t)N || !reg.coefs_ok(*coefs)) {
+        log("ERROR la ventana/pasabanda de la FPGA cambio despues de arrancar el stream (dec=%d)", dec);
+        adc->stopStreaming();
+        return 1;
+    }
+
+    // el DAC arranca despues de calibrar, para no meter pulsos en la calibracion
+    int64_t t_fin_pulsos = 0;
+    // el DAC por red consume el archivo mas rapido que el tiempo real (el
+    // server lo bufferea): terminado() llega segundos antes de que la cola
+    // del tramo salga por OUT1. Se espera al menos la duracion real del replay
+    // (silencios de 0.5s incluidos) antes de la cuenta de 3s de cierre.
+    int64_t t_replay = 0, dur_replay_ms = 0;
+    if (gen_archivo) {
+        if (!dac->startStreamingFromMemorySink(host.empty() ? "127.0.0.1" : host, true, false, DAC_16BIT)) {
+            log("ERROR no arranco el DAC");
+            adc->stopStreaming();
+            return 1;
+        }
+        t_replay = ahora_ms();
+        dur_replay_ms = (int64_t)((gen_archivo->muestras_total() + pp.rate) / pp.rate * 1000);
+        log("PRUEBA: reproduciendo %s por el DAC (%zu muestras, %.1fs a %.0f Hz, escala %.1f) x%d = %.1fs",
+            prueba_archivo.c_str(), gen_archivo->muestras(), gen_archivo->muestras() / pp.rate, pp.rate, dac_escala,
+            gen_archivo->repetir(), gen_archivo->muestras_total() / pp.rate);
+    }
+    if (gen) {
+        if (!dac->startStreamingFromMemorySink(host.empty() ? "127.0.0.1" : host, true, false, DAC_16BIT)) {
+            log("ERROR no arranco el DAC");
+            adc->stopStreaming();
+                return 1;
+        }
+        log("PRUEBA: generando %d pulsos por OUT1 (periodo %.3fs, %.0f Hz, tau %.0f us, amp %.2f, %zu muestras DAC) "
+            "-> %s", pp.n, pp.periodo_s, pp.freq, pp.tau_us, pp.amp, gen->largo_pulso(), pp.log.c_str());
+    }
+    if (loopback_digital) {
+        int fd = open("/dev/mem", O_RDWR | O_SYNC);
+        void* m = fd < 0 ? MAP_FAILED : mmap(nullptr, 0x1000, PROT_READ | PROT_WRITE, MAP_SHARED, fd, REG_BASE);
+        if (fd >= 0) close(fd);
+        if (m == MAP_FAILED) { log("ERROR no se pudo mapear /dev/mem para el loopback"); adc->stopStreaming(); return 1; }
+        volatile uint32_t* lb = (volatile uint32_t*)m + 0x40 / 4;
+        *lb = *lb | 0x2;
+        log("PRUEBA: loopback digital DAC->ADC canal 1 activado (reg 0x40000040=%08x)", *lb);
+    }
+
+    uint64_t ventanas_vistas = 0, ventanas_saltadas = 0, eventos = 0, eventos_perdidos = 0,
+             recalibraciones = 0, sin_senal_periodo = 0, no_guardados = 0;
+    // IN2 (sensor independiente): mismos contadores que el IN1
+    uint64_t eventos2 = 0, eventos_perdidos2 = 0, no_guardados2 = 0, sin_senal_periodo2 = 0;
+    int ventanas_fuera = 0;  // ventanas seguidas con deriva fuera de tolerancia y stream fluyendo
+    int64_t fuera_min = INT64_MAX, fuera_max = INT64_MIN;
+    int64_t t_disturbio = 0;  // ultima reanudacion o reporte de fpgaLost
+    uint64_t lost_visto = 0;
+    uint64_t lost_registro = st.fpga_lost;  // perdidas_fpga del CSV: delta desde la fila anterior
+    uint64_t lost2_registro = st.fpga_lost2;  // idem, CSV del IN2 (perdidas del stream del IN2)
+    bool en_corte = false;
+    int64_t deriva_min = INT64_MAX, deriva_max = INT64_MIN;
+    uint64_t muestras_ult = buf.total(), lost_ult = st.fpga_lost;
+    uint64_t muestras2_ult = st.muestras2, lost2_ult = st.fpga_lost2;
+    int64_t t_ult_estado = ahora_ms(), t_inicio = ahora_ms();
+    double kurt_max_periodo = 0;
+    // IN2: maximos del periodo de ESTADO y ventanas en que el canal 1 no estaba
+    // en la misma ventana que el canal 0 al leerlo (esperado 0)
+    double kurt_max2_periodo = 0, area_max2_periodo = 0;
+    uint64_t in2_otra_ventana = 0;
+
+    // base/iso: nombre del evento, fijado al detectar (el IN2 asociado usa el del IN1)
+    struct Pendiente { uint32_t wc; double area, kurt; int64_t t_ms; std::string base, iso; };
+    std::deque<Pendiente> pendientes, pendientes2;  // cruzaron el umbral, su señal todavia no llego
+
+    // Saca del buffer del canal la señal de las ventanas que cruzaron su umbral
+    // y la encola para escribir. Mismo indice de muestra en los dos canales
+    // (llegan en el mismo paquete), asi que idx_ini sirve para los dos.
+    auto procesar_pendientes = [&](std::deque<Pendiente>& pend, BufferCircular& b, Escritor& esc, const char* canal,
+                                   const char* disparo, uint64_t& ev, uint64_t& ev_perdidos, uint64_t& no_guard,
+                                   uint64_t& sin_senal) {
+        std::vector<int16_t> ventana;
+        while (!pend.empty()) {
+            auto& p = pend.front();
+            bool con_hueco = false;
+            int64_t idx_ini = (int64_t)(p.wc - 1) * N - offset - M;
+            auto r = b.extraer(idx_ini, (size_t)(N + 2 * M), ventana, con_hueco);
+            // si la señal no llega en 2s (stream congelado), se da por perdida
+            if (r == BufferCircular::TODAVIA_NO && ahora_ms() - p.t_ms < 2000) break;
+            if (r == BufferCircular::OK && espacio.pausada()) {
+                no_guard++;  // sin log por evento: va resumido en la linea de ESTADO
+            } else if (r == BufferCircular::OK) {
+                Evento e;
+                e.wc = p.wc;
+                e.base = p.base;
+                e.iso = p.iso;
+                e.x = std::move(ventana);
+                e.fs = fs;
+                e.area = p.area;
+                e.kurt = p.kurt;
+                e.indice_inicio = idx_ini;
+                e.margen = M;
+                e.ventana = N;
+                e.con_hueco = con_hueco;
+                e.canales = canales;
+                e.dec = dec;
+                e.canal = canal;
+                e.disparo = disparo;
+                std::string nombre = e.base;
+                if (esc.encolar(std::move(e))) {
+                    ev++;
+                    log("[EVENTO %s] %s  area=%.4f kurtosis=%.2f%s%s", canal, nombre.c_str(), p.area, p.kurt,
+                        con_hueco ? "  (CON HUECO de muestras)" : "", strcmp(disparo, canal) != 0 ? "  (asociado al IN1)" : "");
+                } else {
+                    ev_perdidos++;
+                    log("WARNING %s: cola de escritura llena (%zu) — evento wc=%u descartado", canal, Escritor::MAX_COLA,
+                        p.wc);
+                }
+                ventana = std::vector<int16_t>();
+            } else if (r == BufferCircular::PISADA) {
+                ev_perdidos++;
+                log("WARNING %s: ventana wc=%u cruzo el umbral (kurt=%.2f) pero su señal ya estaba pisada en el buffer",
+                    canal, p.wc, p.kurt);
+            } else {
+                // stream congelado: se cuenta y va resumido en la linea de ESTADO
+                ev_perdidos++;
+                sin_senal++;
+            }
+            pend.pop_front();
+        }
+    };
+
+    double sa, s2, s4;
+    uint32_t ultimo_wc = reg.leer(sa, s2, s4);
+
+    while (!g_stop) {
+        uint32_t wc = reg.leer(sa, s2, s4);
+        if (wc != ultimo_wc) {
+            uint32_t salto = wc - ultimo_wc;
+            if (salto > 1) ventanas_saltadas += salto - 1;
+            int64_t t_utc = ahora_utc_ms();
+            uint64_t lost_ahora = st.fpga_lost;
+            if (registro) {
+                // saltadas: sin datos (la FPGA solo guarda la ultima ventana); tiempo estimado hacia atras
+                for (uint32_t k = 1; k < salto && k <= 20 * 60; k++) {
+                    RegistroVentanas::Fila f{ultimo_wc + k, t_utc - (int64_t)((salto - k) * VENTANA_S * 1000), 0, 0, true, 0};
+                    registro->agregar(f);
+                    if (registro2) registro2->agregar(f);
+                }
+            }
+            ventanas_vistas++;
+            ultimo_wc = wc;
+
+            // deriva: cuanto se corrio el offset respecto de la calibracion
+            int64_t deriva = ((int64_t)wc * N - (int64_t)buf.total()) - offset;
+            deriva_min = std::min(deriva_min, deriva);
+            deriva_max = std::max(deriva_max, deriva);
+            // Recalibrar solo si la deriva se sostiene >=1s (20 ventanas), con el
+            // stream fluyendo, ESTABLE (varia menos de 2 paquetes en ese
+            // segundo) y lejos (>5s) de una reanudacion o un reporte de
+            // fpgaLost. Un congelamiento (eth0 abajo) hace crecer la deriva
+            // sola, y al volver el server reporta las muestras del corte en
+            // fpgaLost (verificado: 882.924.756 = el corte exacto), lo que ya
+            // la corrige sin recalibrar. Visto en HW (Fase 3): recalibrar en el
+            // borde del corte, o durante la rafaga de entrega atrasada despues
+            // de reanudar (deriva sostenida pero bajando), desalineaba todo lo
+            // que venia despues.
+            int64_t ahora = ahora_ms();
+            if (st.fpga_lost != lost_visto) {
+                lost_visto = st.fpga_lost;
+                t_disturbio = ahora;
+            }
+            bool fluyendo = ahora - st.ultimo_paquete_ms < 100;
+            bool calmo = ahora - t_disturbio > 5000;
+            if (std::llabs(deriva) > TOLERANCIA_DERIVA && fluyendo && calmo) {
+                ventanas_fuera++;
+                fuera_min = std::min(fuera_min, deriva);
+                fuera_max = std::max(fuera_max, deriva);
+                if (ventanas_fuera >= 20) {
+                    if (fuera_max - fuera_min <= 2 * 32768) {
+                        // mismo criterio que calibrar(): el minimo es el instante de entrega mas al dia
+                        offset += fuera_min;
+                        recalibraciones++;
+                        log("WARNING deriva de alineacion sostenida y estable %lld muestras (%.1f ms) — recalibrado",
+                            (long long)fuera_min, fuera_min / fs * 1000);
+                    }
+                    ventanas_fuera = 0;
+                    fuera_min = INT64_MAX;
+                    fuera_max = INT64_MIN;
+                }
+            } else {
+                ventanas_fuera = 0;
+                fuera_min = INT64_MAX;
+                fuera_max = INT64_MIN;
+            }
+
+            double area, kurt;
+            area_kurtosis(sa, s2, s4, (double)N, fs, area, kurt);
+            kurt_max_periodo = std::max(kurt_max_periodo, kurt);
+            if (registro) {
+                registro->agregar({wc, t_utc, area, kurt, false, lost_ahora - lost_registro});
+                lost_registro = lost_ahora;
+            }
+            // area/kurtosis del IN2 en esta ventana (NAN si no hay: bitstream viejo u otra ventana)
+            double area2_v = NAN, kurt2_v = NAN;
+            if (in2) {
+                double sa2, s22, s42, area2 = 0, kurt2 = 0;
+                bool ok2 = reg.leer(sa2, s22, s42, 1) == wc;
+                if (ok2) {
+                    area_kurtosis(sa2, s22, s42, (double)N, fs, area2, kurt2);
+                    area2_v = area2;
+                    kurt2_v = kurt2;
+                    kurt_max2_periodo = std::max(kurt_max2_periodo, kurt2);
+                    area_max2_periodo = std::max(area_max2_periodo, area2);
+                    if (!in2_asociado && kurt2 >= umbral2) {
+                        Evento nom = nuevo_evento(wc);
+                        pendientes2.push_back({wc, area2, kurt2, ahora_ms(), nom.base, nom.iso});
+                    }
+                } else {
+                    in2_otra_ventana++;  // el canal 1 ya cerro la siguiente: esta ventana del IN2 queda saltada
+                }
+                if (registro2) {
+                    uint64_t lost2_ahora = st.fpga_lost2;
+                    registro2->agregar({wc, t_utc, area2, kurt2, !ok2, ok2 ? lost2_ahora - lost2_registro : 0});
+                    if (ok2) lost2_registro = lost2_ahora;
+                }
+            }
+            if (vivo) vivo->agregar({wc, t_utc, area, kurt, area2_v, kurt2_v});
+            if (kurt >= umbral) {
+                Evento nom = nuevo_evento(wc);
+                int64_t t_det = ahora_ms();
+                pendientes.push_back({wc, area, kurt, t_det, nom.base, nom.iso});
+                if (graba_in2 && in2_asociado) pendientes2.push_back({wc, area2_v, kurt2_v, t_det, nom.base, nom.iso});
+            }
+        }
+
+        procesar_pendientes(pendientes, buf, escritor, "IN1", "IN1", eventos, eventos_perdidos, no_guardados,
+                            sin_senal_periodo);
+        if (graba_in2)
+            procesar_pendientes(pendientes2, *buf2, *escritor2, "IN2", in2_asociado ? "IN1" : "IN2", eventos2,
+                                eventos_perdidos2, no_guardados2, sin_senal_periodo2);
+
+        int64_t t = ahora_ms();
+        espacio.revisar(t);
+        bool corte = t - st.ultimo_paquete_ms > 1000;
+        if (corte != en_corte) {
+            en_corte = corte;
+            if (!corte) t_disturbio = t;
+            if (corte) log("WARNING stream congelado: sin paquetes hace >1s");
+            else log("Stream reanudado (fpgaLost acumulado=%llu)", (unsigned long long)st.fpga_lost.load());
+        }
+        if (t - t_ult_estado >= estado_s * 1000) {
+            uint64_t m = buf.total(), l = st.fpga_lost;
+            double dt = (t - t_ult_estado) / 1000.0;
+            double pct = (m - muestras_ult - (l - lost_ult)) / (fs * dt) * 100;
+            char txt_in2[256] = "";
+            if (canales == 2) {
+                uint64_t m2 = st.muestras2, l2 = st.fpga_lost2;
+                int n = snprintf(txt_in2, sizeof txt_in2,
+                                 "  IN2: muestras=%.1f%% perdidas_fpga=+%llu raw_max=%d desfase=%llu",
+                                 (m2 - muestras2_ult) / (fs * dt) * 100, (unsigned long long)(l2 - lost2_ult),
+                                 st.raw_max2.exchange(0), (unsigned long long)st.desfase2.load());
+                if (in2 && n > 0 && n < (int)sizeof txt_in2)
+                    snprintf(txt_in2 + n, sizeof txt_in2 - n,
+                             " kurt_max=%.2f area_max=%.4f eventos=%llu sin_senal=%llu otra_ventana=%llu",
+                             kurt_max2_periodo, area_max2_periodo, (unsigned long long)eventos2,
+                             (unsigned long long)sin_senal_periodo2, (unsigned long long)in2_otra_ventana);
+                else if (graba_in2 && n > 0 && n < (int)sizeof txt_in2)
+                    snprintf(txt_in2 + n, sizeof txt_in2 - n, " eventos=%llu sin_senal=%llu",
+                             (unsigned long long)eventos2, (unsigned long long)sin_senal_periodo2);
+                sin_senal_periodo2 = 0;
+                muestras2_ult = m2;
+                lost2_ult = l2;
+            }
+            log("ESTADO muestras=%.1f%% perdidas_fpga=+%llu ventanas=%llu saltadas=%llu deriva=[%lld,%lld] "
+                "kurt_max=%.2f raw_max=%d eventos=%llu sin_senal=%llu libre_mb=%lld%s%s%s",
+                pct, (unsigned long long)(l - lost_ult), (unsigned long long)ventanas_vistas,
+                (unsigned long long)ventanas_saltadas, (long long)deriva_min, (long long)deriva_max,
+                kurt_max_periodo, st.raw_max.exchange(0), (unsigned long long)eventos,
+                (unsigned long long)sin_senal_periodo, (long long)espacio.libre_mb(),
+                espacio.pausada() ? "  CRUDA PAUSADA" : "", corte ? "  SIN PAQUETES >1s" : "", txt_in2);
+            sin_senal_periodo = 0;
+            muestras_ult = m;
+            lost_ult = l;
+            t_ult_estado = t;
+            deriva_min = INT64_MAX;
+            deriva_max = INT64_MIN;
+            kurt_max_periodo = 0;
+            kurt_max2_periodo = 0;
+            area_max2_periodo = 0;
+        }
+        if (duracion_s > 0 && t - t_inicio >= duracion_s * 1000LL) break;
+        if ((gen && gen->terminado()) ||
+            (gen_archivo && gen_archivo->terminado() && t - t_replay >= dur_replay_ms)) {
+            if (t_fin_pulsos == 0) t_fin_pulsos = t;
+            else if (t - t_fin_pulsos > 3000) break;
+        }
+        usleep(POLL_US);
+    }
+
+    // stopStreaming() del vendor puede trabarse: si no vuelve en 10s, salir igual.
+    std::atomic<bool> parado{false};
+    std::thread vigia([&] {
+        for (int i = 0; i < 100 && !parado; i++) usleep(100000);
+        if (!parado) { log("WARNING stopStreaming no volvio en 10s — salida forzada"); _exit(3); }
+    });
+    if (dac) dac->stopStreaming();
+    adc->stopStreaming();
+    parado = true;
+    vigia.join();
+    escritor.cerrar();
+    if (escritor2) {
+        escritor2->cerrar();
+        log("IN2: eventos=%llu (escritos=%llu fallidos=%llu no_guardados_por_espacio=%llu) eventos_perdidos=%llu "
+            "otra_ventana=%llu", (unsigned long long)eventos2, (unsigned long long)escritor2->escritos(),
+            (unsigned long long)escritor2->fallidos(), (unsigned long long)no_guardados2,
+            (unsigned long long)eventos_perdidos2, (unsigned long long)in2_otra_ventana);
+    }
+    if (registro) {
+        registro->cerrar();
+        log("Registro continuo: %llu filas escritas, %llu descartadas", (unsigned long long)registro->escritas(),
+            (unsigned long long)registro->descartadas());
+    }
+    if (registro2) {
+        registro2->cerrar();
+        log("Registro continuo IN2: %llu filas escritas, %llu descartadas", (unsigned long long)registro2->escritas(),
+            (unsigned long long)registro2->descartadas());
+    }
+
+    log("Modo evento terminado. paquetes=%llu fpgaLost_total=%llu ventanas=%llu saltadas=%llu eventos=%llu "
+        "(escritos=%llu fallidos=%llu no_guardados_por_espacio=%llu) eventos_perdidos=%llu recalibraciones=%llu",
+        (unsigned long long)st.paquetes.load(), (unsigned long long)st.fpga_lost.load(),
+        (unsigned long long)ventanas_vistas, (unsigned long long)ventanas_saltadas, (unsigned long long)eventos,
+        (unsigned long long)escritor.escritos(), (unsigned long long)escritor.fallidos(),
+        (unsigned long long)no_guardados, (unsigned long long)eventos_perdidos,
+        (unsigned long long)recalibraciones);
+    if (canales == 2)
+        log("IN2: paquetes=%llu muestras=%llu fpgaLost_total=%llu desfase=%llu",
+            (unsigned long long)st.paquetes2.load(), (unsigned long long)st.muestras2.load(),
+            (unsigned long long)st.fpga_lost2.load(), (unsigned long long)st.desfase2.load());
+    if (gen) {
+        log("PRUEBA: pulsos emitidos=%llu", (unsigned long long)gen->emitidos());
+        fclose(pulsos_log);
+    }
+    if (g_destino_perdido) return 4;
+    return 0;
+}
