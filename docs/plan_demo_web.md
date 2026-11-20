@@ -61,11 +61,11 @@ las modificaciones solo estan en la placa de campo.
 - [ ] Ida y vuelta `clasico -> evento -> clasico` sin problemas.
 
 ### 4. Red con cable directo
-- [ ] Probar con la **notebook de la demo** (no solo con la PC de trabajo):
+- [x] Probar por cable directo (20/11, OK con la PC de trabajo Linux). Si la notebook de la demo es OTRA, repetir ahi:
       perfil de red cableada en modo "compartida con otros equipos" (IPv4 shared).
       En la PC de trabajo ya existe `directo-placa` (`nmcli con up directo-placa`);
       la placa toma una 10.42.0.x (la de campo tomaba 10.42.0.180).
-- [ ] Entrar por `http://rp-f0fd8c.local/` (la IP puede cambiar).
+- [x] Entrar por `http://rp-f0fd8c.local/` (la IP puede cambiar). Resuelve por el cable (20/11).
 - [ ] Plan B si no resuelve `.local`: ver la IP asignada en la notebook
       (`ip neigh` / leases de NetworkManager).
 
@@ -120,3 +120,34 @@ bash /root/demo_presentacion/lab_demo.sh estado      # verificar
 bash /root/demo_presentacion/lab_demo.sh revertir
 bash /root/scripts_campo/cambiar_modo.sh evento
 ```
+- 20/11 ~19:05 UTC: **cable directo OK** (PC de trabajo, adaptador USB WCH
+  `enxdc045a9e9074` via hub). Sin internet: la web solo tiene links de ayuda
+  externos, nada que cargue de afuera. Con la placa ya prendida, cambiar el cable
+  NO dio enlace (NO-CARRIER, con dos cables distintos); **apagar y prender la placa
+  con el cable puesto** lo resolvio. Perfil que se activa solo: `linescout`
+  (shared, 192.168.137.1, autoconnect si); placa en 192.168.137.225,
+  `rp-f0fd8c.local` resuelve. Ping 0,65 ms; `/`, scopegenpro, spectrumpro 200;
+  modo demo intacto, 1 carga de FPGA al arrancar (la 2da = app abierta).
+  Sin internet la placa no tiene NTP (no tiene RTC): la hora viene de
+  fake-hwclock; no afecta a la web.
+  **Procedimiento del dia: conectar el cable a la notebook y RECIEN AHI prender la placa.**
+- 20/11: la notebook de la presentacion va a ser OTRA (a definir por el usuario); las pruebas se hacen con la PC de trabajo. Pendiente: repetir paso 4 en esa notebook cuando se sepa cual es (SO, perfil compartido, orden cable->encender).
+
+## Como funciona la conexion directa (resumen para el equipo)
+
+- **La notebook NO necesita internet.** La pagina corre dentro de la placa; la
+  notebook solo abre el navegador y le habla a la placa por el cable.
+- **Nadie asigna la IP a mano:** la conexion cableada de la notebook se configura
+  una vez en modo "compartida con otros equipos" y la notebook le da la IP a la
+  placa sola, como un router chico solo para ese cable. (Si la notebook es Windows,
+  se configura distinto; ver cuando se sepa cual es.)
+- **No es `localhost`, es una red local de dos equipos:** los datos van
+  placa -> cable -> notebook y nunca salen a internet. Latencia medida 20/11:
+  0,65 ms -> tiempo real.
+- Si la notebook ademas tiene internet (WiFi, Starlink), no molesta ni agrega
+  lag: el navegador llega a la placa por el cable, no por internet.
+- Orden: cable puesto primero, despues prender la placa. Entrar por
+  `http://rp-f0fd8c.local/`.
+- 20/11 16:18 (hora AR): el usuario no pudo entrar "sin internet". Causa real: el ENLACE del cable se cayo (hub/adaptador re-enumerado 16:18:10, enlace 16:18:14, perdido 16:18:20 y no volvio), no la falta de internet. Riesgo para la demo: adaptador WCH via hub inestable (ya habia dado NO-CARRIER antes). Script nuevo `demo_presentacion/probar_sin_internet.sh` (corre en la notebook: apaga WiFi, verifica sin internet, prueba placa por cable, restaura WiFi).
+- 20/11 ~16:25 (hora AR): `probar_sin_internet.sh` corrido con enlace OK: WiFi apagado y SIN internet confirmado; placa en 192.168.137.225 (rp-f0fd8c.local resuelve sin internet); ping 0,36 ms; /, /get_sysinfo, scopegenpro, spectrumpro = 200. WiFi restaurado. Queda demostrado que NO hace falta internet.
+- 20/11: el usuario lo probo el mismo en el navegador sin internet: OK. Tema "hace falta internet" CERRADO.
