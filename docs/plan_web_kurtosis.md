@@ -142,3 +142,130 @@ Ajuste del diseño por esa decision (reemplaza la etapa 1-2 de la seccion 5):
   streaming-server). Queda cargado `stream_app_propio` en la FPGA, sin nadie
   leyendolo: abrir Oscilloscope/DFT es seguro (cargan v0.94).
   **Pendiente martes:** prueba con arena real (IN1) de la etapa 1; despues etapa 2.
+- 24/11 ~12:30 UTC — **Etapa 2 (pagina "Arena") armada, SIN placa** (no estaba
+  conectada; la prueba con arena de la etapa 1 sigue pendiente):
+  - `demo_presentacion/web/arena/index.html` + `arena.js`: HTML+JS sin librerias
+    externas (canvas propio; la demo va sin internet). Lee `ventanas.json` cada
+    250 ms. Cifras grandes (kurtosis, area, acumulado + Reiniciar) y 3 graficos
+    de los ultimos 30 s; linea roja punteada = umbral 3,4 en kurtosis.
+  - Acumulado: suma por numero de ventana (cada una una sola vez), arranca al
+    abrir la pagina, se reinicia con el boton o recargando. Si la captura se
+    reinicia (wc vuelve para atras) sigue sumando desde ahi.
+  - Estados: "en vivo" + atraso (hora placa al escribir − ultima ventana);
+    "sin datos nuevos" si el archivo no cambia en 2 s; "parada o iniciando" si
+    da error/404.
+  - `instalar_web_arena.sh instalar` copia la pagina a
+    `/opt/redpitaya/www/apps/arena` (remount rw y vuelve a ro). La idea inicial
+    de un symlink NO sirve: `/opt/redpitaya` es FAT (vfat). El JSON se sirve con
+    `arena/nginx.conf` (`location = /arena/ventanas.json { alias /run/arena/... }`,
+    igual que scopegenpro con /tmp), que nginx incluye por `../apps/*/nginx.conf`;
+    el script hace `nginx -t` y `-s reload`. URL: `http://<placa>/arena/`.
+  - `demo_presentacion/web/simular_ventanas.py`: JSON falso (ruido 3/0,54 +
+    golpes inventados) para probar en la PC con `python3 -m http.server`.
+  - Probado en la PC con el simulador (Chrome): graficos y cifras en vivo,
+    Reiniciar, captura parada, archivo inexistente y reinicio de la captura OK.
+  - **Ojo para la prueba real:** el area con ruido es ~0,54 por ventana, asi
+    que el acumulado sube ~11 por segundo SIN arena. Con arena se ve el escalon,
+    pero en la demo puede parecer que "siempre hay arena". Decidir con datos
+    reales si se resta un piso o se suma solo sobre el umbral.
+  - **Pendiente:** instalar en la placa y probar con arena (etapa 1 + 2 juntas).
+- 24/11 12:28 UTC — **Etapa 2 instalada en el lab** (cable directo, 192.168.137.225):
+  placa en clasico, v0.94, sin backends de apps en nginx. `instalar` OK
+  (`nginx -t` ok; el aviso "could not open error log" de `-t` es inofensivo),
+  `/opt/redpitaya` vuelve a ro, `/arena/` 200, JSON 404 sin captura (esperado).
+  `arena-prueba` lanzado: JSON 200 a los ~6 s, ventanas tras la calibracion
+  (~10 s). Pagina en vivo en Chrome: kurtosis ~3,0, area ~0,54, atraso 20-45 ms;
+  headers `application/json` + `no-store`. Acumulado sube ~11/s sin arena
+  (confirmado). Placa sin reinicios. Falta: tirar arena.
+- 24/11 12:31 UTC — **Acumulado redefinido (decision del usuario):** el usuario
+  vio que el acumulado subia sin kurtosis sobre el umbral. Ahora es la **M2 del
+  estudio arena vs kg** (`docs/estudio_arena_vs_kg.md`): suma de (area − fondo)
+  solo en ventanas con kurtosis > 3,4; negativos a 0. Fondo = mediana del area
+  de las ventanas bajo el umbral en los ultimos 30 s (el estudio usa p20 de
+  medianas por minuto; para la demo alcanza con esto). Se muestra "fondo" bajo
+  el area. Lab sin arena: fondo 0,54, acumulado 0,00 quieto. Prueba sintetica
+  en node (5 ventanas con +2 sobre el fondo, una nula, una bajo el fondo,
+  lectura repetida) = 10, OK. Falta: arena real.
+- 24/11 ~12:45 UTC — **Etapa 3 (Arena como app) ESCRITA, SIN INSTALAR** (no se
+  toca la placa para no cortar la `arena-prueba` que espera la arena). Lo
+  relevado por SSH (solo lectura de archivos):
+  - La pantalla de inicio arma la lista con `/bazaar?apps=` (carpetas con
+    `info/info.json`), icono en `<app>/info/icon/{128,256,512}.png`; se ven solo
+    las de `allowed_root` en `assets/black_list_app.js` (de aplicar_mods.py).
+  - El Oscilloscope arranca desde su propia pagina (`/bazaar?start=scopegenpro`,
+    que corre `fpga.sh` = `overlay.sh v0.94` y carga el backend).
+  - Patron sin backend C++: "Remote control" (scpi_manager) arranca su servicio
+    con rutas Lua (`io.popen("systemctl ...")`) en su nginx.conf; nginx corre
+    como root.
+  - Diseño hecho: `arena/info/` (info.json + icono), `arena-demo.service` (NO
+    habilitado, `Conflicts=modo-evento`, `ExecStopPost` mata streaming-server),
+    rutas `/arena_iniciar` y `/arena_estado` en `arena/nginx.conf`. La pagina
+    al abrir hace `/bazaar?stop=scopegenpro|spectrumpro` y despues
+    `/arena_iniciar`; muestra "iniciando la captura (~15 s)" hasta 45 s.
+    Exclusion mutua: los `fpga.sh` de scope y DFT llevan al principio
+    `systemctl stop arena-demo.service` (bloquea hasta que la captura termina,
+    antes del overlay). `instalar_web_arena.sh instalar|quitar` hace todo y
+    guarda copias `*.antes_arena`. Parches probados sobre copias de los
+    archivos reales (sintaxis OK).
+  - **Prueba pendiente (despues de la arena):** parar arena-prueba; instalar;
+    icono visible; Arena -> datos en ~15 s; Scope -> arena-demo inactive y sin
+    streaming-server antes del overlay (journal); DFT idem; alternar ~20 veces
+    sin cuelgue ni reinicio (mirar uptime). [Probable] que bazaar corra fpga.sh
+    antes de cargar el backend: confirmarlo en esta prueba.
+- 24/11 12:40-12:45 UTC — **Etapa 3 instalada y probada en el lab** (prueba de
+  arena postergada por el usuario; arena-prueba parada):
+  - Hallazgo: `/bazaar?apps=` solo lista carpetas con `controllerhf.so`; Arena
+    no tiene backend -> no aparecia. Se agrega como **entrada fija** en
+    `assets/desktop.js` (`default_applications`, como las de Red Pitaya),
+    marcada `// demo-arena`, con copia `desktop.js.antes_arena`. Icono visible
+    entre Oscilloscope y System.
+  - Arreglo en la pagina: la 1ra lectura del JSON (puede ser el archivo viejo
+    de una captura anterior) ya no cuenta como "en vivo".
+  - Ciclos reales en Chrome: Arena (datos ~11 s despues) -> Scope: arena-demo
+    detenido 12:42:22.408, FPGA v0.94 12:42:22.853 (**orden correcto**: bazaar
+    corre fpga.sh antes del overlay) -> Arena: backend de scope descargado
+    antes de cargar el bitstream propio (12:42:47), "iniciando" y luego vivo.
+- 24/11 12:44-12:55 UTC — **20 alternancias automaticas** (mismos pedidos HTTP
+  que las paginas, Scope/DFT alternados): 19 OK, sin reinicios; Arena da datos
+  en 12-14 s; captura parada ~0,4 s antes de cada overlay. La falla (ciclos 3-4)
+  fue una **recarga del FPGA con Arena corriendo** que no vino del script
+  (12:46:03; [Probable] un navegador abierto en la web): la captura leyo 0 y
+  aborto, sin cuelgue. **Hallazgos y arreglos:**
+  - La **pantalla de inicio es una app** (`main_menu`, `/bazaar?start=main_menu`)
+    y su `fpga.sh` carga v0.94: ahora tambien lleva la parada de Arena.
+  - Al parar, systemd a veces no mata el streaming-server ("Failed to kill
+    control group ... Invalid argument", "remains running"): los 3 `fpga.sh`
+    ahora hacen `pkill -x streaming-serve` y esperan (hasta 5 s) a que no quede.
+  - El **listado de apps** de la pantalla de inicio (`/bazaar?apps=`) deja
+    cargados en nginx los backends de `la_pro` y `streaming_manager` sin
+    abrirlos. [Probable] solo los dlopen-ea (no tocan el FPGA), pero la pagina
+    Arena ahora descarga 5 backends (scope, DFT, main_menu, la_pro,
+    streaming_manager) antes de arrancar.
+  - Verificado en Chrome: Arena -> inicio = Arena parada (55.447) antes del
+    overlay (56.053); inicio -> Arena = ningun backend cargado al cargar el
+    bitstream propio.
+- 24/11 12:57-13:08 UTC — **21 alternancias con los arreglos** (Arena ->
+  Scope / DFT / pantalla de inicio, 7 de cada uno, descargando 5 backends):
+  **21/21 con la captura parada antes del overlay** (0,6 s antes), v0.94 cargado,
+  sin streaming-server, ningun backend cargado al arrancar Arena, Arena con
+  datos en 13-15 s, **sin reinicios** (btime constante, uptime 44 min). En el
+  journal: 0 "remains running" y 0 errores de ventana. Los 7 "SIN_BACKEND" son
+  de los ciclos a la pantalla de inicio y son del script, no de la placa: con
+  `curl /bazaar?start=main_menu` (sin la pagina/websocket) el backend no queda
+  cargado; en Chrome si quedaba. Placa queda en v0.94, arena-demo inactivo.
+  **Etapa 3 OK en el lab.** Pendiente: prueba con arena real; ensayo completo
+  (etapa 4) con la notebook de la demo.
+- 24/11 ~13:15-13:50 UTC — **Prueba con arena real (IN1), etapas 1-3 juntas.**
+  Registro en la PC de cada ventana (scratchpad de la sesion, `arena_real.csv`).
+  Primeros 63 s: fondo real 0,52; 312 ventanas con arena (area > 2, picos de
+  area 20-30); **solo 61 (20 %) con kurtosis > 3,4** (mediana 3,15): con
+  arena volcada en chorro la kurtosis sube solo al inicio de cada chorro.
+  Area − fondo de toda la arena = 5462; M2 (kurtosis > 3,4) = 701 (13 %).
+  [Probable] impactos superpuestos -> señal casi gaussiana -> kurtosis ~3. No es
+  comparable con el pozo (estudio de campo): vale solo para la demo.
+  - Bug encontrado: el fondo salia de las ventanas bajo el umbral de kurtosis
+    -> con chorro incluia arena (llego a 4,11). **Corregido:** fondo = p20 del
+    area de los ultimos 30 s, solo se acepta si < 2x el actual. Reprocesadas las
+    3010 ventanas del ensayo: fondo 0,517-0,522 todo el tiempo, M2 = 1087.
+  - **Decision del usuario: se mantiene M2** (area − fondo solo con kurtosis >
+    3,4) aun sabiendo que con chorro suma ~13 %. No volver a proponer cambiarla.
