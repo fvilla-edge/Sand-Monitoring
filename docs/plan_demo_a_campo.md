@@ -295,7 +295,7 @@ antes de que salga el equipo.
   con el token (scope device.get/patch).
 - 24/11 tarde — **SC2 completo en atributos:** 73 = los 71 de SC1 +
   `me_equipo`/`me_equipo_cambio` (String). Tag `canales=1` (decisión del
-  usuario). **Decisiones:** carpeta GCS de SC2 = `campo_sc2/csv_ventanas`;
+  usuario). **Decisiones:** carpeta GCS de SC2 = ~~`campo_sc2/csv_ventanas`~~ → `campo/csv_ventanas` (cambiada el mismo día: la subida ya separa por hostname, `campo/csv_ventanas/rp-f0fd8c/`, y SandVision lo ve sin cambios);
   la placa pasa a SC2 **al final** (junto con hardening SSH, antes de dejarla
   en demo para el viaje). Falta: workflow de SC2 (lo crea el usuario).
 - 24/11 tarde — **Comparación lab vs SC1** (sin tocar `rp-f0fbda`): inventario
@@ -310,7 +310,7 @@ antes de que salga el equipo.
     del inventario; confirmar].
   - Más nuevo en el lab (esta rama): `publicar_losant.py`,
     `resumen_modo_evento.py` (sin efecto sin `demo_presentacion`).
-  - **A corregir al pasar a SC2:** `gcs.prefijo` → `campo_sc2/csv_ventanas`;
+  - **A corregir al pasar a SC2:** `gcs.prefijo` → `campo/csv_ventanas`;
     `url_aviso` del lab apunta a `127.0.0.1:9` (ensayo) → la real de SC1;
     `subir-csv-gcs.timer` **deshabilitado** en el lab (habilitado en SC1);
     `losant_config.py` de SC2; hardening (`sshd_config` + `fail2ban`, no

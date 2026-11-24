@@ -55,12 +55,14 @@ Con respaldo (`cp config_campo.json config_campo.json.antes_sc2`) y `sync`:
 
 | Clave | Lab hoy | SC2 |
 |---|---|---|
-| `gcs.prefijo` | `pruebas/csv_ventanas` | `campo_sc2/csv_ventanas` |
+| `gcs.prefijo` | `pruebas/csv_ventanas` | `campo/csv_ventanas` (igual que SC1; separa la subcarpeta `rp-f0fd8c`) |
 | `url_aviso` | `http://127.0.0.1:9/aviso-ensayo-placa-pruebas` | la de SC1 (`https://sample-download-trigger-…southamerica-west1.run.app`, inventario SC1 línea ~338) |
 | `modo_evento.canales` | 1 | 1 (= tag `canales=1`) |
 
-[Suposición] SandVision hoy lee la carpeta de SC1: mostrar SC2 en la web es
-un trabajo aparte en SandVision, a decidir.
+SandVision lista `campo/` y `pruebas/` por subcarpeta de equipo (hostname),
+así que los CSV de SC2 aparecen solos. Aparte (cuando esté en campo): sumar el
+Device SC2 a los equipos que el servidor de SandVision lee de Losant
+(Energía/Estado) y cargar su ubicación.
 
 Después: `systemctl restart modo-evento` **no**: aplicar con un reinicio de la
 placa (método de la demo: dejar config y reiniciar; nunca leer el PL mientras
@@ -77,7 +79,8 @@ recarga).
 2. `systemctl enable --now subir-csv-gcs.timer` (en el lab está deshabilitado;
    en SC1 habilitado). No está en la lista de unidades de `cambiar_equipo.sh`,
    así que queda habilitado también en demo (sin datos nuevos no sube nada).
-3. Verificar la primera subida en el bucket, bajo `campo_sc2/csv_ventanas`.
+3. Verificar la primera subida en el bucket, bajo `campo/csv_ventanas/rp-f0fd8c/`
+   (y que aparezca en SandVision como un equipo más).
 
 ## 5. Hardware (secciones de `scripts_campo/plan_campo/setup_placa.md`)
 
