@@ -184,6 +184,7 @@ el ensayo de ida y vuelta:
   sec. 6: el equipo tiene que quedar en uno de los dos estados, nunca a medias.
 
 ### Fase 4 — Dejarlo como demo para el viaje
+Lista del día del cambio (SC2 + demo): `docs/procedimiento_paso_a_sc2.md`.
 - `cambiar_equipo.sh demo` + `HOJA_DEMO.md` completa.
 - Hoja corta "de demo a campo" para quien haga el cambio en el sur
   (decisión 1), con el equivalente a la sec. 7.5 (primeros días en el sitio).
@@ -284,3 +285,39 @@ antes de que salga el equipo.
   `ok campo` (reloj de la placa 18:02:21, ~4 min atrasado respecto de la PC:
   sin RTC y NTP aún sin sincronizar). Starlink habilitado, lista borrada,
   FPGA `stream_app_propio`, captura 100 %, 0 saltadas, 0 aborts.
+- 24/11 tarde — **Device `SC2` creado por el usuario** (misma aplicación).
+  Lectura por API: 71 atributos y tags idénticos a `SC1` (`canales=2`,
+  `in2_modo=independiente`, `modo_starlink=permanente`); faltan
+  `me_equipo`/`me_equipo_cambio`. Credenciales probadas con una conexión
+  MQTT de prueba desde la placa (copia temporal en /run, borrada): conecta.
+  La placa sigue como `test_SC`. Credenciales fuera del repo
+  (`~/credenciales_losant/sc2.txt`, 600). Workflows de SC2 no verificables
+  con el token (scope device.get/patch).
+- 24/11 tarde — **SC2 completo en atributos:** 73 = los 71 de SC1 +
+  `me_equipo`/`me_equipo_cambio` (String). Tag `canales=1` (decisión del
+  usuario). **Decisiones:** carpeta GCS de SC2 = `campo_sc2/csv_ventanas`;
+  la placa pasa a SC2 **al final** (junto con hardening SSH, antes de dejarla
+  en demo para el viaje). Falta: workflow de SC2 (lo crea el usuario).
+- 24/11 tarde — **Comparación lab vs SC1** (sin tocar `rp-f0fbda`): inventario
+  nuevo del lab (`datos_campo/inventarios/inventario_rp-f0fd8c_campo_20261124.txt`)
+  contra el de SC1 del 20/10 y el tag `campo-2026-10-21b`.
+  - Igual a lo instalado en SC1: los 10 archivos que difieren del inventario
+    de SC1 son iguales al tag (el inventario de SC1 es anterior al paquete del
+    21/10). El binario de captura del lab está compilado del `.cpp` del tag
+    (la copia `.cpp` en `/root/scripts_campo/c/` es vieja, cosmético).
+    Bitstream lab = `in2_20ac88b` (md5 b34cd26f, tag `campo-2026-10-20`);
+    el inventario de SC1 muestra `7f23f7d` [Probable: SC1 lo recibió después
+    del inventario; confirmar].
+  - Más nuevo en el lab (esta rama): `publicar_losant.py`,
+    `resumen_modo_evento.py` (sin efecto sin `demo_presentacion`).
+  - **A corregir al pasar a SC2:** `gcs.prefijo` → `campo_sc2/csv_ventanas`;
+    `url_aviso` del lab apunta a `127.0.0.1:9` (ensayo) → la real de SC1;
+    `subir-csv-gcs.timer` **deshabilitado** en el lab (habilitado en SC1);
+    `losant_config.py` de SC2; hardening (`sshd_config` + `fail2ban`, no
+    instalado en el lab); `rtc-restaurar.service` (con el RTC);
+    `wired.network` distinto (el lab tiene DHCP + IPForward/Masquerade para
+    la LAN; ver el de campo); limpieza de `/root` (`*.bak*`, `prueba_eth0`,
+    `tmp_compilar_csv`, `aplicar_mods_web.py`, `.antes_equipo`).
+  - Menores: `bluetooth.service` habilitado en SC1 y no en el lab (el ESP32
+    va por USB); timers del relé on/off habilitados en SC1 al 20/10 vs
+    `starlink-ventana.timer` en el lab (lo maneja el modo Starlink).
