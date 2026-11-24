@@ -70,6 +70,8 @@ las modificaciones solo estan en la placa de campo.
       (`ip neigh` / leases de NetworkManager).
 
 ### 5. Hoja de pasos para el 10/12
+Borrador 24/11: **`demo_presentacion/HOJA_DEMO.md`** (incluye Arena). Faltan
+los ajustes de Scope/DFT (paso 1) y lo de la notebook (paso 4).
 - [ ] Checklist corto: conectar cable, abrir la web, ajustes preseleccionados
       (del paso 1), que hacer si se cuelga (esperar el reinicio del watchdog,
       la placa vuelve en clasico).
