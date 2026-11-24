@@ -1,0 +1,15 @@
+# Panel "Arena" de la demo (solo placa de laboratorio, no campo).
+# NO se habilita: lo arranca la pagina /arena/ (ruta /arena_iniciar de
+# arena/nginx.conf) y lo paran los fpga.sh de Oscilloscope y DFT antes de
+# cargar v0.94 (nunca leer el FPGA mientras se recarga = cuelgue por watchdog).
+[Unit]
+Description=Demo Arena: kurtosis/area en vivo para la web (sin disco)
+After=redpitaya_startup.service
+Conflicts=modo-evento.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /root/demo_presentacion/arena_demo.py
+ExecStopPost=-/usr/bin/pkill -x streaming-serve
+TimeoutStopSec=15
+KillMode=mixed

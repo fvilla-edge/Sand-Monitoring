@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Edge — Arena</title>
+<link rel="icon" href="/favicon.ico" type="image/x-icon">
+<style>
+  :root {
+    --fondo: #111418; --panel: #1b2027; --borde: #2c333d; --texto: #e6e9ee; --tenue: #8b95a3;
+    --kurt: #4fa3ff; --area: #f2b33d; --acum: #4cc38a; --umbral: #ff5d5d; --grilla: #2a3038;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--fondo); color: var(--texto);
+         font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+           padding: 12px 20px; border-bottom: 1px solid var(--borde); }
+  header h1 { font-size: 20px; margin: 0; font-weight: 600; }
+  header .canal { color: var(--tenue); }
+  #estado { padding: 3px 10px; border-radius: 12px; font-size: 13px; background: var(--borde); }
+  #estado.vivo { background: #1f4d36; color: #9ff0c6; }
+  #estado.parado { background: #5a1f1f; color: #ffb3b3; }
+  #atraso { color: var(--tenue); font-size: 13px; margin-left: auto; }
+  main { padding: 16px 20px; display: grid; gap: 14px; }
+  .cifras { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+  .cifra { background: var(--panel); border: 1px solid var(--borde); border-radius: 8px; padding: 10px 16px; }
+  .cifra .nombre { color: var(--tenue); font-size: 13px; }
+  .cifra .valor { font-size: 40px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .cifra.kurt .valor { color: var(--kurt); }
+  .cifra.area .valor { color: var(--area); }
+  .cifra.acum .valor { color: var(--acum); }
+  .cifra .pie { display: flex; justify-content: space-between; align-items: center; color: var(--tenue); font-size: 13px; }
+  button { background: var(--borde); color: var(--texto); border: 1px solid #3b4450; border-radius: 6px;
+           padding: 5px 14px; font: inherit; cursor: pointer; }
+  button:hover { background: #3b4450; }
+  .grafico { background: var(--panel); border: 1px solid var(--borde); border-radius: 8px; padding: 8px 10px 4px; }
+  .grafico .titulo { color: var(--tenue); font-size: 13px; padding-left: 4px; }
+  canvas { display: block; width: 100%; height: 190px; }
+  @media (max-width: 700px) {
+    .cifras { grid-template-columns: 1fr; }
+    .cifra .valor { font-size: 30px; }
+    canvas { height: 150px; }
+    main, header { padding-left: 16px; padding-right: 16px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Arena <span class="canal">· IN1 en vivo</span></h1>
+  <span id="estado">conectando…</span>
+  <span id="atraso"></span>
+</header>
+<main>
+  <section class="cifras">
+    <div class="cifra kurt">
+      <div class="nombre">Kurtosis (ventana de 50 ms)</div>
+      <div class="valor" id="v-kurt">–</div>
+      <div class="pie"><span>umbral <span id="v-umbral"></span></span></div>
+    </div>
+    <div class="cifra area">
+      <div class="nombre">Área (ventana de 50 ms)</div>
+      <div class="valor" id="v-area">–</div>
+      <div class="pie"><span>fondo (sin arena) <span id="v-fondo">–</span></span></div>
+    </div>
+    <div class="cifra acum">
+      <div class="nombre">Acumulado (área − fondo, solo con kurtosis &gt; umbral)</div>
+      <div class="valor" id="v-acum">0</div>
+      <div class="pie"><span id="v-desde">desde que se abrió el panel</span><button id="reiniciar">Reiniciar</button></div>
+    </div>
+  </section>
+  <section class="grafico"><div class="titulo">Kurtosis — últimos 30 s (línea roja = umbral)</div><canvas id="g-kurt"></canvas></section>
+  <section class="grafico"><div class="titulo">Área — últimos 30 s</div><canvas id="g-area"></canvas></section>
+  <section class="grafico"><div class="titulo">Acumulado — últimos 30 s</div><canvas id="g-acum"></canvas></section>
+</main>
+<script src="arena.js"></script>
+</body>
+</html>
