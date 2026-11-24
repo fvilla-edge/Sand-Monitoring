@@ -126,6 +126,12 @@ SCRIPT_REPETIR_CAPTURA = "/root/scripts_campo_comun/repetir_captura.sh"
 # Ver docs/plan_cambio_canales_remoto.md.
 SCRIPT_CAMBIAR_CANALES = "/root/scripts_campo/cambiar_canales.sh"
 SCRIPT_RELANZAR_CAPTURA = "/root/scripts_campo_comun/relanzar_captura.sh"
+# Comando "equipo" ({"modo": "campo"}): pasa el equipo de demo (web) a campo
+# (modo evento) dejando la config y reiniciando. Solo ida (decision 24/11): la
+# vuelta a demo es solo por SSH en el lab, para que un comando equivocado no
+# saque de campo a un equipo instalado. Solo en la placa que lleva
+# demo_presentacion; en las demas se ignora. Ver docs/plan_demo_a_campo.md.
+SCRIPT_CAMBIAR_EQUIPO = "/root/demo_presentacion/cambiar_equipo.sh"
 SCRIPT_CAPTURAR_STREAM = "/root/scripts_campo/capturar_stream.py"
 
 # Comando "starlink" recibido por MQTT: solo {"accion": "off"}, lo mismo que
@@ -623,6 +629,25 @@ def _cambiar_canales(payload):
         print(f"No se pudo lanzar el cambio de canales: {exc}")
 
 
+def _cambiar_equipo(payload):
+    modo = payload.get("modo") if isinstance(payload, dict) else None
+    if modo != "campo":
+        print(f"Comando 'equipo' ignorado: payload {payload!r} (solo se acepta {{\"modo\": \"campo\"}}; demo solo por SSH)")
+        return
+    if not os.path.isfile(SCRIPT_CAMBIAR_EQUIPO):
+        print(f"Comando 'equipo' ignorado: esta placa no tiene {SCRIPT_CAMBIAR_EQUIPO}")
+        return
+    argv = ["bash", SCRIPT_CAMBIAR_EQUIPO, modo]
+    print(f"Lanzando cambio de equipo: {argv}")
+    # el script vuelve enseguida (se relanza solo como unidad transitoria y
+    # despues reinicia la placa)
+    try:
+        r = subprocess.run(argv, capture_output=True, text=True, timeout=30)
+        print((r.stdout + r.stderr).strip())
+    except Exception as exc:
+        print(f"No se pudo lanzar el cambio de equipo: {exc}")
+
+
 def _al_recibir_comando(dispositivo, comando):
     nombre = comando["name"].lower()
     payload = comando.get("payload") or {}
@@ -634,6 +659,8 @@ def _al_recibir_comando(dispositivo, comando):
         _cambiar_modo_starlink(dispositivo, payload)
     elif nombre == "canales":
         _cambiar_canales(payload)
+    elif nombre == "equipo":
+        _cambiar_equipo(payload)
     else:
         print(f"Comando desconocido ignorado: nombre={nombre!r} payload={payload}")
 

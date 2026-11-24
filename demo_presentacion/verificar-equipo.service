@@ -1,0 +1,14 @@
+# Verifica al arrancar un cambio de equipo demo <-> campo pedido por
+# cambiar_equipo.sh (docs/plan_demo_a_campo.md). Sin pedido pendiente, sale
+# enseguida. No lee el FPGA.
+[Unit]
+Description=Verificar cambio de equipo demo/campo
+After=redpitaya_startup.service redpitaya_nginx.service
+
+[Service]
+# simple (no oneshot): no frena el arranque mientras espera hasta 5 min
+Type=simple
+ExecStart=/bin/bash /root/demo_presentacion/cambiar_equipo.sh verificar
+
+[Install]
+WantedBy=multi-user.target

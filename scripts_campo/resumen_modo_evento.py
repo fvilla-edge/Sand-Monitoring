@@ -53,6 +53,10 @@ MEDICION_ACTUAL = "/run/modo-evento/medicion"
 IN2_ACTUAL = "/run/modo-evento/in2"
 # resultado del ultimo cambio mono/dual (cambiar_canales.sh, comando "canales")
 ESTADO_CAMBIO_CANALES = os.path.join(cfg.obtener("rutas.log_dir"), "cambio_canales_estado")
+# Equipo demo/campo (docs/plan_demo_a_campo.md): solo existen en la placa que
+# lleva demo_presentacion (cambiar_equipo.sh); en las demas no se manda nada.
+EQUIPO_MODO = "/root/demo_presentacion/equipo_modo"
+ESTADO_CAMBIO_EQUIPO = os.path.join(cfg.obtener("rutas.log_dir"), "cambio_equipo_estado")
 # Sin una ventana nueva en este tiempo, se reporta que no esta midiendo
 SIN_DATOS_MAX_S = 30
 LOG_REINICIOS = os.path.join(cfg.obtener("rutas.log_dir"), "modo_evento_reinicios.log")
@@ -431,6 +435,14 @@ def resumir(filas, lector, contadores, activo, umbral, ahora, sin_disco=False, f
             data["me_cambio"] = f.read().strip()[:200]
     except OSError:
         pass
+    for clave, ruta in (("me_equipo", EQUIPO_MODO), ("me_equipo_cambio", ESTADO_CAMBIO_EQUIPO)):
+        try:
+            with open(ruta) as f:
+                # me_equipo: "demo" | "campo"; me_equipo_cambio: resultado del
+                # ultimo cambio pedido, p.ej. "ok campo 2026-11-24T15:02:11Z"
+                data[clave] = f.read().strip()[:200]
+        except OSError:
+            pass
     # IN2 como sensor independiente (dual con el bitstream que lo calcula,
     # docs/plan_in2_independiente.md): solo maximos del ultimo minuto, el detalle
     # queda en su CSV (<destino>/in2)

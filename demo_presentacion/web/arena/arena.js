@@ -30,6 +30,7 @@ let ultimoTms = null;          // t_ms del archivo la ultima vez que cambio
 let vistoCambio = 0;           // performance.now() de ese cambio
 let ventanas = [];
 let pidiendo = false;
+let enCampo = false;           // /arena_iniciar respondio CAMPO: no se lee nada
 let arrancando = null;         // performance.now() del pedido de arranque; null = ya hay datos
 
 $('v-umbral').textContent = UMBRAL_KURT.toString().replace('.', ',');
@@ -115,7 +116,15 @@ async function iniciar() {
   for (const a of APPS_RP) {
     try { await fetch('/bazaar?stop=' + a, { cache: 'no-store' }); } catch (e) { /* no estaba cargado */ }
   }
-  try { await fetch('/arena_iniciar', { cache: 'no-store' }); } catch (e) { /* se ve como "sin datos" */ }
+  try {
+    const r = await fetch('/arena_iniciar', { cache: 'no-store' });
+    if ((await r.text()).trim() === 'CAMPO') {
+      // equipo en modo campo: el modo evento esta midiendo y no se lo interrumpe
+      enCampo = true;
+      ponerEstado('parado', 'equipo en modo campo: Arena no disponible');
+      return;
+    }
+  } catch (e) { /* se ve como "sin datos" */ }
   leer();
   setInterval(leer, PERIODO_MS);
 }
