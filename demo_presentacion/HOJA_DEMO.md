@@ -68,7 +68,7 @@ haga falta antes.
 
 **Ajustes preseleccionados** — *A COMPLETAR (paso 1 del plan, pendiente)*:
 - Oscilloscope: canal ___, escala ___ V/div, base de tiempo ___
-- DFT: span/decimación ___, ventana ___, waterfall ___
+- DFT: rango **0–1 MHz** (hecho 25/11, `aplicar_mods.py --solo-rango-dft` en ~/web_pitaya; si se ve hasta 62,5 MHz escribir 1000000 en el campo de frecuencia máxima), ventana ___, waterfall ___
 
 **Cómo tirar la arena en Arena** (ensayo 24/11):
 - **Granos sueltos o golpes cortos**: la kurtosis pasa la línea roja y el
