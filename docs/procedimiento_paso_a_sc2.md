@@ -93,7 +93,19 @@ recarga).
       `main` y en `equipo-demo-campo`) y verificar sha256. Hallado 26/11; la
       comparación del 24/11 no lo había detectado.
 
-- [ ] RTC DS3231: sección 5b (`rtc-restaurar.service`; en el lab no existe).
+- [ ] RTC DS3231: sección 5b. **Software hecho en el lab 26/11**: scripts en
+      `/root/rtc_ds3231/` (md5 iguales al repo), `rtc-restaurar.service`
+      habilitado y probado (restauró la hora y dejó `/run/rtc_ds3231_ok`).
+      Módulo conectado **provisorio** (sin la placa shield final): detectado en
+      bus 0 / `0x68` (`0x57` = EEPROM del módulo); venía en 2000-01-01, se puso
+      en hora con `probar_rtc.py --set` con NTP sincronizado. Falta: conectarlo
+      en la shield definitiva y, **antes de reiniciar**, correr
+      `python3 /root/rtc_ds3231/probar_rtc.py`; si la diferencia con el sistema
+      es grande (módulo sin pila o pila agotada), corregir con `--set`.
+      `leer_epoch.py` no valida la fecha: un RTC sin hora pone el sistema en el
+      año 2000 al arrancar. Si se desconecta, el servicio solo avisa y no frena
+      el arranque. Ojo: `i2cdetect -y 0` no escanea `0x68` en esta placa; usar
+      `i2cdetect -y -r 0`.
 - [ ] Relé / Starlink: sección 5 (ya instalado en el lab; verificar cableado y
       un ciclo on/off con el relé real).
 - [ ] ESP32 del panel solar: sección 6 (el servicio ya está; verificar que
