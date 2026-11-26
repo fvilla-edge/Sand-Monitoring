@@ -84,6 +84,15 @@ recarga).
 
 ## 5. Hardware (secciones de `scripts_campo/plan_campo/setup_placa.md`)
 
+- [ ] **Antes de probar con el relé real**: el lab tiene
+      `starlink_remoto/control_starlink.sh` (sha 27b5bb…, commit cd19c27 del
+      30/9) y `ventana_starlink.sh` (sha 5101ae…, commit 1213ff3 del 13/10)
+      **viejos**: les falta la mitigación del reset al prender el relé
+      (ff47f40, tag `campo-2026-10-21b`) que tiene SC1 (a612bf… / a4a901…,
+      verificado 26/11). Copiar los dos desde el repo (iguales en el tag, en
+      `main` y en `equipo-demo-campo`) y verificar sha256. Hallado 26/11; la
+      comparación del 24/11 no lo había detectado.
+
 - [ ] RTC DS3231: sección 5b (`rtc-restaurar.service`; en el lab no existe).
 - [ ] Relé / Starlink: sección 5 (ya instalado en el lab; verificar cableado y
       un ciclo on/off con el relé real).
@@ -93,11 +102,12 @@ recarga).
 
 ## 6. Red
 
-`/etc/systemd/network/wired.network` difiere del de SC1. El del lab tiene
-DHCP + `IPForward`/`IPMasquerade` (comparte internet por la LAN). **A
-definir** contra el de SC1 (contenido no está en el inventario, solo el
-sha256; confirmarlo cuando SC1 vuelva a estar conectada o en
-`setup_placa.md`). En la demo la placa va en la red del cliente por DHCP.
+**Cerrado 26/11** (inventario fresco de SC1,
+`datos_campo/inventarios/inventario_rp-f0fbda_20261126.txt`): el
+`wired.network` de SC1 tiene las mismas claves que el del lab (DHCP +
+`IPForward`/`IPMasquerade` + `RouteMetric=10` + `ClientIdentifier=mac`); el
+sha256 difiere solo por líneas en blanco. **No hay que tocarlo.** En la demo
+la placa va en la red del cliente por DHCP.
 
 ## 7. Limpieza de `/root` (con respaldo a la PC antes)
 

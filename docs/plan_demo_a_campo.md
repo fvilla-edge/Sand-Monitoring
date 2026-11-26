@@ -321,3 +321,26 @@ antes de que salga el equipo.
   - Menores: `bluetooth.service` habilitado en SC1 y no en el lab (el ESP32
     va por USB); timers del relé on/off habilitados en SC1 al 20/10 vs
     `starlink-ventana.timer` en el lab (lo maneja el modo Starlink).
+- 26/11 — **Inventario fresco de SC1** en la ventana de las 10:05 AR (solo
+  lectura, `datos_campo/inventarios/inventario_rp-f0fbda_20261126.txt`) contra
+  el del lab del 24/11 (más una lectura del lab el mismo día):
+  - **Hallazgo:** el lab tiene `control_starlink.sh` (cd19c27, 30/9) y
+    `ventana_starlink.sh` (1213ff3, 13/10) viejos, sin la mitigación del reset
+    del relé (ff47f40) que sí tiene SC1. La comparación del 24/11 lo dio por
+    igual al tag: estaba mal. Las pruebas demo->campo del 24/11 (incluido el
+    corte de luz) corrieron con esos scripts viejos y sin relé real. Agregado
+    al paso 5 de `procedimiento_paso_a_sc2.md`.
+  - Red: `wired.network` de SC1 = mismas claves que el lab (cerrado, paso 6).
+  - Drop-ins `umbral.conf`, `sin-cpuquota.conf` y journald
+    (`persistente.conf` en el lab, `persist.conf` en SC1): en el lab dicen
+    UMBRAL=3.4, `CPUQuota=` vacío y journal persistente 200M; en SC1 solo
+    hay sha256 [Probable: mismo contenido con otros comentarios, no
+    verificado].
+  - Ya previsto: `gcs.prefijo`, `url_aviso`, `subir-csv-gcs.timer`,
+    `losant_config.py`, `fail2ban`/`sshd_config`, `rtc-restaurar.service`,
+    `bluetooth` (no hace falta: ESP32 por USB). Nuevo: `gcs.dias_atras` 7 en
+    el lab vs 30 en SC1 (con datos de prueba vaciados da igual; dejar 30).
+    `canales` 2 en SC1 (dual) vs 1 en el lab = sigue al tag de cada Device.
+  - SC1: bitstream `stream_app_propio`, sin reset desde el boot del 25/11
+    17:08 UTC, 0 unidades failed; 9/9 ventanas OK desde el 25/11 19:05 UTC.
+
