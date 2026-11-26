@@ -126,6 +126,14 @@ borrar `demo_presentacion/` (hace falta para la demo y el cambio a campo).
 
 ## 9. Hardening SSH (sección 4b de `setup_placa.md`)
 
+**Hecho en el lab 26/11** (respaldo en `/root/respaldo_hardening_20261126/`):
+`fail2ban` instalado, `iptables-legacy`, `jail.local` (ignoreip
+`192.168.0.0/24` + `192.168.137.0/24`), `filter.d/sshd.local` con el
+`journalmatch` de `ssh.service` (sin eso no detecta nada), `sshd_config.d/10-solo-clave.conf`;
+verificados ban manual, detección real y `Permission denied (publickey)`.
+**Queda el día del cambio:** ajustar `ignoreip` al de SC1 si corresponde y
+confirmar que sigue todo tras un reinicio.
+
 `PasswordAuthentication no` + `fail2ban` con `banaction=iptables` y la
 verificación de que banea. **Antes de cerrar la sesión**, abrir otra y
 confirmar que entra con la clave de la PC.

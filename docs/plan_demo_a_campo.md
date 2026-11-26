@@ -343,4 +343,10 @@ antes de que salga el equipo.
     `canales` 2 en SC1 (dual) vs 1 en el lab = sigue al tag de cada Device.
   - SC1: bitstream `stream_app_propio`, sin reset desde el boot del 25/11
     17:08 UTC, 0 unidades failed; 9/9 ventanas OK desde el 25/11 19:05 UTC.
+- 26/11 — **Hardening SSH hecho en el lab** (paso 9 del procedimiento).
+  Hallazgo: en Ubuntu 24.04 el filtro `sshd` de `fail2ban` mira
+  `sshd.service` y la unidad es `ssh.service` → no detectaba ningún intento
+  fallido; corregido con `filter.d/sshd.local` y agregado a `setup_placa.md`
+  4b. [Probable] SC1 tiene el mismo problema (mismo Ubuntu, y la verificación
+  de la guía era solo con `banip` manual); no verificado, SC1 no se tocó.
 

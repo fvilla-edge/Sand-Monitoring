@@ -284,6 +284,25 @@ systemctl restart fail2ban
 "
 ```
 
+**Ubuntu 24.04 (hallado 26/11 en el lab): el filtro `sshd` trae
+`journalmatch = _SYSTEMD_UNIT=sshd.service`, pero la unidad se llama `ssh.service`
+→ el jail no ve NINGÚN intento fallido** (la prueba de `banip` de abajo no lo
+detecta porque banea a mano). Agregar:
+
+```bash
+ssh root@<IP_PLACA> "printf '[Init]\njournalmatch = _SYSTEMD_UNIT=ssh.service + _COMM=sshd\n' > /etc/fail2ban/filter.d/sshd.local; systemctl restart fail2ban; fail2ban-client get sshd journalmatch"
+```
+
+Probar la detección real: 2-3 `ssh usuario_inexistente@<IP_PLACA>` desde la PC y
+ver en `/var/log/fail2ban.log` líneas `Ignore <IP> by ip` (si la IP está en
+`ignoreip`) o `Found <IP>` (si no). Sin líneas = no detecta.
+
+Solo clave: `/etc/ssh/sshd_config.d/10-solo-clave.conf` con
+`PasswordAuthentication no` y `KbdInteractiveAuthentication no`; `sshd -t` antes
+de `systemctl restart ssh`; abrir otra sesión con la clave antes de cerrar la
+actual; `ssh -o PubkeyAuthentication=no root@<IP_PLACA>` debe responder
+`Permission denied (publickey)`.
+
 `ignoreip` con una IP tuya de confianza es importante — sin eso, tu propia sesión SSH puede
 autobanearse (el filtro cuenta cada clave rechazada de un `ssh-agent` con varias identidades
 como intento fallido). `bantime=600` (10 min, no el default de 1h) es la red de seguridad si
